@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from 'vitest';
 import type { RuntimeCapabilities, SessionMeta } from '../../contract/common';
-import { sessionCapability } from './runtimeCapability';
+import { PI_BASELINE_UNAVAILABLE, PI_UNRESTRICTED_TOOLS_NOTICE } from '../../contract/pi-skills-capabilities';
+import { sandboxSelectionCapability, sessionCapability } from './runtimeCapability';
 
 function meta(overrides: Partial<SessionMeta>): SessionMeta {
   return {
@@ -90,5 +91,58 @@ describe('sessionCapability (FR-20)', () => {
   it('keeps a Pi session disabled until the core sends its live snapshot', () => {
     const pi = meta({ agentRuntime: 'pi', protocol: null });
     expect(sessionCapability(pi, 'steering')).toEqual({ available: false, reason: 'Runtime is not connected.' });
+  });
+
+  // pi-skills-capabilities FR-4/FR-3: nothing in the baseline the spec pins
+  // (skillsInstall, mcp, subagents, workflows, permissions, remoteControl,
+  // usageBar) is ever reachable for a Pi session — neither before the core's
+  // live snapshot arrives (disconnected default) nor once it does (a
+  // connected snapshot shaped exactly like FR-3's baseline).
+  it('never lets a Pi session reach any PI_BASELINE_UNAVAILABLE capability, disconnected or connected', () => {
+    const disconnected = meta({ agentRuntime: 'pi', protocol: null });
+    for (const capability of PI_BASELINE_UNAVAILABLE) {
+      expect(sessionCapability(disconnected, capability).available).toBe(false);
+    }
+
+    const connectedSnapshot: RuntimeCapabilities = {
+      mcp: { available: false, reason: 'no' },
+      subagents: { available: false, reason: 'no' },
+      skills: { available: true },
+      skillsInstall: { available: false, reason: 'no' },
+      workflows: { available: false, reason: 'no' },
+      interactiveCommands: { available: true },
+      permissions: { available: false, reason: 'no' },
+      remoteControl: { available: false, reason: 'no' },
+      usageBar: { available: false, reason: 'no' },
+      compaction: { available: true },
+      steering: { available: true },
+      followUps: { available: true },
+      resumableSessions: { available: true },
+      modelSwitching: { available: true },
+      images: { available: true },
+      contextMetrics: { available: true },
+      costMetrics: { available: true },
+    };
+    const connected = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: connectedSnapshot });
+    for (const capability of PI_BASELINE_UNAVAILABLE) {
+      expect(sessionCapability(connected, capability).available).toBe(false);
+    }
+    // and skills — the one baseline capability the spec turns ON — stays reachable.
+    expect(sessionCapability(connected, 'skills').available).toBe(true);
+  });
+});
+
+describe('sandboxSelectionCapability (pi-skills-capabilities FR-5)', () => {
+  it('reads available for every non-Pi runtime', () => {
+    expect(sandboxSelectionCapability(meta({ agentRuntime: 'claude-code' }))).toEqual({ available: true });
+    expect(sandboxSelectionCapability(meta({ agentRuntime: 'codex' }))).toEqual({ available: true });
+    expect(sandboxSelectionCapability(null)).toEqual({ available: true });
+  });
+
+  it('reads the FR-5 notice verbatim for a Pi session — not a generic "unavailable" line', () => {
+    expect(sandboxSelectionCapability(meta({ agentRuntime: 'pi' }))).toEqual({
+      available: false,
+      reason: PI_UNRESTRICTED_TOOLS_NOTICE,
+    });
   });
 });

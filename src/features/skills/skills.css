@@ -47,6 +47,15 @@
   color: var(--text-disabled);
 }
 
+/* pi-skills-capabilities FR-8: the status line that keeps "no skills" from
+   being read as "project resources are disabled" — text only, no new surface
+   or border (design brief "Notes / constraints"). */
+.skills-resources-note {
+  padding: var(--space-4) var(--space-6) var(--space-8);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+
 .skills-error-row {
   display: flex;
   align-items: center;
@@ -92,6 +101,12 @@
 }
 .skills-row--hovered {
   background: var(--bg-elevated);
+}
+/* pi-skills-capabilities FR-1: listed but not runnable under the session's
+   policy — visible, dimmed, never a hover/selected affordance. */
+.skills-row--unloaded {
+  opacity: 0.55;
+  cursor: default;
 }
 .skills-row-icon {
   width: var(--space-14);

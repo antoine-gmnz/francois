@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../contract/common';
-import type { SessionProfile } from '../../../contract/session-profiles';
+import type { PiSessionProfile, SessionProfile } from '../../../contract/session-profiles';
 import {
   canSaveProfileName,
   flagAdvisoryTokens,
@@ -16,10 +16,11 @@ import {
   resolveProjectDefaultProfileId,
 } from './profiles';
 
-function profile(overrides: Partial<SessionProfile> = {}): SessionProfile {
+function profile(overrides: Partial<Extract<SessionProfile, { kind: 'legacy' }>> = {}): SessionProfile {
   return {
     id: 'p1',
     name: 'agent-architect',
+    kind: 'legacy',
     createdAt: 0,
     updatedAt: 0,
     ...overrides,
@@ -100,6 +101,36 @@ describe('profileRowSubtitle', () => {
   it('em-dashes a profile carrying neither, and treats whitespace-only as neither', () => {
     expect(profileRowSubtitle(profile())).toBe('—');
     expect(profileRowSubtitle(profile({ systemPrompt: '   ', extraArgsRaw: '  ' }))).toBe('—');
+  });
+
+  function piProfile(overrides: Partial<PiSessionProfile['settings']> = {}): PiSessionProfile {
+    return {
+      id: 'p1',
+      name: 'agent-architect',
+      kind: 'pi',
+      createdAt: 0,
+      updatedAt: 0,
+      settings: {
+        systemPromptMode: 'default',
+        instructionPaths: [],
+        skillPaths: [],
+        tools: [],
+        projectResources: 'ignore',
+        ...overrides,
+      },
+    };
+  }
+
+  it('pi: previews the prompt when the mode replaces/appends it', () => {
+    expect(profileRowSubtitle(piProfile({ systemPromptMode: 'replace', systemPrompt: 'be terse' }))).toBe('be terse');
+  });
+
+  it('pi: falls back to the tools summary when the mode is default', () => {
+    expect(profileRowSubtitle(piProfile({ tools: ['read', 'grep'] }))).toBe('read, grep');
+  });
+
+  it('pi: names an empty tool allowlist explicitly, never as a dash', () => {
+    expect(profileRowSubtitle(piProfile())).toBe('no built-in tools');
   });
 });
 

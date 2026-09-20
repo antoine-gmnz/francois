@@ -16,6 +16,7 @@
 import type { AppError, ProfileId } from '../../../contract/common';
 import { MAX_PROFILE_NAME, type SessionProfile } from '../../../contract/session-profiles';
 import { profilesList } from '../../lib/api';
+import { toolsSummary } from './pi-profile';
 
 // ---------- resolution (FR-15/FR-16) ----------
 
@@ -168,8 +169,19 @@ export const PROMPT_PREVIEW_MAX = 80;
  *
  * Elision here is belt-and-braces: the row also clips with `.truncate`, but that
  * would hand the layout a 16k-char string (`MAX_SYSTEM_PROMPT`) to measure.
+ *
+ * pi-migration-rollout: a Pi profile carries neither field — its role reads off
+ * its typed settings instead (the prompt when append/replace set one, else its
+ * tool allowlist, which `toolsSummary` names explicitly even when empty).
  */
 export function profileRowSubtitle(profile: SessionProfile): string {
+  if (profile.kind === 'pi') {
+    const piPrompt = profile.settings.systemPrompt?.replace(/\s+/g, ' ').trim();
+    if (profile.settings.systemPromptMode !== 'default' && piPrompt !== undefined && piPrompt !== '') {
+      return piPrompt.length > PROMPT_PREVIEW_MAX ? `${piPrompt.slice(0, PROMPT_PREVIEW_MAX).trimEnd()}…` : piPrompt;
+    }
+    return toolsSummary(profile.settings.tools);
+  }
   const prompt = profile.systemPrompt?.replace(/\s+/g, ' ').trim();
   if (prompt !== undefined && prompt !== '') {
     return prompt.length > PROMPT_PREVIEW_MAX ? `${prompt.slice(0, PROMPT_PREVIEW_MAX).trimEnd()}…` : prompt;

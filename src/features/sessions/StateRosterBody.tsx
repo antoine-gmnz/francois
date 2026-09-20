@@ -19,7 +19,6 @@
 
 import { useState } from 'react';
 import type { SessionMeta } from '../../../contract/common';
-import { formatContextTokens } from '../../../contract/conversation-view';
 import { STATUS_COLOR, formatRelativeTime, statusPulses, type SessionDerived } from '../../../contract/fleet-board';
 import { permissionsDecide } from '../../lib/api';
 import { toneVar } from '../../lib/tone';
@@ -28,7 +27,7 @@ import { sessionAccountBadge } from '../accounts/accounts';
 import { projectMarker } from '../projects/projectMarker';
 import { useStore } from '../../lib/store';
 import type { RosterAsk } from '../../lib/rosterStore';
-import { askLine, contextFraction, formatLineCount, rowTitle, workLine } from './roster-row';
+import { askLine, formatLineCount, rosterContextReadout, rowTitle, runningContextFigure, workLine } from './roster-row';
 import { STATE_STATUS, type RosterStateNode, type SessionState } from './state-groups';
 import type { RosterGroupTier } from './group-tier';
 import '../accounts/accounts.css';
@@ -349,11 +348,7 @@ function RunningBody({ session, tags, now }: { session: SessionMeta; tags: JSX.E
       )}
       <div className="roster-row__ctx">
         <ContextBar session={session} wide />
-        <span className="roster-row__figure">
-          {session.contextLimitTokens > 0
-            ? `${formatContextTokens(session.contextUsedTokens)}/${formatContextTokens(session.contextLimitTokens)}`
-            : formatContextTokens(session.contextUsedTokens)}
-        </span>
+        <span className="roster-row__figure">{runningContextFigure(session)}</span>
       </div>
     </>
   );
@@ -384,7 +379,8 @@ function QuietBody({
   // it repeats the heading's word rather than leaving a bare age to be measured
   // from nothing.
   const settled = state === 'archived' ? 'done' : 'idle';
-  const hasDetail = offDefaultModel || branch !== null || session.contextLimitTokens > 0;
+  const context = rosterContextReadout(session);
+  const hasDetail = offDefaultModel || branch !== null || context !== null;
 
   return (
     <>
@@ -413,9 +409,7 @@ function QuietBody({
           )}
           {branch === null && <span className="app-flex-spacer" />}
           <ContextBar session={session} />
-          {session.contextLimitTokens > 0 && (
-            <span className="roster-row__figure">{formatContextTokens(session.contextUsedTokens)}</span>
-          )}
+          {context && <span className="roster-row__figure">{context.usedLabel}</span>}
         </div>
       )}
 
@@ -442,12 +436,15 @@ function offDefaultModel(session: SessionMeta, projectDefaultModelId: string | n
 }
 
 /** The context bar. Absent — not empty — when there is no window to measure
- *  against, so an unknown limit never paints as a bar sitting at zero. */
+ *  against, so an unknown limit never paints as a bar sitting at zero. Pi
+ *  sessions read `session.metrics` instead of the legacy fields (roster-row.ts
+ *  `rosterContextReadout`) — never the Claude context fallback (pi-models-metrics §6). */
 function ContextBar({ session, wide = false }: { session: SessionMeta; wide?: boolean }) {
-  if (session.contextLimitTokens <= 0) return null;
+  const readout = rosterContextReadout(session);
+  if (!readout) return null;
   return (
     <span className={wide ? 'roster-row__bar roster-row__bar--wide' : 'roster-row__bar'}>
-      <span className="roster-row__bar-fill" style={{ width: `${contextFraction(session) * 100}%` }} />
+      <span className="roster-row__bar-fill" style={{ width: `${readout.fraction * 100}%` }} />
     </span>
   );
 }

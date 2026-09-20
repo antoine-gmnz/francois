@@ -102,6 +102,18 @@ export function completionText(name: string, mode: 'run' | 'complete'): string {
   return mode === 'run' ? `/${name}` : `/${name} `;
 }
 
+/**
+ * pi-skills-capabilities FR-1/FR-2: the text a run/complete actually submits —
+ * the runtime's own `invocation` (colon commands etc., spelling preserved)
+ * when the entry carries one, else byte-identical to `completionText`'s
+ * legacy `/name` formula every other runtime already relies on. Never rebuilds
+ * an invocation from `name` once the registry supplied one (FR-1).
+ */
+export function commandInvocation(command: SlashCommandInfo, mode: 'run' | 'complete'): string {
+  const text = command.invocation ?? `/${command.name}`;
+  return mode === 'run' ? text : `${text} `;
+}
+
 // ---------- keys (FR-8/9) ----------
 
 export type PopupKeyAction = 'up' | 'down' | 'run' | 'complete' | 'dismiss';

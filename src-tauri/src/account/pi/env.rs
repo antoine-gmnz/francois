@@ -29,21 +29,18 @@
 /// runtime's config directory. `PI_CODING_AGENT_DIR` is set either way, and
 /// always to THIS account's directory — never a stale prior value.
 ///
-/// Called from `setup::spawn_pi_setup` (the FR-3 setup PTY) today.
-/// `session::adapter::pi::process::spawn` — the session-scoped RPC connect
-/// this function is EQUALLY meant for — still builds its child's environment
-/// unfiltered: `RuntimeConnectContext` carries no `configDir`/
-/// `inheritEnvironmentCredentials` yet, and its only caller,
-/// `connect_runtime` (session/runtime.rs), is itself still
-/// `#[allow(dead_code)]` — no production path creates a live Pi session
-/// today, so there is no real construction site to thread those two fields
-/// through yet. Wire this in (add the two fields to `RuntimeConnectContext`,
-/// populate them from `config_dir_of`/a new Pi-specific accessor at that
-/// construction site, and call `crate::account::pi_account_env` in
-/// `process::spawn`) in the SAME change that gives `connect_runtime` its
-/// first real caller — see this feature's handoff. This function is
-/// unit-tested on its own so FR-5's isolation rule has coverage now rather
-/// than only once that wiring lands.
+/// Called from `setup::spawn_pi_setup` (the FR-3 setup PTY), and — since
+/// pi-session-durability made `session::adapter::pi::recovery::
+/// reconnect_session` the connect path's first production caller —
+/// `session::adapter::pi::process::spawn` too. `RuntimeConnectContext` now
+/// carries `configDir`/`inheritEnvironmentCredentials`, populated by
+/// `recovery::run_reconnect` from `pi_execution_preflight_for` (the
+/// Pi-specific accessor next to `config_dir_of` in `account::mod.rs`) before
+/// `process::spawn` ever runs; `spawn` clears the child's inherited
+/// environment and applies exactly this function's output (never the
+/// unfiltered ambient one) through `process_util::CommandBuilder::exact_env`.
+/// This function was unit-tested on its own from the start, so FR-5's
+/// isolation rule had coverage before that wiring landed, not only after.
 pub(crate) fn pi_account_env(
     ambient: &[(String, String)],
     config_dir: &str,

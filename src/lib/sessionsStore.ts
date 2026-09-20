@@ -15,6 +15,13 @@
 import type { StateCreator } from 'zustand';
 import type { RuntimeEventEnvelope, SessionId, SessionMeta } from '../../contract/common';
 import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
+// pi-turn-controls: queue.changed/compaction/retry route to their OWN
+// per-session stores (never the fleet cache) — see applyRuntimeEvent below.
+import { clearQueueState, setQueueEntries } from '../features/conversation/pi-queue';
+import { clearTurnProgress, setCompactionProgress, setRetryProgress } from '../features/conversation/pi-turn-progress';
+// pi-models-metrics: model.changed/metrics DO land on the fleet cache — the
+// run chip, roster context bar and every other SessionMeta reader need them.
+import { modelInfoFromRuntimeDescriptor } from '../features/sessions/runtime-model';
 import type { MainTab } from './agentTabStore';
 import { closeStreamsForRemovedPanels } from './extensionsStore';
 import {
@@ -118,6 +125,13 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
     set((s) => {
       const i = s.sessions.findIndex((x) => x.id === m.id);
       if (i === -1) return { sessions: [...s.sessions, m] }; // append on create (FR-2)
+      // pi-session-durability: a reconnect refused with the SAME recovery
+      // state (e.g. a Retry that still finds the native file missing)
+      // republishes an otherwise-identical session.meta — bail like every
+      // other patch here rather than mint a new array for a no-op update.
+      // Both sides are plain JSON off the same wire shape, so value equality
+      // is a safe stand-in for a hand-rolled field-by-field comparison.
+      if (JSON.stringify(s.sessions[i]) === JSON.stringify(m)) return {};
       const next = s.sessions.slice();
       next[i] = m; // update in place, position preserved
       return { sessions: next };
@@ -169,9 +183,26 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
         case 'tool.update':
         case 'notice':
           return {};
+        // pi-turn-controls: these three never touch the `sessions` array — they
+        // route to their own per-session stores (./pi-queue, ./pi-turn-progress)
+        // so the composer/queue strip re-renders without invalidating the fleet
+        // cache for every OTHER subscriber. Same generation guard as the map
+        // below: a stale child must never repaint a session that moved on.
+        case 'queue.changed':
+        case 'compaction':
+        case 'retry': {
+          const owner = s.sessions.find((session) => session.id === event.sessionId);
+          if (!owner || owner.runtimeGeneration !== event.generation) return {};
+          if (event.event.kind === 'queue.changed') setQueueEntries(event.sessionId, event.event.entries);
+          else if (event.event.kind === 'compaction') setCompactionProgress(event.sessionId, event.event);
+          else setRetryProgress(event.sessionId, event.event);
+          return {};
+        }
         case 'capabilities':
         case 'failure':
         case 'run.state':
+        case 'model.changed':
+        case 'metrics':
           break;
         default: {
           const unhandled: never = event.event;
@@ -188,6 +219,22 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
             return { ...session, effectiveCapabilities: event.event.capabilities };
           case 'failure':
             return { ...session, errorMessage: event.event.failure.message };
+          // pi-models-metrics FR-5/FR-6: published only AFTER the core read the
+          // switch back from the runtime — `model`/`runtimeModel` and `effort`
+          // are replaced wholesale with the ACCEPTED values, never guessed at
+          // optimistically. Absent `effort` clears any previous level, the same
+          // "no effort" state a model with no advertised levels always has.
+          case 'model.changed':
+            return {
+              ...session,
+              model: modelInfoFromRuntimeDescriptor(event.event.model, session.accountId),
+              runtimeModel: event.event.model.ref,
+              effort: event.event.effort,
+            };
+          // pi-models-metrics FR-7: the runtime's own usage snapshot, stored
+          // verbatim — never synthesized from contextUsedTokens/contextLimitTokens.
+          case 'metrics':
+            return { ...session, metrics: event.event.metrics };
           case 'run.state':
             return {
               ...session,
@@ -226,6 +273,10 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       // nothing else would ever collect them, since the map is keyed by a
       // session id that no longer resolves.
       const agentTabs = dropSessionTabs(s.agentTabs, id);
+      // pi-turn-controls: …and its queue ledger + compaction/retry progress —
+      // a no-op for every non-Pi session, since neither map ever held an entry.
+      clearQueueState(id);
+      clearTurnProgress(id);
       if (extraPanes.length === s.extraPanes.length) return { sessions, agentTabs };
       return { sessions, agentTabs, ...compact(s, extraPanes) };
     }),

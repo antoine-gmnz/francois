@@ -213,6 +213,121 @@ describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
   });
 });
 
+describe('runtime events — model.changed / metrics (pi-models-metrics)', () => {
+  const descriptor = {
+    ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
+    displayName: 'Sonnet 5',
+    input: ['text' as const],
+    contextWindow: 200_000,
+    maxOutputTokens: 8_192,
+    reasoning: true,
+    authState: 'verified' as const,
+    availability: 'available' as const,
+  };
+
+  const metrics = {
+    inputTokens: 1_000,
+    outputTokens: 200,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    contextTokens: 84_000,
+    contextWindow: 200_000,
+    contextBasis: 'reported' as const,
+    costUsd: 0.02,
+    costBasis: 'estimated' as const,
+    measuredAt: 5,
+    stale: false,
+  };
+
+  it('model.changed replaces model/runtimeModel/effort with the ACCEPTED values', () => {
+    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    useStore.getState().setSessions([session]);
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: { kind: 'model.changed', model: descriptor, effort: 'high' },
+    });
+    const s = useStore.getState().sessions[0];
+    expect(s.model.label).toBe('Sonnet 5');
+    expect(s.model.descriptor).toEqual(descriptor);
+    expect(s.runtimeModel).toEqual(descriptor.ref);
+    expect(s.effort).toBe('high');
+  });
+
+  it('model.changed with no effort CLEARS a previously set one', () => {
+    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1', effort: 'high' };
+    useStore.getState().setSessions([session]);
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: { kind: 'model.changed', model: descriptor },
+    });
+    expect(useStore.getState().sessions[0].effort).toBeUndefined();
+  });
+
+  it('metrics lands the runtime snapshot verbatim, never synthesized from contextUsedTokens', () => {
+    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    useStore.getState().setSessions([session]);
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: { kind: 'metrics', metrics },
+    });
+    expect(useStore.getState().sessions[0].metrics).toEqual(metrics);
+  });
+
+  it('an old generation cannot repaint a reconnected session with either kind', () => {
+    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g2' };
+    useStore.getState().setSessions([session]);
+    useStore.getState().applyRuntimeEvent({
+      type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
+      event: { kind: 'metrics', metrics },
+    });
+    expect(useStore.getState().sessions[0].metrics).toBeUndefined();
+  });
+});
+
+// pi-session-durability: `recovery` rides on the ordinary full-snapshot
+// session.meta event, so upsertSession is where it has to land — and where a
+// refused Retry's otherwise-identical republish has to bail, same convention
+// as patchStatus/patchError/patchUsage below.
+describe('upsertSession and RuntimeRecovery (pi-session-durability)', () => {
+  function withRecovery(id: string, recovery: SessionMeta['recovery']): SessionMeta {
+    return { ...meta(id), agentRuntime: 'pi', protocol: null, recovery };
+  }
+
+  it('lands a fresh recovery state onto the cached session', () => {
+    useStore.getState().setSessions([meta('s1')]);
+    useStore.getState().upsertSession(withRecovery('s1', { state: 'missing', message: 'native session file is missing' }));
+    expect(useStore.getState().sessions[0].recovery).toEqual({ state: 'missing', message: 'native session file is missing' });
+  });
+
+  it('keeps the sessions array reference when a retry republishes the SAME recovery', () => {
+    const session = withRecovery('s1', { state: 'missing', message: 'native session file is missing' });
+    useStore.getState().setSessions([session]);
+    const before = useStore.getState().sessions;
+    useStore.getState().upsertSession({ ...session });
+    expect(useStore.getState().sessions).toBe(before);
+  });
+
+  it('replaces the entry when recovery actually changes (e.g. a successful reconnect)', () => {
+    const session = withRecovery('s1', { state: 'missing', message: 'native session file is missing' });
+    useStore.getState().setSessions([session]);
+    const before = useStore.getState().sessions;
+    useStore.getState().upsertSession({ ...session, recovery: { state: 'ready' } });
+    expect(useStore.getState().sessions).not.toBe(before);
+    expect(useStore.getState().sessions[0].recovery).toEqual({ state: 'ready' });
+  });
+
+  it('a successful newFrom appends a DISTINCT session, leaving the source session untouched', () => {
+    const source = withRecovery('s1', { state: 'missing', message: 'native session file is missing' });
+    useStore.getState().setSessions([source]);
+    const created = withRecovery('s2', { state: 'ready' });
+    useStore.getState().upsertSession(created);
+    const sessions = useStore.getState().sessions;
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]).toEqual(source);
+    expect(sessions[1]).toEqual(created);
+  });
+});
+
 // Perf guard (fix-bug-on-too-many-sessions): a patch that changes nothing must
 // not mint a new `sessions` array — the array reference is what every
 // whole-array subscriber (App, Sidebar, UsageMeters) keys its re-render on, and

@@ -4,7 +4,7 @@
 // by appliedRef), so a manual edit afterwards always wins.
 
 import { useEffect, useRef } from 'react';
-import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode, ResponseMode } from '../../../contract/common';
+import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode, ResponseMode, RuntimeModelRef } from '../../../contract/common';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
@@ -168,4 +168,17 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     setAccountFromProject(wanted !== undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts]);
+}
+
+/**
+ * pi-models-metrics FR-4: a project's default for a Pi account is an exact
+ * pair, mutually exclusive with `modelId` (ProjectDefaults.runtimeModel).
+ * This hook's own effect above is `modelId`-only end to end — CreateSheet has
+ * no Pi model field to apply this to yet (that wiring is pi-migration-rollout's,
+ * the New Session form's Pi track). Exported as a standalone pure read so that
+ * work has this ready rather than re-deriving it: `undefined` when the
+ * project declares no Pi default, exactly like every other optional default.
+ */
+export function projectRuntimeModelDefault(project: ProjectMeta | null | undefined): RuntimeModelRef | undefined {
+  return project?.defaults.runtimeModel;
 }

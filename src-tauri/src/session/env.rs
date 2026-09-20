@@ -155,6 +155,11 @@ pub mod testenv {
                 scope: Some("user".into()),
                 kind: Some("skill".into()),
                 plugin_id: None,
+                invocation: None,
+                source: None,
+                source_path: None,
+                loaded: None,
+                unavailable_reason: None,
             },
             SkillInfo {
                 name: "seam-fixture-skill-two".into(),
@@ -163,6 +168,11 @@ pub mod testenv {
                 scope: Some("user".into()),
                 kind: Some("skill".into()),
                 plugin_id: None,
+                invocation: None,
+                source: None,
+                source_path: None,
+                loaded: None,
+                unavailable_reason: None,
             },
         ]
     }

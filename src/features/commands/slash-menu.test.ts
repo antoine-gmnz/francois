@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { SlashCommandInfo } from '../../../contract/common';
 import { filterRank } from '../palette/palette';
 import {
+  commandInvocation,
   completionText,
   filterCommands,
   getSessionCommands,
@@ -221,6 +222,24 @@ describe('completionText (FR-8/11)', () => {
   it('Tab completes to /name with one trailing space (token ends, popup closes)', () => {
     expect(completionText('model', 'complete')).toBe('/model ');
     expect(slashToken(completionText('model', 'complete'))).toBeNull();
+  });
+});
+
+describe('commandInvocation (pi-skills-capabilities FR-1/FR-2)', () => {
+  it('is byte-identical to completionText’s legacy /name formula when no invocation is given', () => {
+    expect(commandInvocation(cmd('usage'), 'run')).toBe(completionText('usage', 'run'));
+    expect(commandInvocation(cmd('model'), 'complete')).toBe(completionText('model', 'complete'));
+  });
+
+  it('preserves a runtime-supplied invocation’s exact spelling, colon and all', () => {
+    expect(commandInvocation(cmd('review', 'cli', { invocation: '/skill:review' }), 'run')).toBe('/skill:review');
+    expect(commandInvocation(cmd('summarize', 'cli', { invocation: '/summarize' }), 'complete')).toBe('/summarize ');
+  });
+
+  it('never rebuilds the invocation from name when the two would disagree', () => {
+    expect(commandInvocation(cmd('review', 'cli', { invocation: '/skill:review-thoroughly' }), 'run')).toBe(
+      '/skill:review-thoroughly',
+    );
   });
 });
 

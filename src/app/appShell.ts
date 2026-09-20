@@ -5,6 +5,7 @@
 // without a component renderer (this project has none — see
 // REFACTOR-CONVENTIONS.md).
 
+import type { CapabilityState } from '../../contract/common';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
 import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab';
 import { extIdFromTab } from '../features/extensions/extensions';
@@ -271,6 +272,15 @@ export interface ShortcutActionsContext {
   setNewAgentOpen: (open: boolean) => void;
   closeAgentTab: (agentId: string) => void;
   toggleLeftPane: () => void;
+  /**
+   * pi-skills-capabilities FR-4: the same `subagents` capability the AGENTS
+   * tab body and the palette's `new-agent` command gate through
+   * (`sessionCapability`) — evaluated against the focused session, or
+   * `{available:true}` when none (nothing session-specific to gate).
+   */
+  getSubagentsCapability: () => CapabilityState;
+  /** How the shortcut surfaces an unavailable reason — a toast, same as the palette. */
+  notifyUnavailable: (reason: string) => void;
 }
 
 /**
@@ -299,13 +309,20 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     ctx.setNewSessionOpen(true);
   };
   const openNewAgent = () => {
-    if (ctx.getActiveSessionId()) {
-      ctx.preventDefault();
-      // design 7a: the modal lives inside AgentsPanel, which is a main tab now.
-      ctx.setFocusedPane('main');
-      ctx.setMainTab('agents');
-      ctx.setNewAgentOpen(true);
+    if (!ctx.getActiveSessionId()) return;
+    ctx.preventDefault();
+    // pi-skills-capabilities FR-4: gated exactly like the AGENTS tab body and
+    // the palette's `new-agent` command — a runtime with no subagents support
+    // gets the same plain-English reason, not a silent no-op.
+    const capability = ctx.getSubagentsCapability();
+    if (!capability.available) {
+      ctx.notifyUnavailable(capability.reason ?? 'Action unavailable.');
+      return;
     }
+    // design 7a: the modal lives inside AgentsPanel, which is a main tab now.
+    ctx.setFocusedPane('main');
+    ctx.setMainTab('agents');
+    ctx.setNewAgentOpen(true);
   };
   const toggleDiffTab = () => {
     ctx.setFocusedPane('main');

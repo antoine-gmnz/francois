@@ -15,9 +15,11 @@
 
 use crate::ipc::{AppError, ErrorCode, RuntimeFailure};
 use crate::session::adapter::{
-    CapabilityState, RuntimeCapabilities, RuntimeConnectContext, RuntimeSessionControl,
-    RuntimeSubmission, SubmissionReceipt, RUNTIME_CAPABILITIES,
+    CapabilityState, RuntimeCapabilities, RuntimeCommandInfo, RuntimeConnectContext,
+    RuntimeModelRef, RuntimeSessionControl, RuntimeSubmission, SubmissionReceipt,
+    RUNTIME_CAPABILITIES,
 };
+use crate::session::events;
 use crate::session::events::{RuntimeEventPayload, RuntimeRunState};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -193,15 +195,19 @@ pub(crate) struct PiConnection {
     write_lock: Mutex<()>,
     stdin: Mutex<Option<Box<dyn Write + Send>>>,
     wait_timeout: Mutex<Option<Box<dyn FnMut(Duration) -> bool + Send>>>,
-    kill: Mutex<Option<Box<dyn FnMut() + Send>>>,
+    /// pi-skills-capabilities FR-6: `Arc`-shared (not a bare `Mutex`) so
+    /// `spawn_reader`'s own defensive stop (an extension-policy violation)
+    /// can terminate the tracked process tree without waiting for an
+    /// explicit `shutdown()` call from elsewhere.
+    kill: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>,
     reader: Mutex<Option<std::thread::JoinHandle<()>>>,
-    capabilities: RuntimeCapabilities,
+    /// pi-skills-capabilities FR-3: mutable — `images` is corrected once the
+    /// connect handshake's model descriptor is known, after the baseline
+    /// snapshot below is built with no model in hand yet.
+    capabilities: Mutex<RuntimeCapabilities>,
     /// FR-4: "snapshot runtime ID and sessionFile" — captured off the
-    /// `get_state` handshake's `data`. Neither is read anywhere yet (no
-    /// dependent feature exists in this repo to consume them); they are
-    /// still snapshotted now because FR-4 names it as part of the handshake
-    /// itself, not as a later feature's job to add.
-    #[allow(dead_code)]
+    /// `get_state` handshake's `data`. Read by `handshake_info()` below,
+    /// pi-session-durability's cross-check after a resume handshake.
     handshake_info: Mutex<HandshakeInfo>,
     /// CRITICAL fix (review round 1): `dispatch()`'s own write-failure/
     /// timeout branches must fail the WHOLE connection and publish the
@@ -220,43 +226,106 @@ pub(crate) struct PiConnection {
     reducer: Arc<Mutex<TranscriptReducer>>,
 }
 
+/// pi-session-durability: `session_file` is what `recovery::run_reconnect`
+/// cross-checks after a `--resume` handshake — Pi reporting a DIFFERENT file
+/// than the one just resumed is corruption worth catching, not a value to
+/// discard. `runtime_id` rides along on the same response; still unread by
+/// anything (no dependent feature needs it yet).
 #[derive(Default, Clone)]
 pub(crate) struct HandshakeInfo {
     #[allow(dead_code)]
     pub(crate) runtime_id: Option<String>,
-    #[allow(dead_code)]
     pub(crate) session_file: Option<String>,
+    /// pi-models-metrics: the model/effort/available-levels the SAME
+    /// `get_state` handshake reported, when parseable — lets the connect
+    /// path populate `SessionMeta.model.efforts`/`effort` on the FIRST
+    /// `session.meta` after connecting, per the lead's clarification, without
+    /// a second round trip. `None`/empty when the handshake reply carries no
+    /// parseable model (never treated as a connect failure — see
+    /// `parse_model_from_state`'s own doc).
+    pub(crate) model: Option<(events::RuntimeModelDescriptor, Option<String>, Vec<String>)>,
 }
 
-/// Baseline: nothing is advertised as supported yet (non-goals: no MCP/
-/// subagents/skills UI, no model/auth UI for Pi in this feature) — an
-/// explicit, valid "unsupported" snapshot rather than a missing one, so
-/// `resolve_capability` never falls back to a legacy default for Pi.
+/// Baseline: nothing is advertised as supported yet beyond what a real
+/// feature actually implements — an explicit, valid "unsupported" snapshot
+/// rather than a missing one, so `resolve_capability` never falls back to a
+/// legacy default for Pi.
 ///
-/// KNOWN GAP (review round 1, MEDIUM): FR-4 says the handshake initializes
-/// "using get_state and required capability probes", but no such probe RPC
-/// is named anywhere in `wire.rs`'s (provisional, uncaptured — see its own
-/// doc comment) command set, and every capability here is hardcoded `false`
-/// rather than actually probed. Every capability being unsupported is
-/// consistent with this feature's own non-goals (no MCP/subagents/skills/
-/// model/auth UI for Pi), so it is not user-visible yet — but it means FR-4
-/// is only half-implemented, not signed off as a no-op. Flagged in this
-/// feature's handoff for the lead to either amend FR-4 to say "get_state
-/// only, no capability probes, in this MVP" or supply the real probe RPC
-/// shape once a certified capture exists.
+/// pi-turn-controls: `steering`/`followUps`/`compaction` flip to `available`
+/// here — the three capability keys that feature actually implements
+/// (`session_submit`'s steer/followUp modes, `session_compact`'s Pi branch).
+///
+/// pi-models-metrics: `modelSwitching`/`contextMetrics`/`costMetrics` flip
+/// too — `session_switch_model`/`session_switch_effort`'s Pi branch and
+/// `session_metrics` are real for every connected Pi session, independent of
+/// which model is selected.
+///
+/// pi-skills-capabilities FR-3: `skills` flips true — `get_commands` is
+/// dispatchable the instant a connection exists (this function only ever
+/// runs on an already-certified, already-connected child, so "discovery is
+/// available" is unconditional here). `resumableSessions` flips true too —
+/// this adapter's own `recovery` module implements `--resume`/`get_entries`,
+/// so a Pi session genuinely IS resumable ("follow certified adapter
+/// support"). Every OTHER named-false key gets its OWN plain-English
+/// reason (FR-3's "skillsInstall, mcp, subagents, workflows, permissions,
+/// remoteControl and usageBar false"); `images`/`interactiveCommands` (not
+/// named by FR-3) keep the generic placeholder — `images` is corrected
+/// right after this call, once the connect handshake's model descriptor is
+/// known (see `connect_engine`'s own comment); this MVP implements no
+/// interactive-commands routing for Pi at all.
 fn baseline_capabilities() -> RuntimeCapabilities {
     RUNTIME_CAPABILITIES
         .iter()
         .map(|key| {
-            (
-                key.to_string(),
-                CapabilityState {
-                    available: false,
-                    reason: Some("not yet supported for Pi sessions".into()),
+            let state = match *key {
+                "steering" | "followUps" | "compaction" | "modelSwitching" | "contextMetrics"
+                | "costMetrics" | "skills" | "resumableSessions" => CapabilityState {
+                    available: true,
+                    reason: None,
                 },
-            )
+                "skillsInstall" => capability_unavailable(
+                    "Pi has no separate install step — only running an already-loaded skill is supported",
+                ),
+                "mcp" => capability_unavailable("Pi has no MCP server control surface in this release"),
+                "subagents" => {
+                    capability_unavailable("Pi has no subagent dispatch equivalent in this release")
+                }
+                "workflows" => {
+                    capability_unavailable("Pi has no Workflow-tool equivalent in this release")
+                }
+                "permissions" => capability_unavailable(
+                    "Pi tools run with your user permissions; François does not approve each tool call",
+                ),
+                "remoteControl" => {
+                    capability_unavailable("Remote Control has no Pi equivalent in this release")
+                }
+                "usageBar" => {
+                    capability_unavailable("Pi reports no plan-limit meters the usage bar can read")
+                }
+                _ => capability_unavailable("not yet supported for Pi sessions"),
+            };
+            (key.to_string(), state)
         })
         .collect()
+}
+
+fn capability_unavailable(reason: &str) -> CapabilityState {
+    CapabilityState {
+        available: false,
+        reason: Some(reason.to_string()),
+    }
+}
+
+/// pi-skills-capabilities FR-3: `images` follows the CURRENT model's
+/// advertised input list — nothing else observes it in this MVP (no
+/// separate images probe).
+fn images_capability_state(input: &[String]) -> CapabilityState {
+    let available = input.iter().any(|k| k == "image");
+    CapabilityState {
+        available,
+        reason: (!available)
+            .then(|| "the connected model does not report image input support".to_string()),
+    }
 }
 
 fn response_error(resp: &wire::PiResponse) -> AppError {
@@ -350,12 +419,32 @@ fn finalize_transcript(
     }
 }
 
+/// pi-skills-capabilities FR-6 (defensive; no certified wire shape exists
+/// for this — see this feature's own handoff): `--no-extensions` means a
+/// certified Pi child should never emit anything about an extension's own
+/// UI, so ANY event whose `type` mentions "extension" is treated as a
+/// policy violation rather than fed to `ProtocolEngine` (which would just
+/// count/ignore an unrecognized kind and let the connection keep running).
+/// Checked ahead of `on_line` so the reader can stop the child before the
+/// correlation engine even sees the line — "never automatically confirm a
+/// request as an approval bridge" holds trivially (nothing here ever reads
+/// such an event's fields to reply to it), and this is the "cancel/surface
+/// a policy failure/stop it" half.
+fn extension_policy_violation(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let kind = value.get("type")?.as_str()?;
+    kind.to_ascii_lowercase()
+        .contains("extension")
+        .then(|| format!("baseline session received an extension event ({kind}); stopping"))
+}
+
 fn spawn_reader(
     mut stdout: Box<dyn Read + Send>,
     engine: Arc<Mutex<ProtocolEngine>>,
     publisher: Arc<dyn EventPublisher>,
     stderr_ring: Arc<Mutex<Vec<u8>>>,
     reducer: Arc<Mutex<TranscriptReducer>>,
+    kill: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut framer = wire::FrameReader::new();
@@ -375,6 +464,21 @@ fn spawn_reader(
                 Ok(n) => match framer.feed(&buf[..n]) {
                     Ok(lines) => {
                         for line in lines {
+                            if let Some(reason) = extension_policy_violation(&line) {
+                                let outcome = engine.lock().unwrap().on_policy_violation(&reason);
+                                let ctx = counts_ctx(&engine);
+                                publish_with_stderr(&publisher, outcome, &stderr_ring, ctx);
+                                finalize_transcript(&reducer, &publisher);
+                                // FR-6: "stop it" — terminate the tracked
+                                // process tree right here, rather than only
+                                // marking the connection failed and waiting
+                                // for an explicit Stop/session_remove to
+                                // reap it later.
+                                if let Some(kill_fn) = kill.lock().unwrap().as_mut() {
+                                    kill_fn();
+                                }
+                                break 'reader;
+                            }
                             apply_transcript_line(&reducer, &publisher, &line);
                             let outcome = engine.lock().unwrap().on_line(&line);
                             let terminal = outcome.failure.is_some();
@@ -451,21 +555,27 @@ impl PiConnection {
         let engine = Arc::new(Mutex::new(engine));
         let stderr_ring = handle.stderr_ring.clone();
         let reducer = Arc::new(Mutex::new(TranscriptReducer::new()));
+        // pi-skills-capabilities FR-6: shared with `spawn_reader`'s own
+        // defensive stop, not moved exclusively into `Self.kill` — see
+        // `PiConnection.kill`'s own doc.
+        let kill: Arc<Mutex<Option<Box<dyn FnMut() + Send>>>> =
+            Arc::new(Mutex::new(Some(handle.kill)));
         let reader = spawn_reader(
             handle.stdout,
             engine.clone(),
             publisher.clone(),
             stderr_ring.clone(),
             reducer.clone(),
+            kill.clone(),
         );
         let conn = Arc::new(Self {
             engine,
             write_lock: Mutex::new(()),
             stdin: Mutex::new(Some(handle.stdin)),
             wait_timeout: Mutex::new(Some(handle.wait_timeout)),
-            kill: Mutex::new(Some(handle.kill)),
+            kill,
             reader: Mutex::new(Some(reader)),
-            capabilities: baseline_capabilities(),
+            capabilities: Mutex::new(baseline_capabilities()),
             handshake_info: Mutex::new(HandshakeInfo::default()),
             publisher,
             stderr_ring,
@@ -475,6 +585,21 @@ impl PiConnection {
         match conn.dispatch(PiCommandBody::GetState) {
             Ok(resp) => {
                 if let Some(data) = &resp.data {
+                    // pi-models-metrics: best-effort — the SAME handshake
+                    // reply, read through the ONE mapping function this
+                    // adapter owns for it.
+                    let model = super::models::parse_model_from_state(Some(data));
+                    // pi-skills-capabilities FR-3: `images` follows the
+                    // CURRENT model's advertised input — unknown at the
+                    // moment `baseline_capabilities()` ran above (before this
+                    // handshake reply existed), corrected here the instant
+                    // it does.
+                    if let Some((descriptor, _, _)) = &model {
+                        conn.capabilities.lock().unwrap().insert(
+                            "images".to_string(),
+                            images_capability_state(&descriptor.input),
+                        );
+                    }
                     *conn.handshake_info.lock().unwrap() = HandshakeInfo {
                         runtime_id: data
                             .get("runtimeId")
@@ -484,6 +609,7 @@ impl PiConnection {
                             .get("sessionFile")
                             .and_then(|v| v.as_str())
                             .map(String::from),
+                        model,
                     };
                 }
                 Ok(conn)
@@ -505,8 +631,11 @@ impl PiConnection {
         Self::connect_engine(publisher, handle, ProtocolEngine::new())
     }
 
+    /// `pub(super)` (pi-turn-controls): `adapter::pi::controls`'s own tests
+    /// use this too, to prove `clear_queue`/`abort`/`compact` each surface a
+    /// bounded `RUNTIME_TIMEOUT` rather than waiting on a silent child forever.
     #[cfg(test)]
-    fn connect_with_deadlines(
+    pub(super) fn connect_with_deadlines(
         publisher: Arc<dyn EventPublisher>,
         handle: ProcessHandle,
         deadlines: Deadlines,
@@ -528,7 +657,12 @@ impl PiConnection {
 
     /// FR-1/FR-5: never called while holding a session lock (this type has no
     /// way to reach one) — writes and waits entirely on its own state.
-    fn dispatch(&self, body: PiCommandBody) -> Result<wire::PiResponse, AppError> {
+    ///
+    /// `pub(super)` (pi-turn-controls): `adapter::pi::controls` — a SIBLING
+    /// module of this one, not a child — dispatches its own new command
+    /// kinds (`clear_queue`/`abort`/`compact`) through this exact method
+    /// rather than duplicating the write/correlate/timeout machinery above.
+    pub(super) fn dispatch(&self, body: PiCommandBody) -> Result<wire::PiResponse, AppError> {
         let _write_guard = self.write_lock.lock().unwrap(); // FR-5: one dispatcher at a time
         let started = Instant::now();
         let (command, deadline, rx) = self.engine.lock().unwrap().send(body)?;
@@ -585,6 +719,44 @@ impl PiConnection {
     }
 }
 
+impl PiConnection {
+    /// pi-session-durability FR-4: fetch the durable entry list (+ leaf id)
+    /// for projection rebuild. Read-only, and never called while a prompt is
+    /// in flight — `recovery::reconnect_session` runs this right after the
+    /// handshake, before the connection is handed to the engine for ordinary
+    /// use. Not part of `RuntimeSessionControl`: no other runtime has an
+    /// equivalent verb, so this stays a Pi-specific method on the concrete
+    /// type the adapter's own reconnect flow holds.
+    pub(crate) fn get_entries(&self, cursor: Option<String>) -> Result<wire::PiResponse, AppError> {
+        self.dispatch(PiCommandBody::GetEntries { cursor })
+    }
+
+    /// pi-session-durability: the identity `get_state`'s handshake reported
+    /// for THIS connection — a clone, since the live value is behind a mutex
+    /// no caller should hold onto.
+    pub(crate) fn handshake_info(&self) -> HandshakeInfo {
+        self.handshake_info.lock().unwrap().clone()
+    }
+
+    /// pi-models-metrics FR-5/FR-6: raw `set_model` dispatch — the mapping
+    /// from the read-back response into `RuntimeModelDescriptor` lives in
+    /// `adapter::pi::models` (one mapping function per command, per this
+    /// adapter's provenance convention), not here.
+    fn set_model(&self, model: &RuntimeModelRef, effort: Option<&str>) -> Result<(), AppError> {
+        self.dispatch(PiCommandBody::SetModel {
+            provider_id: model.provider_id.clone(),
+            model_id: model.model_id.clone(),
+            effort: effort.map(str::to_string),
+        })
+        .map(|_| ())
+    }
+
+    /// pi-models-metrics FR-7: raw `get_session_stats` dispatch.
+    fn get_session_stats_raw(&self) -> Result<wire::PiResponse, AppError> {
+        self.dispatch(PiCommandBody::GetSessionStats)
+    }
+}
+
 impl RuntimeSessionControl for PiConnection {
     /// FR-7: resolve any attachments `input.text` references into the
     /// prompt's own image content, rejecting BEFORE anything is dispatched
@@ -592,7 +764,12 @@ impl RuntimeSessionControl for PiConnection {
     /// capability — checked here (not only by the generic session-level
     /// gate) because `PiConnection` alone knows what the wire actually needs.
     fn submit(&self, input: RuntimeSubmission) -> Result<SubmissionReceipt, AppError> {
-        let images_supported = self.capabilities.get("images").is_some_and(|c| c.available);
+        let images_supported = self
+            .capabilities
+            .lock()
+            .unwrap()
+            .get("images")
+            .is_some_and(|c| c.available);
         let body = wire::build_prompt_body(input.text, &input.attachments, images_supported)?;
         self.dispatch(body).map(|resp| SubmissionReceipt {
             request_id: resp.id,
@@ -600,7 +777,7 @@ impl RuntimeSessionControl for PiConnection {
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {
-        self.capabilities.clone()
+        self.capabilities.lock().unwrap().clone()
     }
 
     fn cancel(&self) -> Result<(), AppError> {
@@ -639,6 +816,83 @@ impl RuntimeSessionControl for PiConnection {
             },
         );
         Ok(())
+    }
+
+    /// pi-models-metrics FR-5/FR-6: send `set_model`, then read state back
+    /// (a fresh `get_state`) BEFORE reporting success — never trust the
+    /// `set_model` acceptance alone. A read-back that does not carry a
+    /// parseable current model, or whose effort does not match what was
+    /// requested (Pi silently declining/clamping the level), is
+    /// `RUNTIME_PROTOCOL_ERROR`/`INVALID_INPUT` respectively; either way the
+    /// session's previous selection is left untouched by the CALLER, because
+    /// this method never mutates anything itself (FR-5's "failure preserves
+    /// the previous selection").
+    ///
+    /// KNOWN GAP (this feature's handoff): a malformed-but-wire-successful
+    /// read-back does not additionally force this whole connection into a
+    /// failed state the way a genuine protocol violation
+    /// (`ProtocolEngine::fail`) does — the edge case "read-back failure
+    /// leaves the session unavailable for sending" is only partially covered
+    /// (the switch itself is refused and nothing is applied; the connection
+    /// stays otherwise usable) until a certified wire capture says what a
+    /// real malformed reply looks like.
+    fn switch_model(
+        &self,
+        model: RuntimeModelRef,
+        effort: Option<String>,
+    ) -> Result<(events::RuntimeModelDescriptor, Option<String>, Vec<String>), AppError> {
+        self.set_model(&model, effort.as_deref())?;
+        let state = self.dispatch(PiCommandBody::GetState)?;
+        let Some((descriptor, applied_effort, efforts)) =
+            super::models::parse_model_from_state(state.data.as_ref())
+        else {
+            return Err(AppError::new(
+                ErrorCode::RuntimeProtocolError,
+                "Pi's model read-back was malformed",
+            ));
+        };
+        if !super::models::effort_matches(effort.as_deref(), applied_effort.as_deref()) {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "this model does not support the requested effort level",
+            ));
+        }
+        Ok((descriptor, applied_effort, efforts))
+    }
+
+    /// pi-models-metrics FR-7: `get_session_stats`, mapped by the ONE mapping
+    /// function `adapter::pi::models` owns for this command.
+    fn read_metrics(&self) -> Result<events::RuntimeMetrics, AppError> {
+        let resp = self.get_session_stats_raw()?;
+        Ok(super::models::parse_metrics_response(
+            resp.data.as_ref(),
+            crate::ids::now_ms(),
+        ))
+    }
+
+    /// pi-turn-controls FR-5/FR-6: delegates to `controls::clear_queue` — the
+    /// wire construction lives there (this feature's own file), not here.
+    fn clear_queue(&self) -> Result<(), AppError> {
+        super::controls::clear_queue(self)
+    }
+
+    /// pi-turn-controls FR-6.
+    fn abort(&self) -> Result<(), AppError> {
+        super::controls::abort(self)
+    }
+
+    /// pi-turn-controls FR-8.
+    fn compact(&self) -> Result<(), AppError> {
+        super::controls::compact(self)
+    }
+
+    /// pi-skills-capabilities FR-1: `get_commands`, mapped by the ONE
+    /// mapping function `adapter::pi::resources` owns for it.
+    fn list_commands(&self) -> Result<Vec<RuntimeCommandInfo>, AppError> {
+        let resp = self.dispatch(PiCommandBody::GetCommands)?;
+        Ok(super::resources::parse_get_commands_response(
+            resp.data.as_ref(),
+        ))
     }
 }
 

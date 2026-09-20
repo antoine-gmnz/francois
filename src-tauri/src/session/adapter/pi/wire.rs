@@ -93,6 +93,36 @@ pub(crate) enum PiCommandKind {
     Prompt,
     /// The one cancellation verb this MVP wires up (`RuntimeSessionControl::cancel`).
     Interrupt,
+    /// pi-session-durability FR-4: fetch the durable entry list (+ leaf id)
+    /// used to rebuild the François projection on reconnect. Read-only, never
+    /// a model call — classified like `Interrupt`.
+    GetEntries,
+    /// pi-models-metrics FR-1/FR-2: the no-session discovery probe. Never
+    /// dispatched through `ProtocolEngine`/`PiConnection` — see
+    /// `adapter::pi::models`'s own module doc for why this command is issued
+    /// over a short-lived, ad-hoc round trip instead.
+    GetAvailableModels,
+    /// pi-models-metrics FR-5/FR-6: change the session's active model/effort.
+    /// Read-only in the FR-5 sense that it never carries a user prompt.
+    SetModel,
+    /// pi-models-metrics FR-7: read current usage/cost off the runtime.
+    GetSessionStats,
+    /// pi-turn-controls FR-5/FR-6: the audit-named verb, distinct from
+    /// `Interrupt` (the linked RPC doc: "clear_queue and abort are
+    /// separate") — clears whatever Pi is currently holding in its OWN
+    /// prompt queue. Part of the Stop sequence (`adapter::pi::controls`).
+    ClearQueue,
+    /// pi-turn-controls FR-6: aborts the in-flight turn. Sent AFTER
+    /// `ClearQueue` in the Stop sequence — never assumed to also clear the
+    /// queue (the audit's own distinction).
+    Abort,
+    /// pi-turn-controls FR-8: manual compaction over this connection — never
+    /// a claude side-spawn, and bounded by the 180s `compaction` deadline.
+    Compact,
+    /// pi-skills-capabilities FR-1: the runtime's own loaded skills/
+    /// templates — certified as a required command (`fixtures/manifest.json`).
+    /// Read-only, classified like `GetEntries`/`GetSessionStats`.
+    GetCommands,
 }
 
 impl PiCommandKind {
@@ -101,6 +131,14 @@ impl PiCommandKind {
             Self::GetState => "get_state",
             Self::Prompt => "prompt",
             Self::Interrupt => "interrupt",
+            Self::GetEntries => "get_entries",
+            Self::GetAvailableModels => "get_available_models",
+            Self::SetModel => "set_model",
+            Self::GetSessionStats => "get_session_stats",
+            Self::ClearQueue => "clear_queue",
+            Self::Abort => "abort",
+            Self::Compact => "compact",
+            Self::GetCommands => "get_commands",
         }
     }
 }
@@ -138,6 +176,49 @@ pub(crate) enum PiCommandBody {
     },
     #[serde(rename = "interrupt")]
     Interrupt,
+    /// pi-session-durability FR-4: `cursor` is the previously-recorded entry
+    /// cursor (`PiResumeRecord.lastEntryId`), absent on a first fetch — a
+    /// full re-fetch happens EVERY reconnect regardless (this feature does no
+    /// incremental sync), but a cursor still lets a certified Pi page a large
+    /// session rather than answering unbounded (FR-6).
+    #[serde(rename = "get_entries")]
+    GetEntries {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
+    },
+    /// pi-models-metrics FR-1/FR-2: no fields — the no-session probe asks for
+    /// the whole available snapshot.
+    #[serde(rename = "get_available_models")]
+    GetAvailableModels,
+    /// pi-models-metrics FR-5/FR-6: `effort` omitted clears/leaves the level
+    /// to the model's own default, matching `SessionSwitchEffortInput`'s
+    /// clear-on-absent convention.
+    #[serde(rename = "set_model")]
+    SetModel {
+        #[serde(rename = "providerId")]
+        provider_id: String,
+        #[serde(rename = "modelId")]
+        model_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
+    },
+    /// pi-models-metrics FR-7: no fields — always the CURRENT session's stats.
+    #[serde(rename = "get_session_stats")]
+    GetSessionStats,
+    /// pi-turn-controls FR-5/FR-6: no fields.
+    #[serde(rename = "clear_queue")]
+    ClearQueue,
+    /// pi-turn-controls FR-6: no fields.
+    #[serde(rename = "abort")]
+    Abort,
+    /// pi-turn-controls FR-8: no fields — always the CURRENT session's
+    /// conversation.
+    #[serde(rename = "compact")]
+    Compact,
+    /// pi-skills-capabilities FR-1: no fields — always the CURRENT
+    /// session's own loaded commands.
+    #[serde(rename = "get_commands")]
+    GetCommands,
 }
 
 /// FR-7: build a `prompt` command's body from the user's text and the
@@ -190,6 +271,14 @@ impl PiCommand {
             PiCommandBody::GetState => PiCommandKind::GetState,
             PiCommandBody::Prompt { .. } => PiCommandKind::Prompt,
             PiCommandBody::Interrupt => PiCommandKind::Interrupt,
+            PiCommandBody::GetEntries { .. } => PiCommandKind::GetEntries,
+            PiCommandBody::GetAvailableModels => PiCommandKind::GetAvailableModels,
+            PiCommandBody::SetModel { .. } => PiCommandKind::SetModel,
+            PiCommandBody::GetSessionStats => PiCommandKind::GetSessionStats,
+            PiCommandBody::ClearQueue => PiCommandKind::ClearQueue,
+            PiCommandBody::Abort => PiCommandKind::Abort,
+            PiCommandBody::Compact => PiCommandKind::Compact,
+            PiCommandBody::GetCommands => PiCommandKind::GetCommands,
         }
     }
 
@@ -441,6 +530,143 @@ mod tests {
         };
         let v: Value = serde_json::from_str(interrupt.to_line().trim_end()).unwrap();
         assert_eq!(v, serde_json::json!({ "id": "2", "type": "interrupt" }));
+    }
+
+    /// pi-turn-controls FR-5/FR-6/FR-8: the three new no-field commands the
+    /// Stop sequence and manual compaction dispatch — same "no extra fields"
+    /// shape as `get_state`/`interrupt` above.
+    #[test]
+    fn clear_queue_abort_and_compact_carry_no_extra_fields() {
+        for (id, body, kind, wire_name) in [
+            (
+                "1",
+                PiCommandBody::ClearQueue,
+                PiCommandKind::ClearQueue,
+                "clear_queue",
+            ),
+            ("2", PiCommandBody::Abort, PiCommandKind::Abort, "abort"),
+            (
+                "3",
+                PiCommandBody::Compact,
+                PiCommandKind::Compact,
+                "compact",
+            ),
+        ] {
+            let cmd = PiCommand {
+                id: id.into(),
+                body,
+            };
+            let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+            assert_eq!(v, serde_json::json!({ "id": id, "type": wire_name }));
+            assert_eq!(cmd.kind(), kind);
+            assert_eq!(cmd.kind().wire_name(), wire_name);
+        }
+    }
+
+    /// pi-skills-capabilities FR-1: same "no extra fields" shape as
+    /// `get_state`/`get_session_stats`.
+    #[test]
+    fn get_commands_carries_no_extra_fields() {
+        let cmd = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetCommands,
+        };
+        let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+        assert_eq!(v, serde_json::json!({ "id": "1", "type": "get_commands" }));
+        assert_eq!(cmd.kind(), PiCommandKind::GetCommands);
+        assert_eq!(cmd.kind().wire_name(), "get_commands");
+    }
+
+    #[test]
+    fn get_entries_serializes_cursor_only_when_present() {
+        let no_cursor = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetEntries { cursor: None },
+        };
+        let v: Value = serde_json::from_str(no_cursor.to_line().trim_end()).unwrap();
+        assert_eq!(v, serde_json::json!({ "id": "1", "type": "get_entries" }));
+        assert_eq!(no_cursor.kind(), PiCommandKind::GetEntries);
+        assert_eq!(no_cursor.kind().wire_name(), "get_entries");
+
+        let with_cursor = PiCommand {
+            id: "2".into(),
+            body: PiCommandBody::GetEntries {
+                cursor: Some("entry-7".into()),
+            },
+        };
+        let v: Value = serde_json::from_str(with_cursor.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": "2", "type": "get_entries", "cursor": "entry-7" })
+        );
+    }
+
+    // ------------------------------------------- pi-models-metrics: new commands
+
+    /// Provisional wire shape (no real capture) — see this module's own doc
+    /// comment. Pinned here so a future certification pass has one place to
+    /// reconcile.
+    #[test]
+    fn get_available_models_carries_no_extra_fields() {
+        let cmd = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetAvailableModels,
+        };
+        let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": "1", "type": "get_available_models" })
+        );
+        assert_eq!(cmd.kind(), PiCommandKind::GetAvailableModels);
+        assert_eq!(cmd.kind().wire_name(), "get_available_models");
+    }
+
+    #[test]
+    fn set_model_serializes_provider_model_and_omits_effort_when_absent() {
+        let no_effort = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::SetModel {
+                provider_id: "anthropic".into(),
+                model_id: "claude-sonnet-5".into(),
+                effort: None,
+            },
+        };
+        let v: Value = serde_json::from_str(no_effort.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "id": "1", "type": "set_model",
+                "providerId": "anthropic", "modelId": "claude-sonnet-5"
+            })
+        );
+        assert_eq!(no_effort.kind(), PiCommandKind::SetModel);
+        assert_eq!(no_effort.kind().wire_name(), "set_model");
+
+        let with_effort = PiCommand {
+            id: "2".into(),
+            body: PiCommandBody::SetModel {
+                provider_id: "anthropic".into(),
+                model_id: "claude-sonnet-5".into(),
+                effort: Some("high".into()),
+            },
+        };
+        let v: Value = serde_json::from_str(with_effort.to_line().trim_end()).unwrap();
+        assert_eq!(v["effort"], "high");
+    }
+
+    #[test]
+    fn get_session_stats_carries_no_extra_fields() {
+        let cmd = PiCommand {
+            id: "1".into(),
+            body: PiCommandBody::GetSessionStats,
+        };
+        let v: Value = serde_json::from_str(cmd.to_line().trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": "1", "type": "get_session_stats" })
+        );
+        assert_eq!(cmd.kind(), PiCommandKind::GetSessionStats);
+        assert_eq!(cmd.kind().wire_name(), "get_session_stats");
     }
 
     // ------------------------------------------------------- FR-7: build_prompt_body

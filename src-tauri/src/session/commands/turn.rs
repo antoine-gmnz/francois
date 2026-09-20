@@ -189,12 +189,39 @@ pub fn apply_unqueue(
 /// the running turn drains it (transcript-perf FR-19). Emits no event: the
 /// caller (conversation-view) removes the pending row itself on `removed:
 /// true`, and lets the eventual `message.user` clear it on `removed: false`.
+///
+/// pi-turn-controls FR-5: for a Pi session, the legacy `Session.queue` FIFO is
+/// not what holds a pending intent at all — the admissions ledger does, keyed
+/// by `clientMessageId` (a still-pending Pi intent has no transcript block to
+/// carry a `blockId` yet). `block_id` is read as that id for a Pi session
+/// only. Once Pi has accepted it (ledger state `queued`), individual removal
+/// answers `RUNTIME_UNSUPPORTED` — `session_clear_queue` is the only way to
+/// cancel it (never clear-and-re-enqueue, which could duplicate consumed work).
 #[tauri::command(async)]
 pub fn session_unqueue(
+    app: AppHandle,
     engine: State<'_, Engine>,
     session_id: String,
     block_id: String,
 ) -> IpcResult<UnqueueOutput> {
+    let agent_runtime = match engine.with_session(&session_id, |s| s.agent_runtime) {
+        Some(rt) => rt,
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+    };
+    if agent_runtime == AgentRuntime::Pi {
+        return match engine.with_admissions(&session_id, |l| l.unqueue(&block_id)) {
+            admission::UnqueueOutcome::Removed => {
+                admission::write_admission_sidecar(&app, &engine, &session_id);
+                admission::publish_queue_changed(&app, &engine, &app, &session_id);
+                ok(UnqueueOutput { removed: true })
+            }
+            admission::UnqueueOutcome::Unsupported => err(
+                ErrorCode::RuntimeUnsupported,
+                "this message has already been accepted by the runtime — use Clear queue",
+            ),
+            admission::UnqueueOutcome::NotFound => ok(UnqueueOutput { removed: false }),
+        };
+    }
     let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
     match apply_unqueue(&mut map, &session_id, &block_id) {
         Some(removed) => ok(UnqueueOutput { removed }),
@@ -210,6 +237,12 @@ pub fn session_compact(
 ) -> IpcResult<Option<()>> {
     if let Err((code, msg)) = engine.require_capability(&session_id, "compaction") {
         return err(code, msg);
+    }
+    // pi-turn-controls FR-8: a Pi session's compaction goes through its OWN
+    // runtime connection — never `spawn_claude` — and never falls through to
+    // the claude-shaped path below.
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Pi) {
+        return session_compact_pi(&app, &engine, &session_id);
     }
     // Snapshot cwd/model/resume/effort; enforce status.
     let (
@@ -370,6 +403,67 @@ pub fn session_compact(
         },
     );
     ok(None)
+}
+
+/// pi-turn-controls FR-8: manual compaction over the session's OWN Pi
+/// connection — never `spawn_claude`. Accepted only while idle (else
+/// SESSION_BUSY); a failed compaction reports the error and touches neither
+/// the conversation nor its display history (nothing here mutates either).
+fn session_compact_pi(app: &AppHandle, engine: &Engine, session_id: &str) -> IpcResult<Option<()>> {
+    let busy = match engine.with_session(session_id, |s| status::is_busy(&s.status)) {
+        Some(b) => b,
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+    };
+    if busy {
+        return err(
+            ErrorCode::SessionAlreadyRunning,
+            "a turn is already running",
+        );
+    }
+    let Some(connection) = engine.runtime_connection_for(session_id) else {
+        return err(ErrorCode::RuntimeUnavailable, "runtime is not connected");
+    };
+    publish_compaction(app, engine, session_id, "started", None);
+    match connection.compact() {
+        Ok(()) => {
+            publish_compaction(app, engine, session_id, "completed", None);
+            ok(None)
+        }
+        Err(e) => {
+            // FR-8: "failure preserves conversation + display history" —
+            // this branch mutates neither; it only reports the error.
+            publish_compaction(app, engine, session_id, "failed", Some(e.message.clone()));
+            e.into()
+        }
+    }
+}
+
+/// FR-8: publish the `compaction` runtime event through the same envelope/
+/// sequencing every other Pi event uses. Best-effort — a session with no live
+/// runtime-event producer yet has nothing to publish through.
+fn publish_compaction(
+    app: &AppHandle,
+    engine: &Engine,
+    session_id: &str,
+    state: &str,
+    message: Option<String>,
+) {
+    if let Ok((batch, _block)) = engine.runtime_event_for_session(
+        app,
+        session_id,
+        now_ms(),
+        None,
+        None,
+        events::RuntimeEventPayload::Compaction {
+            state: state.into(),
+            automatic: false,
+            message,
+        },
+    ) {
+        for ev in batch {
+            emit(app, ev);
+        }
+    }
 }
 
 /// Outcome of the /clear full-reset mutation, applied under the sessions lock.

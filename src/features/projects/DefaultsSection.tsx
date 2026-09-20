@@ -6,7 +6,7 @@ import type { ModelCatalogState } from '../../lib/hooks/useModelCatalog';
 
 import type { ProjectDefaults } from '../../../contract/common';
 import { InlineError } from './InlineError';
-import { defaultsSelectValue, type DefaultFieldDef, type DefaultsKey } from './projects';
+import { defaultsSelectValue, piRuntimeModelDefaultLabel, type DefaultFieldDef, type DefaultsKey } from './projects';
 
 export function DefaultsSection({
   catalogState,
@@ -23,10 +23,25 @@ export function DefaultsSection({
   error: string | null;
   disabled: boolean;
 }) {
+  const piModelLabel = piRuntimeModelDefaultLabel(defaults);
+
   return (
     <div className={disabled ? 'pj-group is-disabled' : 'pj-group'}>
       <span className="pj-group-label">SESSION DEFAULTS</span>
       <ModelCatalogStatus state={catalogState} />
+      {/* pi-models-metrics FR-4: this form's model/effort selects are keyed to
+          a legacy modelId and cannot represent a Pi provider/model pair — the
+          saved default shows read-only here instead of a select nobody can
+          use, and simply never appears in the patch this section sends, so it
+          keeps round-tripping on every other field's save. */}
+      {piModelLabel && (
+        <div className="pj-row">
+          <span className="pj-row-label">model (pi)</span>
+          <span className="pj-input" title="set from a Pi session's run chip — this editor cannot change it yet">
+            {piModelLabel}
+          </span>
+        </div>
+      )}
       {fieldDefs.map((field) => {
         const value = defaultsSelectValue(defaults, field.key);
         // §7 case 22: a stored default the catalog no longer offers has no

@@ -192,13 +192,15 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
         <span className={focused ? 'mcp-header-title mcp-header-title--focused' : 'mcp-header-title'}>MCP SERVERS</span>
         <div className="mcp-header-right">
           <span className="mcp-header-count">{servers.length} · [4]</span>
+          {/* pi-skills-capabilities FR-4: the toolbar must agree with the body
+              below it — attaching a server is exactly the `mcp` capability. */}
           <span
             onClick={(e) => {
               e.stopPropagation();
-              if (sessionId) setAttachOpen(true);
+              if (sessionId && capability.available) setAttachOpen(true);
             }}
-            title="attach MCP server"
-            className={sessionId ? 'mcp-attach-btn' : 'mcp-attach-btn mcp-attach-btn--disabled'}
+            title={capability.available ? 'attach MCP server' : (capability.reason ?? 'attach MCP server')}
+            className={sessionId && capability.available ? 'mcp-attach-btn' : 'mcp-attach-btn mcp-attach-btn--disabled'}
           >
             +
           </span>

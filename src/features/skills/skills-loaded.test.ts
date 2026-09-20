@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest';
+import type { RuntimeResourcePolicy, SkillInfo } from '../../../contract/common';
+import { isSkillRunnable, projectResourcesNote, skillInvocationLabel } from './skills-loaded';
+
+const skill = (extra: Partial<SkillInfo> = {}): SkillInfo => ({
+  name: 'review',
+  description: '',
+  installed: true,
+  ...extra,
+});
+
+describe('skillInvocationLabel (FR-1)', () => {
+  it('renders the exact invocation, spelling preserved, when present', () => {
+    expect(skillInvocationLabel(skill({ invocation: '/skill:review' }))).toBe('/skill:review');
+    expect(skillInvocationLabel(skill({ name: 'summarize', invocation: '/summarize' }))).toBe('/summarize');
+  });
+
+  it('never rebuilds the invocation from name when one is given, even if they would disagree', () => {
+    expect(skillInvocationLabel(skill({ name: 'review', invocation: '/skill:review-thoroughly' }))).toBe(
+      '/skill:review-thoroughly',
+    );
+  });
+
+  it('falls back to the legacy /name for a command, and bare name for a skill', () => {
+    expect(skillInvocationLabel(skill({ name: 'deploy', kind: 'command' }))).toBe('/deploy');
+    expect(skillInvocationLabel(skill({ name: 'pdf-reader', kind: 'skill' }))).toBe('pdf-reader');
+    expect(skillInvocationLabel(skill({ name: 'pdf-reader' }))).toBe('pdf-reader');
+  });
+});
+
+describe('isSkillRunnable (FR-1)', () => {
+  it('is runnable when loaded is absent (every non-Pi runtime)', () => {
+    expect(isSkillRunnable(skill())).toBe(true);
+  });
+
+  it('is runnable when loaded: true', () => {
+    expect(isSkillRunnable(skill({ loaded: true }))).toBe(true);
+  });
+
+  it('is NOT runnable when loaded: false — visible, not runnable', () => {
+    expect(isSkillRunnable(skill({ loaded: false }))).toBe(false);
+  });
+});
+
+describe('projectResourcesNote (FR-8)', () => {
+  it('is null for a non-Pi session (no resourcePolicy at all)', () => {
+    expect(projectResourcesNote(undefined)).toBeNull();
+  });
+
+  it('distinguishes ignored from allowed, so "no skills" is never confused with "disabled"', () => {
+    const ignored: RuntimeResourcePolicy = { projectResources: 'ignore', extensions: 'disabled', acknowledgedUnrestrictedTools: true };
+    const allowed: RuntimeResourcePolicy = { projectResources: 'allow', extensions: 'disabled', acknowledgedUnrestrictedTools: true };
+    expect(projectResourcesNote(ignored)).toBe('project resources: ignored — allow them in session settings');
+    expect(projectResourcesNote(allowed)).toBe('project resources: allowed');
+  });
+});

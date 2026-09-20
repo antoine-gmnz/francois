@@ -626,6 +626,46 @@ pub fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord,
     })
 }
 
+/// pi-session-durability HIGH remediation (pi-provider-auth FR-5 wiring):
+/// `session::adapter::pi::recovery`'s entry point into FR-4's execution gate
+/// (`pi_execution_preflight`, this module's `pi` child) — the exact
+/// lock → reconcile-drift → persist → gate sequence `account_pi_setup`/
+/// `account_pi_refresh` (pi_commands.rs) already run inline, factored out
+/// here so a caller OUTSIDE this domain never reaches into `AccountState`'s
+/// own lock directly (only this module ever touches its private `.0` field —
+/// same reason `config_dir_of`/`kind_of` are the accessors they are).
+/// Returns the SAME `(configDir, runtime, distro,
+/// inheritEnvironmentCredentials)` tuple `pi_execution_preflight` does, so a
+/// reconnect's `RuntimeConnectContext` can be built straight from it.
+pub(crate) fn pi_execution_preflight_for(
+    app: &AppHandle,
+    account_id: &str,
+    blocked_action: &str,
+) -> Result<(String, String, Option<String>, bool), AppError> {
+    let Some(state) = app.try_state::<AccountState>() else {
+        return Err(AppError::new(
+            ErrorCode::Internal,
+            "account state is unavailable",
+        ));
+    };
+    let Ok(mut inner) = state.0.lock() else {
+        return Err(AppError::new(
+            ErrorCode::Internal,
+            "account state is unavailable",
+        ));
+    };
+    if find_pi_record(&inner, account_id).is_err() {
+        return Err(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG));
+    }
+    let drifted = reconcile_trust_drift(&mut inner, account_id);
+    if drifted {
+        if let Err(msg) = persist(app, &inner) {
+            eprintln!("accounts: could not persist accounts.json: {msg}");
+        }
+    }
+    pi_execution_preflight(&inner, account_id, blocked_action, drifted)
+}
+
 /// FR-10: every account id a persisted `SessionMeta.accountId` may resolve
 /// against — the built-in id plus every registered one.
 pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {

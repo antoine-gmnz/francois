@@ -126,6 +126,11 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
   const setAccountUsage = useStore((s) => s.setAccountUsage);
   const autoAdd = useStore((s) => s.accountsAutoAdd);
   const setAutoAdd = useStore((s) => s.setAccountsAutoAdd);
+  // pi-models-metrics FR-1: the New Session form's "Open setup" affordance
+  // (RuntimeModelFieldStatus.onOpenSetup) opens this modal straight into that
+  // Pi account's setup takeover — same one-shot idiom as `autoAdd` above.
+  const autoPiSetupId = useStore((s) => s.accountsAutoPiSetupId);
+  const setAutoPiSetupId = useStore((s) => s.setAccountsAutoPiSetupId);
 
   // The provider the rail is pointed at. A PREFERENCE, not the answer:
   // resolveSelectedProvider re-derives the live value every render, so a
@@ -410,6 +415,17 @@ export default function AccountsModal({ onClose }: { onClose: () => void }): JSX
     setProviderPref('anthropic');
     setLogin({});
   }, [autoAdd, setAutoAdd]);
+
+  // pi-models-metrics FR-1: same one-shot idiom, opening the same setup
+  // takeover the Pi section's own "Setup" action does. Pi accounts are not
+  // part of the vendor rail (providers.ts's `providerIdForAccount`) — their
+  // section renders beneath it regardless of `providerPref`, so there is no
+  // rail selection to point anywhere here.
+  useEffect(() => {
+    if (!autoPiSetupId) return;
+    setAutoPiSetupId(null);
+    setPiSetupAccountId(autoPiSetupId);
+  }, [autoPiSetupId, setAutoPiSetupId]);
 
   const closeLogin = () => {
     cancelLogin();

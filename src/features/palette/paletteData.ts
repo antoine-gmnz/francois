@@ -16,9 +16,12 @@ export const usePaletteDataRev = create<{ rev: number; bump: () => void }>((set)
 const bump = () => usePaletteDataRev.getState().bump();
 
 // run-skill: installed skills for a session (skills-panel's skills:list cache, FR-23).
+// pi-skills-capabilities FR-1: a `loaded: false` entry is visible in the panel
+// but never runnable — the palette's own picker must agree (`loaded` absent
+// on every other runtime, so this changes nothing for them).
 const skillsBySession: Record<string, SkillInfo[]> = {};
 export const setPaletteSkills = (sessionId: string, list: SkillInfo[]) => {
-  skillsBySession[sessionId] = list.filter((s) => s.installed);
+  skillsBySession[sessionId] = list.filter((s) => s.installed && s.loaded !== false);
   bump();
 };
 export const getPaletteSkills = (sessionId: string | null): SkillInfo[] =>

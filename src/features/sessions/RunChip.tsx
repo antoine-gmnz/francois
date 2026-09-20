@@ -6,7 +6,7 @@
 
 import type { SessionMeta } from '../../../contract/common';
 import { useStore } from '../../lib/store';
-import { runChipParts } from './run-chip';
+import { runChipMetricsTitle, runChipParts } from './run-chip';
 import './run-chip.css';
 
 export interface RunChipProps {
@@ -17,6 +17,7 @@ export interface RunChipProps {
 
 export default function RunChip({ session, onOpen }: RunChipProps) {
   const parts = runChipParts(session);
+  const metricsTitle = runChipMetricsTitle(session.metrics);
 
   const open = () => {
     useStore.getState().setSessionSettingsId(session.id);
@@ -28,7 +29,7 @@ export default function RunChip({ session, onOpen }: RunChipProps) {
       <span
         role="button"
         tabIndex={0}
-        title={`${parts.model} · ${parts.mode}${parts.response ? ` · ${parts.response}` : ''} — click for session settings`}
+        title={`${parts.model} · ${parts.mode}${parts.response ? ` · ${parts.response}` : ''}${metricsTitle ? ` · ${metricsTitle}` : ''} — click for session settings`}
         onClick={open}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {

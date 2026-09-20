@@ -146,7 +146,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockReset();
-  useStore.setState({ accounts: [], accountsOpen: false, accountsAutoAdd: false, usageByAccount: {} });
+  useStore.setState({ accounts: [], accountsOpen: false, accountsAutoAdd: false, accountsAutoPiSetupId: null, usageByAccount: {} });
 });
 
 afterEach(() => {
@@ -178,6 +178,17 @@ describe('accounts store slice (§6)', () => {
     expect(useStore.getState().accountsAutoAdd).toBe(true);
     useStore.getState().setAccountsAutoAdd(false);
     expect(useStore.getState().accountsOpen).toBe(true);
+  });
+
+  // pi-models-metrics FR-1: "Open setup" from a Pi model field opens the
+  // Accounts modal straight into that account's setup takeover.
+  it('setAccountsAutoPiSetupId is independent of the other flags, one-shot by convention', () => {
+    expect(useStore.getState().accountsAutoPiSetupId).toBeNull();
+    useStore.getState().setAccountsAutoPiSetupId('acc-1');
+    expect(useStore.getState().accountsAutoPiSetupId).toBe('acc-1');
+    expect(useStore.getState().accountsOpen).toBe(false);
+    useStore.getState().setAccountsAutoPiSetupId(null);
+    expect(useStore.getState().accountsAutoPiSetupId).toBeNull();
   });
 });
 

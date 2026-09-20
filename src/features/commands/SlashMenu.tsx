@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 import type { SlashCommandInfo } from '../../../contract/common';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
-import { sourceTag } from './slash-menu';
+import { commandInvocation, sourceTag } from './slash-menu';
 
 interface SlashMenuProps {
   /** Filtered registry rows, verbatim (FR-11). Always [] while `unavailableReason` is set. */
@@ -15,8 +15,10 @@ interface SlashMenuProps {
   selIdx: number;
   /** Hover selects (FR-7) — fired on real pointer movement only, so wheel scrolling never moves the selection (§8). */
   onHover: (idx: number) => void;
-  /** Click = Enter (FR-8): run the row's command through the normal send path. */
-  onRun: (name: string) => void;
+  /** Click = Enter (FR-8): run the row's command through the normal send path.
+   *  Carries the whole entry — pi-skills-capabilities FR-1/FR-2 need its exact
+   *  `invocation`, not just `name`. */
+  onRun: (command: SlashCommandInfo) => void;
   /** Outside click dismisses identically to Esc (FR-9). */
   onDismiss: () => void;
   /**
@@ -61,9 +63,11 @@ export default function SlashMenu({ items, selIdx, onHover, onRun, onDismiss, un
             onMouseMove={() => {
               if (i !== selIdx) onHover(i);
             }}
-            onClick={() => onRun(c.name)}
+            onClick={() => onRun(c)}
           >
-            <span className="slash-name">/{c.name}</span>
+            {/* pi-skills-capabilities FR-1: the exact invocation, spelling
+                preserved — never rebuilt from `name` once the registry supplies one. */}
+            <span className="slash-name">{commandInvocation(c, 'run')}</span>
             <span className="slash-desc">{c.description}</span>
             <span className="slash-tag">{sourceTag(c)}</span>
           </div>

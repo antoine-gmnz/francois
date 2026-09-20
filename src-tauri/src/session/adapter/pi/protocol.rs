@@ -27,7 +27,8 @@ pub(crate) struct Deadlines {
     pub(crate) init: Duration,
     pub(crate) read_only: Duration,
     pub(crate) prompt: Duration,
-    #[allow(dead_code)] // no compaction command wired up in this MVP yet
+    /// pi-turn-controls FR-8: now wired up — `PiCommandKind::Compact`'s own
+    /// bound (the spec's 180s manual-compaction operation deadline).
     pub(crate) compaction: Duration,
 }
 
@@ -48,6 +49,21 @@ impl Deadlines {
             PiCommandKind::GetState => self.init,
             PiCommandKind::Prompt => self.prompt,
             PiCommandKind::Interrupt => self.read_only,
+            // pi-session-durability FR-4: read-only, same bound as Interrupt.
+            PiCommandKind::GetEntries => self.read_only,
+            // pi-models-metrics: none of these three carry a user prompt, so
+            // they share the same read-only bound as Interrupt/GetEntries.
+            PiCommandKind::GetAvailableModels
+            | PiCommandKind::SetModel
+            | PiCommandKind::GetSessionStats => self.read_only,
+            // pi-turn-controls FR-6: clear_queue/abort carry no user prompt —
+            // same read-only bound the Stop sequence's own 5s budget wraps.
+            PiCommandKind::ClearQueue | PiCommandKind::Abort => self.read_only,
+            // pi-turn-controls FR-8: the 180s manual-compaction deadline.
+            PiCommandKind::Compact => self.compaction,
+            // pi-skills-capabilities FR-1: read-only, no user prompt — same
+            // bound as GetEntries/GetSessionStats.
+            PiCommandKind::GetCommands => self.read_only,
         }
     }
 }
@@ -330,6 +346,16 @@ impl ProtocolEngine {
         self.fail(ErrorCode::RuntimeTimeout, reason)
     }
 
+    /// pi-skills-capabilities FR-6: a baseline child emitted something that
+    /// looks like extension UI despite `--no-extensions` — the caller
+    /// (`dispatcher::spawn_reader`) detected this ahead of `on_line`'s own
+    /// classification and asks this connection to fail with a policy-shaped
+    /// code instead of continuing (never fed to `on_event`, which would just
+    /// count/ignore an unrecognized kind and let the connection run).
+    pub(crate) fn on_policy_violation(&mut self, reason: &str) -> LineOutcome {
+        self.fail(ErrorCode::RuntimeUnsupported, reason)
+    }
+
     /// FR-3/FR-6: once a failure wins, later calls are no-ops — the terminal
     /// result is emitted exactly once, and every outstanding request is
     /// rejected immediately rather than left to time out one by one.
@@ -587,6 +613,27 @@ mod tests {
         }
         // Once failed, a second on_timeout/on_disconnect is a no-op (FR-3/FR-6).
         assert!(e.on_disconnect("also broken").failure.is_none());
+    }
+
+    /// pi-skills-capabilities FR-6: fails the connection with
+    /// `RuntimeUnsupported` (not `RuntimeProtocolError`/`RuntimeExited`),
+    /// and rejects any outstanding request exactly like the other terminal
+    /// paths.
+    #[test]
+    fn on_policy_violation_fails_with_runtime_unsupported_and_rejects_outstanding_requests() {
+        let mut e = engine_for_test();
+        let (_h, _, rx) = e.send(PiCommandBody::GetState).unwrap();
+        let outcome = e.on_policy_violation("baseline session received an extension event");
+        assert!(e.is_failed());
+        assert_eq!(outcome.run_state, Some(RuntimeRunState::Failed));
+        assert_eq!(
+            outcome.failure.as_ref().map(|(c, _)| *c),
+            Some(ErrorCode::RuntimeUnsupported)
+        );
+        match rx.recv().unwrap() {
+            PendingOutcome::ConnectionFailed(_) => {}
+            _ => panic!("expected the pending get_state to be rejected"),
+        }
     }
 
     /// FR-8: `counts()` tracks total decoded frames and anomalies

@@ -2,111 +2,85 @@
 
 use super::*;
 
-use crate::ipc::{AppError, RuntimeFailure};
+use crate::ipc::AppError;
 use crate::permissions::{PermissionAsk, PermissionRule};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-/// pi-transcript-events: a normalized generic tool-call lifecycle, sanitized in
-/// the adapter before it crosses IPC — never the raw Pi RPC input/output object.
-/// Mirrors contract/common.ts `RuntimeToolCall`.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-pub struct RuntimeToolCall {
-    pub id: String,
-    pub name: String,
-    /// 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
-    pub status: String,
-    #[serde(rename = "inputText")]
-    pub input_text: String,
-    #[serde(rename = "outputText")]
-    pub output_text: String,
-    /// true ⇒ `inputText` was cut at the 64 KiB preview bound (FR-4).
-    #[serde(rename = "inputTruncated")]
-    pub input_truncated: bool,
-    /// true ⇒ `outputText` was cut at the 64 KiB preview bound (FR-4).
-    #[serde(rename = "outputTruncated")]
-    pub output_truncated: bool,
-    #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<u64>,
-    #[serde(rename = "completedAt", skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<u64>,
+/// pi-models-metrics/pi-transcript-events/pi-turn-controls: the
+/// `RuntimeEventPayload` wire union and the payload structs its variants
+/// carry — see that module's own doc for why it is a sibling rather than a
+/// child. Re-exported here (not glob-exported) because every other file in
+/// this crate already reaches these names through `events::*`.
+pub use runtime_events::{
+    RuntimeAttachmentRef, RuntimeEventPayload, RuntimeMetrics, RuntimeModelDescriptor,
+    RuntimeToolCall,
+};
+
+/// pi-session-durability: whether a runtime-owned session can continue its
+/// native conversation. Mirrors contract/common.ts `RuntimeRecovery` exactly —
+/// presentation only, the native file path stays core-private and never
+/// crosses IPC. `message`/`lastVerifiedAt` are validated the same way
+/// `RuntimeFailure`'s own display text is (bounded, control/bidi-free).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeRecoveryState {
+    Ready,
+    Disconnected,
+    Missing,
+    Corrupt,
+    Incompatible,
+    AccountMissing,
 }
 
-/// pi-transcript-events FR-7: a user-attached file/image, resolved against the
-/// existing attachment ingest/asset scopes — never a base64 payload over IPC.
-/// Mirrors contract/common.ts `RuntimeAttachmentRef`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
-pub struct RuntimeAttachmentRef {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "mimeType")]
-    pub mime_type: String,
-    /// 'available' | 'missing'
-    pub state: String,
+pub struct RuntimeRecovery {
+    pub state: RuntimeRecoveryState,
+    #[serde(rename = "lastVerifiedAt", skip_serializing_if = "Option::is_none")]
+    pub last_verified_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
-/// Ordered, session-scoped runtime events. This intentionally carries only
-/// core-normalised values; Pi's wire DTOs stay inside its future adapter.
-///
-/// pi-transcript-events §5: the five transcript-normalization variants below
-/// (`message.user` .. `notice`) mirror contract/common.ts's
-/// `TranscriptRuntimePayload`, merged into `RuntimeEventPayload` there exactly
-/// as they are merged into this enum here. `blockId` ties each to the
-/// conversation block it creates/updates (contract/conversation-view.ts).
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(tag = "kind")]
-#[allow(dead_code)]
-pub enum RuntimeEventPayload {
-    #[serde(rename = "run.state")]
-    RunState { state: RuntimeRunState },
-    #[serde(rename = "capabilities")]
-    Capabilities {
-        #[serde(serialize_with = "serialize_capabilities")]
-        capabilities: RuntimeCapabilities,
-    },
-    #[serde(rename = "failure")]
-    Failure { failure: RuntimeFailure },
-    #[serde(rename = "message.user")]
-    MessageUser {
-        #[serde(rename = "blockId")]
-        block_id: String,
-        text: String,
-        attachments: Vec<RuntimeAttachmentRef>,
-        #[serde(rename = "clientMessageId", skip_serializing_if = "Option::is_none")]
-        client_message_id: Option<String>,
-    },
-    #[serde(rename = "assistant.delta")]
-    AssistantDelta {
-        #[serde(rename = "blockId")]
-        block_id: String,
-        #[serde(rename = "contentIndex")]
-        content_index: u32,
-        text: String,
-        offset: usize,
-    },
-    #[serde(rename = "assistant.complete")]
-    AssistantComplete {
-        #[serde(rename = "blockId")]
-        block_id: String,
-        text: String,
-        /// 'complete' | 'interrupted' | 'error'
-        outcome: String,
-    },
-    #[serde(rename = "tool.update")]
-    ToolUpdate {
-        #[serde(rename = "blockId")]
-        block_id: String,
-        tool: RuntimeToolCall,
-    },
-    #[serde(rename = "notice")]
-    Notice {
-        #[serde(rename = "blockId")]
-        block_id: String,
-        /// 'info' | 'warning' | 'error'
-        tone: String,
-        text: String,
-    },
+impl RuntimeRecovery {
+    /// The state a Pi session starts in (never connected) and returns to on
+    /// quit/reopen — history is readable, the next send or an explicit
+    /// reconnect re-attaches. Carries no message: `disconnected` is not a
+    /// fault (design brief: "Disconnected: readable history, reconnect on
+    /// send").
+    pub(crate) fn disconnected() -> Self {
+        Self {
+            state: RuntimeRecoveryState::Disconnected,
+            last_verified_at: None,
+            message: None,
+        }
+    }
+
+    /// FR-3: a successful validate-then-connect — `at` stamps `lastVerifiedAt`.
+    pub(crate) fn ready(at: u64) -> Self {
+        Self {
+            state: RuntimeRecoveryState::Ready,
+            last_verified_at: Some(at),
+            message: None,
+        }
+    }
+
+    /// FR-3/FR-7: one of the four hard-fail states, each with the single cause
+    /// the banner renders. Callers pass an already-sanitized message (the Pi
+    /// adapter's own `process::sanitize_diagnostic` — bounded, control/bidi
+    /// free) so a Pi-supplied path or reason can never break layout.
+    pub(crate) fn failed(state: RuntimeRecoveryState, message: impl Into<String>) -> Self {
+        debug_assert!(!matches!(
+            state,
+            RuntimeRecoveryState::Ready | RuntimeRecoveryState::Disconnected
+        ));
+        Self {
+            state,
+            last_verified_at: None,
+            message: Some(message.into()),
+        }
+    }
 }
 
 // ---------- SessionEvent (contract/common.ts, reproduced) ----------
@@ -319,6 +293,7 @@ pub(crate) fn emit(app: &AppHandle, ev: SessionEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::RuntimeFailure;
     use crate::session::testutil::*;
     use serde_json::json;
 
@@ -377,96 +352,6 @@ mod tests {
             )
             .unwrap(),
         };
-    }
-
-    /// pi-transcript-events §5: each transcript-normalization variant
-    /// serializes to the contract's `TranscriptRuntimePayload` shape — the
-    /// `kind` tag plus its own field set, `blockId` always camelCase.
-    #[test]
-    fn transcript_runtime_payload_variants_serialize_to_contract_shape() {
-        let user = serde_json::to_value(RuntimeEventPayload::MessageUser {
-            block_id: "b1".into(),
-            text: "hi".into(),
-            attachments: vec![RuntimeAttachmentRef {
-                id: "a1".into(),
-                name: "cat.png".into(),
-                mime_type: "image/png".into(),
-                state: "available".into(),
-            }],
-            client_message_id: Some("c1".into()),
-        })
-        .unwrap();
-        assert_eq!(
-            user,
-            json!({ "kind": "message.user", "blockId": "b1", "text": "hi",
-                "attachments": [{ "id": "a1", "name": "cat.png", "mimeType": "image/png", "state": "available" }],
-                "clientMessageId": "c1" })
-        );
-
-        let user_no_client_id = serde_json::to_value(RuntimeEventPayload::MessageUser {
-            block_id: "b1".into(),
-            text: "hi".into(),
-            attachments: vec![],
-            client_message_id: None,
-        })
-        .unwrap();
-        assert!(user_no_client_id.get("clientMessageId").is_none());
-
-        let delta = serde_json::to_value(RuntimeEventPayload::AssistantDelta {
-            block_id: "b2".into(),
-            content_index: 0,
-            text: "Hel".into(),
-            offset: 0,
-        })
-        .unwrap();
-        assert_eq!(
-            delta,
-            json!({ "kind": "assistant.delta", "blockId": "b2", "contentIndex": 0, "text": "Hel", "offset": 0 })
-        );
-
-        let complete = serde_json::to_value(RuntimeEventPayload::AssistantComplete {
-            block_id: "b2".into(),
-            text: "Hello".into(),
-            outcome: "complete".into(),
-        })
-        .unwrap();
-        assert_eq!(
-            complete,
-            json!({ "kind": "assistant.complete", "blockId": "b2", "text": "Hello", "outcome": "complete" })
-        );
-
-        let tool = serde_json::to_value(RuntimeEventPayload::ToolUpdate {
-            block_id: "b3".into(),
-            tool: RuntimeToolCall {
-                id: "t1".into(),
-                name: "Read".into(),
-                status: "running".into(),
-                input_text: "file.rs".into(),
-                output_text: "".into(),
-                input_truncated: false,
-                output_truncated: false,
-                started_at: Some(1_000),
-                completed_at: None,
-            },
-        })
-        .unwrap();
-        assert_eq!(tool["kind"], "tool.update");
-        assert_eq!(tool["blockId"], "b3");
-        assert_eq!(tool["tool"]["id"], "t1");
-        assert_eq!(tool["tool"]["status"], "running");
-        assert_eq!(tool["tool"]["startedAt"], 1_000);
-        assert!(tool["tool"].get("completedAt").is_none());
-
-        let notice = serde_json::to_value(RuntimeEventPayload::Notice {
-            block_id: "b4".into(),
-            tone: "warning".into(),
-            text: "unsupported content".into(),
-        })
-        .unwrap();
-        assert_eq!(
-            notice,
-            json!({ "kind": "notice", "blockId": "b4", "tone": "warning", "text": "unsupported content" })
-        );
     }
 
     #[test]
@@ -605,18 +490,21 @@ mod tests {
                     description: "plan usage limits (session + weekly)".into(),
                     source: "builtin",
                     scope: None,
+                    invocation: None,
                 },
                 SlashCommandInfo {
                     name: "deploy".into(),
                     description: "ship it".into(),
                     source: "skill",
                     scope: Some("project".into()),
+                    invocation: None,
                 },
                 SlashCommandInfo {
                     name: "compact".into(),
                     description: String::new(),
                     source: "cli",
                     scope: None,
+                    invocation: None,
                 },
             ],
         };
@@ -671,6 +559,28 @@ mod tests {
         assert_eq!(RuntimeRunState::Stopping.session_status(), status::RUNNING);
         assert_eq!(RuntimeRunState::Idle.session_status(), status::IDLE);
         assert_eq!(RuntimeRunState::Failed.session_status(), status::ERROR);
+    }
+
+    /// pi-session-durability: `RuntimeRecovery` mirrors contract/common.ts
+    /// exactly — kebab-case state, `lastVerifiedAt`/`message` omitted (never
+    /// null) when absent.
+    #[test]
+    fn runtime_recovery_serializes_to_the_contract_shape() {
+        let disconnected = serde_json::to_value(RuntimeRecovery::disconnected()).unwrap();
+        assert_eq!(disconnected, json!({ "state": "disconnected" }));
+
+        let ready = serde_json::to_value(RuntimeRecovery::ready(1_000)).unwrap();
+        assert_eq!(ready, json!({ "state": "ready", "lastVerifiedAt": 1_000 }));
+
+        for (state, wire) in [
+            (RuntimeRecoveryState::Missing, "missing"),
+            (RuntimeRecoveryState::Corrupt, "corrupt"),
+            (RuntimeRecoveryState::Incompatible, "incompatible"),
+            (RuntimeRecoveryState::AccountMissing, "account-missing"),
+        ] {
+            let failed = serde_json::to_value(RuntimeRecovery::failed(state, "cause")).unwrap();
+            assert_eq!(failed, json!({ "state": wire, "message": "cause" }));
+        }
     }
 
     #[test]
@@ -859,12 +769,4 @@ fn serialize_safe_integer<S: serde::Serializer>(
         return Err(serde::ser::Error::custom("unsafe runtime integer"));
     }
     serializer.serialize_u64(*value)
-}
-fn serialize_capabilities<S: serde::Serializer>(
-    caps: &RuntimeCapabilities,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    adapter::validate_capabilities(caps)
-        .map_err(|_| serde::ser::Error::custom("invalid capability snapshot"))?;
-    caps.serialize(serializer)
 }

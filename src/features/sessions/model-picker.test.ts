@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo } from '../../../contract/common';
-import { familyOf, groupByFamily } from './model-picker';
+import { familyOf, filterModelInfos, groupByFamily, groupModelsBy, sortFavoritesFirst } from './model-picker';
 
 const model = (id: string, label: string): ModelInfo => ({ id, label });
 
@@ -43,6 +43,70 @@ describe('groupByFamily (FR-21)', () => {
       { family: 'A', items: [models[0]] },
       { family: 'B', items: [models[1]] },
     ]);
+  });
+});
+
+describe('groupModelsBy (pi-models-metrics §5)', () => {
+  it('groups by an arbitrary key, first-seen order — the building block groupByFamily uses', () => {
+    const anthropic = { id: 'a', label: 'Sonnet 5', descriptor: { ref: { providerId: 'anthropic', modelId: 'sonnet' } } } as ModelInfo;
+    const ollama = { id: 'b', label: 'Sonnet 5', descriptor: { ref: { providerId: 'ollama', modelId: 'sonnet' } } } as ModelInfo;
+    // FR-1: identical modelId under two providers stays two distinct rows —
+    // grouping by providerId (not family/label) keeps them apart.
+    const groups = groupModelsBy([anthropic, ollama], (m) => m.descriptor!.ref.providerId);
+    expect(groups).toEqual([
+      { family: 'anthropic', items: [anthropic] },
+      { family: 'ollama', items: [ollama] },
+    ]);
+  });
+});
+
+describe('filterModelInfos (design brief §Flows: search provider and model labels)', () => {
+  const sonnet = { id: 'a', label: 'Sonnet 5', descriptor: { ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' } } } as ModelInfo;
+  const llama = { id: 'b', label: 'Llama 3', descriptor: { ref: { providerId: 'ollama', modelId: 'llama3' } } } as ModelInfo;
+
+  it('is a no-op for a blank query', () => {
+    expect(filterModelInfos([sonnet, llama], '')).toEqual([sonnet, llama]);
+    expect(filterModelInfos([sonnet, llama], '   ')).toEqual([sonnet, llama]);
+  });
+
+  it('matches the display label', () => {
+    expect(filterModelInfos([sonnet, llama], 'sonnet')).toEqual([sonnet]);
+  });
+
+  it('matches the provider id even when it is not in the label', () => {
+    expect(filterModelInfos([sonnet, llama], 'ollama')).toEqual([llama]);
+  });
+
+  it('matches the exact model id', () => {
+    expect(filterModelInfos([sonnet, llama], 'llama3')).toEqual([llama]);
+  });
+
+  it('is case-insensitive', () => {
+    expect(filterModelInfos([sonnet, llama], 'ANTHROPIC')).toEqual([sonnet]);
+  });
+
+  it('falls back to runtimeModel when there is no descriptor (a merged unavailable row)', () => {
+    const gone = { id: 'c', label: 'gpt-4o', runtimeModel: { providerId: 'openai-compat', modelId: 'gpt-4o' } } as ModelInfo;
+    expect(filterModelInfos([gone], 'openai-compat')).toEqual([gone]);
+  });
+
+  it('matches nothing for a query no field carries', () => {
+    expect(filterModelInfos([sonnet, llama], 'xyz')).toEqual([]);
+  });
+});
+
+describe('sortFavoritesFirst (design brief §Flows: favorites)', () => {
+  it('moves favorites to the front, preserving relative order within each half', () => {
+    expect(sortFavoritesFirst(['a', 'b', 'c', 'd'], (x) => x === 'c' || x === 'a')).toEqual(['a', 'c', 'b', 'd']);
+  });
+
+  it('returns the SAME array reference when nothing is favorited', () => {
+    const items = ['a', 'b'];
+    expect(sortFavoritesFirst(items, () => false)).toBe(items);
+  });
+
+  it('is a no-op ordering when everything is favorited', () => {
+    expect(sortFavoritesFirst(['a', 'b'], () => true)).toEqual(['a', 'b']);
   });
 });
 

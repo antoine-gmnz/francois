@@ -54,9 +54,15 @@ export const DENIED_ARG_FLAGS: readonly string[] = [
  * role prompt, and raw passthrough argv. Model / effort / permission mode were removed — a profile
  * is always paired with a project, and the project's own session defaults own those three.
  */
-export interface SessionProfile {
+export interface LegacySessionProfile {
   id: ProfileId;
   name: string; // trimmed, 1–MAX_PROFILE_NAME; NOT unique (FR-3)
+  /**
+   * pi-migration-rollout FR-2: the runtime discriminator. A stored profile with NO
+   * discriminator loads as 'legacy' with its fields and behaviour unchanged — the core
+   * normalizes on load, so over IPC `kind` is always present.
+   */
+  kind: 'legacy';
   /** Inline text. Present and non-empty ⇒ REPLACE mode: it replaces Claude Code's own prompt. */
   systemPrompt?: string;
   /** Verbatim as typed, for round-tripping the editor (FR-8). */
@@ -67,27 +73,92 @@ export interface SessionProfile {
   updatedAt: number; // epoch ms
 }
 
+// ---------- pi-migration-rollout: the Pi profile ----------
+
+export const MAX_PI_INSTRUCTION_PATHS = 20;
+export const MAX_PI_SKILL_PATHS = 50;
+
+/** The certified Pi built-in tool names — the ONLY values `PiProfileSettings.tools` accepts. */
+export const PI_BUILTIN_TOOLS = ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'] as const;
+export type PiBuiltinTool = (typeof PI_BUILTIN_TOOLS)[number];
+
+/**
+ * What a Pi profile owns: prompt, tool, skill and resource configuration — and nothing a
+ * project's session defaults own. There is deliberately NO raw argv, no plaintext
+ * environment secret, no account, model, effort or permission mode here (FR-2/FR-3).
+ */
+export interface PiProfileSettings {
+  systemPromptMode: 'default' | 'append' | 'replace';
+  /** Required and non-empty for 'append' / 'replace'; at most MAX_SYSTEM_PROMPT chars.
+   *  Absent for 'default'. Reaches Pi through safe argv/file handling, never shell text. */
+  systemPrompt?: string;
+  /** Absolute paths to existing text files, at most MAX_PI_INSTRUCTION_PATHS. Read ONCE
+   *  into the core-owned launch prompt snapshot; a missing path is INVALID_INPUT. */
+  instructionPaths: string[];
+  /** Absolute paths, at most MAX_PI_SKILL_PATHS, validated before spawn. */
+  skillPaths: string[];
+  /**
+   * An ALLOWLIST of certified built-ins: it restricts which tools are available, not
+   * filesystem or network rights. An EMPTY array explicitly means no built-in tools —
+   * never "the defaults". An unknown name rejects rather than broadening to defaults.
+   */
+  tools: PiBuiltinTool[];
+  /** Seeds the session's RuntimeResourcePolicy.projectResources; never the acknowledgment. */
+  projectResources: 'ignore' | 'allow';
+}
+
+export interface PiSessionProfile {
+  id: ProfileId;
+  name: string; // same bounds as the legacy profile
+  kind: 'pi';
+  settings: PiProfileSettings;
+  createdAt: number; // epoch ms
+  updatedAt: number; // epoch ms
+}
+
+/**
+ * A stored entry whose discriminator this build does not know is preserved on disk
+ * untouched and is NOT reinterpreted: it is omitted from `profiles_list`, and the registry
+ * is never rewritten in a way that drops its fields (FR-6).
+ */
+export type SessionProfile = LegacySessionProfile | PiSessionProfile;
+
 // ---------- francois:profiles:list ----------
 
 // invoke('profiles_list'): Promise<Result<SessionProfile[]>>   // ordered per FR-4; errors: 'INTERNAL'
 
 // ---------- francois:profiles:create ----------
 
-export interface ProfileCreateInput {
-  name: string;
-  systemPrompt?: string;
-  extraArgsRaw?: string;
-}
+export type ProfileCreateInput =
+  | { kind?: 'legacy'; name: string; systemPrompt?: string; extraArgsRaw?: string }
+  | { kind: 'pi'; name: string; settings: PiProfileSettings };
 // invoke('profiles_create', req: ProfileCreateInput): Promise<Result<SessionProfile>>
-// errors: 'INVALID_INPUT' (bounds, unterminated quote) · 'PROFILE_ARG_DENIED' · 'INTERNAL'
+// errors: 'INVALID_INPUT' (bounds, unterminated quote, a Pi settings rule) ·
+//   'PROFILE_ARG_DENIED' · 'INTERNAL'
 
 // ---------- francois:profiles:update ----------
 
-export interface ProfileUpdateInput extends ProfileCreateInput {
-  id: ProfileId;
-}
+export type ProfileUpdateInput = ProfileCreateInput & { id: ProfileId };
 // invoke('profiles_update', req: ProfileUpdateInput): Promise<Result<SessionProfile>>
-// errors: 'PROFILE_NOT_FOUND' · 'INVALID_INPUT' · 'PROFILE_ARG_DENIED' · 'INTERNAL'
+// errors: 'PROFILE_NOT_FOUND' · 'INVALID_INPUT' · 'PROFILE_ARG_DENIED' ·
+//   'PROFILE_RUNTIME_MISMATCH' (an update may not change a stored profile's kind) · 'INTERNAL'
+
+// ---------- francois:profiles:copyToPi (NEW, pi-migration-rollout FR-4) ----------
+
+/**
+ * "Create Pi copy" of a LEGACY profile. `id` is the source. Only the name and the
+ * user-authored system prompt carry over — the caller sends them back inside the reviewed
+ * `name` / `settings`; the source's `extraArgs` are never translated (no `--mcp-config`,
+ * no `--allowedTools`). The source profile is kept unchanged.
+ */
+export interface ProfileCopyToPiInput {
+  id: ProfileId;
+  name: string;
+  settings: PiProfileSettings;
+}
+// invoke('profiles_copy_to_pi', req: ProfileCopyToPiInput): Promise<Result<PiSessionProfile>>
+// errors: 'PROFILE_NOT_FOUND' · 'PROFILE_RUNTIME_MISMATCH' (the source is already a Pi
+//   profile) · 'INVALID_INPUT' · 'INTERNAL'
 
 // ---------- francois:profiles:remove ----------
 

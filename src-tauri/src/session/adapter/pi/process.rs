@@ -21,16 +21,19 @@ const STDERR_RING_BYTES: usize = 64 * 1024;
 
 // ---------------------------------------------------------------- argv
 
-/// FR-1/FR-6/FR-10: the baseline, locked-down Pi RPC argv. `--no-extensions`
-/// and the absence of any `-e` are unconditional (FR-10: "Do not invoke `pi
-/// install`/`pi update`" and never pass extension args in this MVP);
-/// `--no-approve` is unconditional too — the session's project-resource
-/// choice that could relax it (task 09) does not exist on
-/// `RuntimeConnectContext` yet, so there is nothing to read permission from.
-/// `ctx.resume` carries FR-6's recorded reference for a reconnect — its
-/// absence means a fresh Pi conversation, never a silent new-thread fallback
-/// disguised as a resume.
-pub(crate) fn pi_args(ctx: &RuntimeConnectContext) -> Vec<String> {
+/// FR-1/FR-6/FR-10: the baseline, locked-down Pi RPC argv. The absence of
+/// any `-e`/raw argv/config-path override is unconditional (FR-10: "Do not
+/// invoke `pi install`/`pi update`" and never pass extension args in this
+/// MVP). `--no-extensions`/`--no-approve` are now the session's own pinned
+/// launch policy's call, not a hardcoded pair — pi-skills-capabilities
+/// FR-6/FR-7's ONE call into `resources::resolve_launch_args` (which runs
+/// FR-7's preflight before returning FR-6's policy-derived flags). A
+/// connect context with no pinned policy is a wiring bug (`session_create`
+/// requires one for every Pi account) and refuses rather than silently
+/// falling back to the old unconditional pair. `ctx.resume` carries FR-6's
+/// recorded reference for a reconnect — its absence means a fresh Pi
+/// conversation, never a silent new-thread fallback disguised as a resume.
+pub(crate) fn pi_args(ctx: &RuntimeConnectContext) -> Result<Vec<String>, AppError> {
     let mut args = vec![
         "--mode".into(),
         "rpc".into(),
@@ -38,14 +41,43 @@ pub(crate) fn pi_args(ctx: &RuntimeConnectContext) -> Vec<String> {
         ctx.model.provider_id.clone(),
         "--model".into(),
         ctx.model.model_id.clone(),
-        "--no-extensions".into(),
-        "--no-approve".into(),
     ];
+    let policy = ctx.resource_policy.as_ref().ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Internal,
+            "this Pi connection carries no pinned resource policy",
+        )
+    })?;
+    args.extend(super::resources::resolve_launch_args(policy, &ctx.cwd)?);
     if let Some(reference) = &ctx.resume {
         args.push("--resume".into());
         args.push(reference.clone());
     }
-    args
+    Ok(args)
+}
+
+/// pi-migration-rollout FR-3/FR-5: the ONE call into the profile argv
+/// builder, split out of `spawn` so it is testable without depending on
+/// whether the test host happens to have a certified Pi installed (same
+/// reasoning `certified_executable`'s own doc gives for its split). `None`
+/// (no profile at all, or no creation-time override) means Pi launches with
+/// its own defaults — the baseline argv is returned unchanged.
+///
+/// FR-3 (read-once fix): the prompt text itself is NEVER read from disk
+/// here — `ctx.pi_launch_prompt` is the snapshot resolved once at creation
+/// (or lazily once for a pre-fix persisted session, see `recovery.rs`) and
+/// carried through unchanged. Only `skillPaths` are re-validated on every
+/// connect, per the contract's own "validated before spawn" rule for them.
+fn full_pi_args(ctx: &RuntimeConnectContext) -> Result<Vec<String>, AppError> {
+    let mut args = pi_args(ctx)?;
+    if let Some(settings) = &ctx.pi_profile_settings {
+        super::profile_args::validate_skill_paths(settings)?;
+        let prompt = ctx.pi_launch_prompt.clone().unwrap_or_default();
+        args.extend(super::profile_args::build_pi_profile_args(
+            settings, &prompt,
+        ));
+    }
+    Ok(args)
 }
 
 // ---------------------------------------------------------------- spawn
@@ -67,19 +99,64 @@ pub(crate) struct ProcessHandle {
     pub(crate) stderr_ring: Arc<Mutex<Vec<u8>>>,
 }
 
+/// pi-session-durability HIGH remediation (pi-provider-auth FR-5 wiring):
+/// the environment THIS connect gives its child — delegates entirely to
+/// `crate::account::pi_account_env` (already exhaustively unit-tested
+/// there), but pinned here too as its OWN test: this is the one call site
+/// that reads a `RuntimeConnectContext`'s pinned `config_dir`/
+/// `inherit_environment_credentials`, so a future change to either field's
+/// plumbing fails a test in THIS module, not only in `account::pi::env`.
+/// Pure over an explicit `ambient` snapshot — never reads `std::env::vars()`
+/// itself — so it needs no real process to test.
+pub(crate) fn connect_env(
+    ambient: &[(String, String)],
+    config_dir: &str,
+    inherit_environment_credentials: bool,
+) -> Vec<(String, String)> {
+    crate::account::pi_account_env(ambient, config_dir, inherit_environment_credentials)
+}
+
 /// FR-1: resolve the certified executable, build the baseline argv, and
 /// spawn it in `ctx.cwd` — the session's OWN working directory/worktree,
 /// which is what makes it an "owned session directory": no two concurrent
 /// Pi children ever share one. Never touches the session lock (it doesn't
 /// have one) and never blocks past the spawn itself.
+///
+/// pi-session-durability HIGH remediation: the child's environment is never
+/// the ambient one — `connect_env` (`account::pi_account_env`) builds the
+/// isolated set FR-5 requires from the pinned account's `config_dir`/
+/// `inherit_environment_credentials` (populated on `ctx` by the execution
+/// gate, `account::pi_execution_preflight_for`, before a connect is ever
+/// attempted), and `exact_env` clears whatever this process would otherwise
+/// hand the child before applying exactly that set. The login-shell `PATH`
+/// resolution `process_util` provides for locating binaries is preserved by
+/// folding it into `ambient` first, same as `setup::spawn_pi_setup` already
+/// does for the setup PTY.
 pub(crate) fn spawn(ctx: &RuntimeConnectContext) -> Result<ProcessHandle, AppError> {
+    // Checked before any I/O (installation discovery included) — a missing
+    // pinned directory is a wiring bug, not something worth a live probe to
+    // discover, and it keeps this failure mode host-independent to test.
+    let config_dir = ctx.config_dir.as_deref().ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Internal,
+            "this Pi connection carries no pinned account configuration directory",
+        )
+    })?;
     let status =
         super::discovery::probe_installation(&ctx.runtime, ctx.worktree_distro.as_deref(), false)?;
     let exe = certified_executable(status)?;
 
+    let mut ambient: Vec<(String, String)> = std::env::vars().collect();
+    if let Some(path) = crate::process_util::login_shell_path_env() {
+        ambient.retain(|(k, _)| k != "PATH");
+        ambient.push(("PATH".to_string(), path));
+    }
+    let env = connect_env(&ambient, config_dir, ctx.inherit_environment_credentials);
+
     let mut child = crate::process_util::spawn(&exe)
-        .args(pi_args(ctx))
+        .args(full_pi_args(ctx)?)
         .current_dir(&ctx.cwd)
+        .exact_env(env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -195,6 +272,8 @@ pub(crate) fn sanitize_diagnostic(text: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::session::adapter::pi::discovery::{InstallState, Provenance, RuntimeInstallStatus};
+    use crate::session::adapter::pi::resources::{ExtensionsPolicy, ProjectResources};
+    use crate::session::adapter::pi::RuntimeResourcePolicy;
     use crate::session::adapter::{RuntimeLaunchPolicy, RuntimeModelRef, RuntimeProfileSnapshot};
 
     fn ctx(resume: Option<&str>) -> RuntimeConnectContext {
@@ -217,12 +296,21 @@ mod tests {
                 model_id: "claude-x".into(),
             },
             resume: resume.map(String::from),
+            config_dir: Some("/pi/acct".into()),
+            inherit_environment_credentials: false,
+            pi_profile_settings: None,
+            pi_launch_prompt: None,
+            resource_policy: Some(RuntimeResourcePolicy {
+                project_resources: ProjectResources::Ignore,
+                extensions: ExtensionsPolicy::Disabled,
+                acknowledged_unrestricted_tools: true,
+            }),
         }
     }
 
     #[test]
     fn baseline_argv_always_locks_extensions_and_approval_off() {
-        let args = pi_args(&ctx(None));
+        let args = pi_args(&ctx(None)).unwrap();
         assert!(args.windows(2).any(|w| w == ["--mode", "rpc"]));
         assert!(args.windows(2).any(|w| w == ["--provider", "anthropic"]));
         assert!(args.windows(2).any(|w| w == ["--model", "claude-x"]));
@@ -234,8 +322,166 @@ mod tests {
 
     #[test]
     fn a_recorded_reference_becomes_an_explicit_resume_flag() {
-        let args = pi_args(&ctx(Some("pi-ref-1")));
+        let args = pi_args(&ctx(Some("pi-ref-1"))).unwrap();
         assert!(args.windows(2).any(|w| w == ["--resume", "pi-ref-1"]));
+    }
+
+    /// pi-skills-capabilities FR-6/FR-7: `pi_args` refuses a context with no
+    /// pinned policy — the same defensive shape `spawn` already applies to
+    /// a missing `config_dir`.
+    #[test]
+    fn pi_args_refuses_a_context_with_no_pinned_resource_policy() {
+        let mut bare = ctx(None);
+        bare.resource_policy = None;
+        let err = pi_args(&bare).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Internal);
+    }
+
+    /// pi-skills-capabilities FR-7: `projectResources: 'allow'` drops
+    /// `--no-approve` but never `--no-extensions`.
+    #[test]
+    fn pi_args_drops_no_approve_only_when_the_pinned_policy_allows_project_resources() {
+        let mut allowed = ctx(None);
+        allowed.resource_policy = Some(RuntimeResourcePolicy {
+            project_resources: ProjectResources::Allow,
+            extensions: ExtensionsPolicy::Disabled,
+            acknowledged_unrestricted_tools: true,
+        });
+        let args = pi_args(&allowed).unwrap();
+        assert!(args.iter().any(|a| a == "--no-extensions"));
+        assert!(!args.iter().any(|a| a == "--no-approve"));
+    }
+
+    /// pi-skills-capabilities FR-7: a preflight failure refuses the WHOLE
+    /// argv build — never a partial/best-effort flag set.
+    #[test]
+    fn pi_args_propagates_a_preflight_failure() {
+        let dir =
+            std::env::temp_dir().join(format!("francois-pi-args-preflight-{}", crate::ids::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"scripts":{"postinstall":"node ./setup.js"}}"#,
+        )
+        .unwrap();
+        let mut hostile = ctx(None);
+        hostile.cwd = dir.to_string_lossy().to_string();
+        hostile.resource_policy = Some(RuntimeResourcePolicy {
+            project_resources: ProjectResources::Allow,
+            extensions: ExtensionsPolicy::Disabled,
+            acknowledged_unrestricted_tools: true,
+        });
+        let err = pi_args(&hostile).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// pi-migration-rollout FR-5: no profile at all means Pi launches with
+    /// its own defaults — `full_pi_args` is the baseline argv, unchanged.
+    #[test]
+    fn full_pi_args_with_no_profile_is_the_baseline_argv() {
+        let bare = ctx(None);
+        assert_eq!(full_pi_args(&bare).unwrap(), pi_args(&bare).unwrap());
+    }
+
+    /// The ONE call into the profile argv builder: a resolved settings
+    /// snapshot's tools/skills/prompt flags ride on the SAME argv as the
+    /// baseline `--mode`/`--provider`/`--model` flags.
+    #[test]
+    fn full_pi_args_appends_the_resolved_profile_argv() {
+        use crate::profiles::{
+            PiBuiltinTool, PiProfileSettings, PiProjectResources, PiSystemPromptMode,
+        };
+        let mut with_profile = ctx(None);
+        with_profile.pi_profile_settings = Some(PiProfileSettings {
+            system_prompt_mode: PiSystemPromptMode::Default,
+            system_prompt: None,
+            instruction_paths: Vec::new(),
+            skill_paths: Vec::new(),
+            tools: vec![PiBuiltinTool::Read],
+            project_resources: PiProjectResources::Ignore,
+        });
+        let args = full_pi_args(&with_profile).unwrap();
+        assert!(
+            args.windows(2).any(|w| w == ["--mode", "rpc"]),
+            "keeps the baseline argv"
+        );
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--allow-tool" && w[1] == "read"));
+    }
+
+    /// A profile referencing a skill path that no longer exists must refuse
+    /// the whole spawn — never silently drop the flag or launch unrestricted.
+    #[test]
+    fn full_pi_args_propagates_a_missing_skill_path_as_an_error() {
+        use crate::profiles::{PiProfileSettings, PiProjectResources, PiSystemPromptMode};
+        let mut with_profile = ctx(None);
+        let missing = std::env::temp_dir().join("francois-process-missing-skill.md");
+        with_profile.pi_profile_settings = Some(PiProfileSettings {
+            system_prompt_mode: PiSystemPromptMode::Default,
+            system_prompt: None,
+            instruction_paths: Vec::new(),
+            skill_paths: vec![missing.to_string_lossy().to_string()],
+            tools: Vec::new(),
+            project_resources: PiProjectResources::Ignore,
+        });
+        let err = full_pi_args(&with_profile).expect_err("missing skill path");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    /// pi-session-durability HIGH remediation: `connect_env` pins the
+    /// account's own directory and respects its inherit flag — the exact
+    /// two fields `spawn` reads off `RuntimeConnectContext` — with no real
+    /// process at all.
+    #[test]
+    fn connect_env_pins_the_account_directory_and_drops_credentials_by_default() {
+        let ambient = vec![
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("ANTHROPIC_API_KEY".to_string(), "secret-claude".to_string()),
+            (
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "/accounts/other".to_string(),
+            ),
+        ];
+        let env = connect_env(&ambient, "/pi/acct-a", false);
+        let map: std::collections::HashMap<_, _> = env.into_iter().collect();
+        assert_eq!(
+            map.get("PI_CODING_AGENT_DIR").map(String::as_str),
+            Some("/pi/acct-a")
+        );
+        assert!(!map.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!map.contains_key("CLAUDE_CONFIG_DIR"));
+    }
+
+    #[test]
+    fn connect_env_inherits_ambient_credentials_only_when_opted_in() {
+        let ambient = vec![("OPENAI_API_KEY".to_string(), "secret-openai".to_string())];
+        let env = connect_env(&ambient, "/pi/acct-b", true);
+        let map: std::collections::HashMap<_, _> = env.into_iter().collect();
+        assert_eq!(
+            map.get("OPENAI_API_KEY").map(String::as_str),
+            Some("secret-openai")
+        );
+        assert_eq!(
+            map.get("PI_CODING_AGENT_DIR").map(String::as_str),
+            Some("/pi/acct-b")
+        );
+    }
+
+    /// A `ctx` with no pinned account directory (a test-only shape —
+    /// production never builds one, see the field's own doc) must never
+    /// silently fall back to spawning with the ambient environment.
+    #[test]
+    fn spawn_refuses_a_context_with_no_pinned_account_directory() {
+        let mut bare = ctx(None);
+        bare.config_dir = None;
+        // `ProcessHandle` carries no `Debug` impl (its closures cannot derive
+        // one), so match rather than `unwrap_err()`.
+        match spawn(&bare) {
+            Err(err) => assert_eq!(err.code, ErrorCode::Internal),
+            Ok(_) => panic!("expected spawn to refuse a context with no pinned account directory"),
+        }
     }
 
     fn status(

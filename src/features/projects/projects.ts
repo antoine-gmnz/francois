@@ -309,10 +309,17 @@ const INHERIT: FieldOption = { value: '', label: 'inherit' };
  * Structural on purpose: this module stays free of the multi-account feature so
  * the dependency runs one way only (sessions/accounts import projects, not the
  * reverse).
+ *
+ * pi-models-metrics FR-4: `kind` is optional and read ONLY to tell whether the
+ * default account is a Pi one — the modelId/effort selects below are keyed to
+ * a legacy per-account catalog that is always empty for Pi (its own
+ * `runtime_models` probe is a different command), so they are hidden rather
+ * than rendered as two rows that can only ever offer "inherit".
  */
 export interface AccountOptionSource {
   id: string;
   label: string;
+  kind?: string;
 }
 
 /**
@@ -343,6 +350,12 @@ export function defaultFieldDefs(
   profiles: ProfileOptionSource[] = [],
 ): DefaultFieldDef[] {
   const defaultEffort = models.find(m => m.id === defaults.modelId)?.defaultEffort;
+  // pi-models-metrics FR-4: this form's model/effort selects are keyed to the
+  // legacy per-account catalog, which is always empty for a Pi account — see
+  // AccountOptionSource's own doc comment. DefaultsSection shows the saved
+  // `runtimeModel` pair read-only instead (it round-trips untouched either way,
+  // since this function simply omits the two keys rather than clearing them).
+  const isPiDefaultAccount = accounts.find((a) => a.id === defaults.accountId)?.kind === 'pi';
   const accountField: DefaultFieldDef[] =
     accounts.length > 1
       ? [
@@ -368,19 +381,24 @@ export function defaultFieldDefs(
           },
         ]
       : [];
+  const modelFields: DefaultFieldDef[] = isPiDefaultAccount
+    ? []
+    : [
+        {
+          key: 'modelId',
+          label: 'model',
+          options: [INHERIT, ...models.map((m) => ({ value: m.id, label: m.label }))],
+        },
+        {
+          key: 'effort',
+          label: 'effort',
+          options: [{ value: '', label: defaultEffort ? `Model default · ${defaultEffort}` : 'Model default' }, ...effortOptions(models, defaults.modelId ?? '').map((e) => ({ value: e, label: e }))],
+        },
+      ];
   return [
     ...accountField,
     ...profileField,
-    {
-      key: 'modelId',
-      label: 'model',
-      options: [INHERIT, ...models.map((m) => ({ value: m.id, label: m.label }))],
-    },
-    {
-      key: 'effort',
-      label: 'effort',
-      options: [{ value: '', label: defaultEffort ? `Model default · ${defaultEffort}` : 'Model default' }, ...effortOptions(models, defaults.modelId ?? '').map((e) => ({ value: e, label: e }))],
-    },
+    ...modelFields,
     {
       key: 'permissionMode',
       label: 'permission mode',
@@ -401,6 +419,18 @@ export function defaultFieldDefs(
       options: [INHERIT, { value: 'yes', label: 'yes' }, { value: 'no', label: 'no' }],
     },
   ];
+}
+
+/**
+ * pi-models-metrics FR-4: the read-only line DefaultsSection shows for a saved
+ * Pi `runtimeModel` default — this form's select system is keyed to a legacy
+ * `modelId`, which cannot represent an exact provider/model pair, so this is
+ * display only (see this feature's handoff for the fuller picker it stands in
+ * for). `null` ⇒ no Pi default is saved, same as every other optional default.
+ */
+export function piRuntimeModelDefaultLabel(defaults: ProjectDefaults): string | null {
+  const ref = defaults.runtimeModel;
+  return ref ? `${ref.providerId} / ${ref.modelId}` : null;
 }
 
 /** The select's current value; '' ⇒ inherit (rendered dim, §8 C). */

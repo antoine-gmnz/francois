@@ -35,6 +35,7 @@ import {
   nextSelectionAfterRemove,
   patchDefaults,
   persistActiveProjectId,
+  piRuntimeModelDefaultLabel,
   projectCountLabel,
   reconcileActiveProjectId,
   removeConfirmText,
@@ -534,6 +535,28 @@ describe('project defaults form (FR-34)', () => {
     expect(patchDefaults({ modelId: 'm', profileId: 'p1' }, 'profileId', '')).toEqual({ modelId: 'm' });
     expect(defaultsSelectValue({ profileId: 'p1' }, 'profileId')).toBe('p1');
     expect(defaultsSelectValue({}, 'profileId')).toBe('');
+  });
+
+  // pi-models-metrics FR-4: the model/effort selects are keyed to a legacy
+  // per-account catalog that is always empty for Pi — hidden rather than
+  // rendered as two rows that can only ever offer "inherit".
+  it('hides the model/effort selects once the default account resolves to Pi', () => {
+    const accounts = [
+      { id: 'default', label: 'Default' },
+      { id: 'pi-1', label: 'Pi', kind: 'pi' },
+    ];
+    const claudeDefs = defaultFieldDefs(MODELS, { accountId: 'default' }, true, accounts);
+    expect(claudeDefs.map((d) => d.key)).toEqual(['accountId', 'modelId', 'effort', 'permissionMode', 'runtime', 'allowGit']);
+
+    const piDefs = defaultFieldDefs(MODELS, { accountId: 'pi-1' }, true, accounts);
+    expect(piDefs.map((d) => d.key)).toEqual(['accountId', 'permissionMode', 'runtime', 'allowGit']);
+  });
+
+  it('reads the saved Pi runtimeModel pair for the read-only line, else null', () => {
+    expect(piRuntimeModelDefaultLabel({})).toBeNull();
+    expect(piRuntimeModelDefaultLabel({ runtimeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' } })).toBe(
+      'anthropic / claude-sonnet-5',
+    );
   });
 });
 

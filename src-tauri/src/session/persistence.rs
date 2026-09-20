@@ -123,6 +123,12 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
             o["tone"] = Value::String(tone.clone());
         }
     }
+    // pi-session-durability FR-5: round-trips only for the two kinds a
+    // projection rebuild ever produces — never for a block from any other
+    // runtime, or a pre-feature line.
+    if (kind == "user" || kind == "assistant") && b.native_entry_id.is_some() {
+        o["nativeEntryId"] = Value::String(b.native_entry_id.clone().unwrap());
+    }
     o
 }
 
@@ -145,6 +151,36 @@ pub fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
     {
         let _ = f.write_all(line.as_bytes());
     }
+}
+
+/// pi-session-durability FR-6: atomically REPLACE a session's whole transcript
+/// file with a freshly rebuilt block list. Unlike `append_transcript` (one
+/// line, best-effort, `O(1)` per event), a projection rebuild supersedes the
+/// file's entire prior content — a crash mid-write must never leave a torn
+/// mix of old and new lines, so this writes a sibling temp file (`fs_util`'s
+/// shared helper, FR-6: "existing fs helpers", not a private temp-name
+/// scheme) and renames it into place.
+pub(crate) fn replace_transcript(
+    app: &AppHandle,
+    session_id: &str,
+    blocks: &[BufBlock],
+) -> std::io::Result<()> {
+    let path = transcript_path(app, session_id)
+        .ok_or_else(|| std::io::Error::other("invalid session id"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut bytes = Vec::new();
+    for block in blocks {
+        bytes.extend_from_slice(persisted_block_json(block).to_string().as_bytes());
+        bytes.push(b'\n');
+    }
+    let tmp = crate::fs_util::unique_temp_path(&path, "jsonl");
+    let result = std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// /clear: remove the session's persisted transcript so a reload starts empty.
@@ -280,6 +316,12 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
         attachments: v.get("attachments").filter(|a| !a.is_null()).cloned(),
         outcome: v.get("outcome").and_then(|o| o.as_str()).map(String::from),
         tone: v.get("tone").and_then(|t| t.as_str()).map(String::from),
+        // pi-session-durability FR-5: absent on every line written before
+        // this feature, and on every non-user/assistant kind.
+        native_entry_id: v
+            .get("nativeEntryId")
+            .and_then(|n| n.as_str())
+            .map(String::from),
         ..BufBlock::new(&block_id, kind)
     })
 }
@@ -454,6 +496,42 @@ pub fn persist(app: &AppHandle, engine: &Engine) {
             if let Some(p) = &s.profile {
                 rec["profile"] = serde_json::to_value(p).unwrap_or(Value::Null);
             }
+            // pi-migration-rollout FR-3: the resolved settings snapshot rides
+            // the SAME atomic write, so a resume/reconnect relaunches with
+            // the identical snapshot — never re-resolved from the registry.
+            // Same omit-not-null convention: no key at all for a session
+            // that carries no Pi profile.
+            if let Some(settings) = &s.pi_profile_settings {
+                rec["piProfile"] = serde_json::to_value(settings).unwrap_or(Value::Null);
+            }
+            // pi-migration-rollout FR-3 (read-once fix): the launch prompt
+            // resolved from `piProfile.instructionPaths` rides the SAME
+            // atomic write, alongside it — a resume/reconnect relaunches
+            // from THIS text, never re-reading the instruction files. Same
+            // omit-not-null convention: absent until resolved (creation, or
+            // the lazy once-only backward-compat resolve on first connect).
+            if let Some(prompt) = &s.pi_launch_prompt {
+                rec["piLaunchPrompt"] = serde_json::to_value(prompt).unwrap_or(Value::Null);
+            }
+            // pi-session-durability FR-1/FR-2/FR-6: nested under the matching
+            // session record so it rides the SAME atomic temp+rename write —
+            // same omit-not-null convention as `worktree`/`profile`. Absent
+            // until the first successful connect writes it (FR-2's "before
+            // any first prompt").
+            if let Some(pi) = &s.pi_resume {
+                rec["pi"] = serde_json::to_value(pi).unwrap_or(Value::Null);
+            }
+            // pi-models-metrics: same omit-not-null convention — absent until
+            // the first successful read lands (session_metrics/an automatic
+            // refresh). Loaded back `stale: true` (see `parse_session_record`).
+            if let Some(metrics) = &s.metrics {
+                rec["metrics"] = serde_json::to_value(metrics).unwrap_or(Value::Null);
+            }
+            // pi-skills-capabilities: same omit-not-null convention — a
+            // pre-feature record, and every non-Pi session, writes no key.
+            if let Some(policy) = &s.resource_policy {
+                rec["resourcePolicy"] = serde_json::to_value(policy).unwrap_or(Value::Null);
+            }
             rec
         })
         .collect()
@@ -546,6 +624,20 @@ pub struct PersistedMeta {
     /// as "no profile" rather than costing the session its whole record —
     /// only the chip depends on it.
     profile: Option<SessionProfileRef>,
+    /// pi-migration-rollout FR-3: None on every pre-feature record, and on
+    /// every session not created with a Pi profile. A malformed value loads
+    /// as "no profile settings" rather than costing the session its whole
+    /// record — resuming with defaults is safer than refusing to load.
+    pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
+    /// pi-migration-rollout FR-3 (read-once fix): None on every pre-feature
+    /// record, AND on a record written by a build BETWEEN the original
+    /// `piProfile` snapshot and this fix (it has `piProfile` but no
+    /// `piLaunchPrompt` key yet) — `load_persisted` loads that case as `None`
+    /// too, and the next connect resolves it lazily, exactly once
+    /// (`adapter::pi::recovery`), rather than failing to load. A malformed
+    /// value loads as unresolved for the same reason every other best-effort
+    /// field here does.
+    pi_launch_prompt: Option<adapter::pi::PiLaunchPrompt>,
     /// response-mode FR-1/§7: `Default` on every pre-feature record, and on
     /// every record carrying a value outside the enum — not an error, and never
     /// a load failure.
@@ -554,6 +646,19 @@ pub struct PersistedMeta {
     /// None on every pre-feature record and on every session whose thread has
     /// been told nothing.
     response_mode_sent: Option<ResponseMode>,
+    /// pi-session-durability: None on every pre-feature record, and on every
+    /// Pi session that has never successfully connected. A malformed value
+    /// loads as "never connected" rather than costing the session its whole
+    /// record — recovery treats that exactly like a fresh session (FR-3).
+    pi_resume: Option<adapter::pi::PiResumeRecord>,
+    /// pi-models-metrics: None on every pre-feature record, and on every
+    /// session that has never reported usage. A malformed value loads as
+    /// "never measured" rather than costing the session its whole record.
+    metrics: Option<events::RuntimeMetrics>,
+    /// pi-skills-capabilities: None on every pre-feature record, and on
+    /// every non-Pi session. A malformed value loads as "no policy" rather
+    /// than costing the session its whole record.
+    resource_policy: Option<adapter::pi::RuntimeResourcePolicy>,
 }
 
 /// multi-provider-seam FR-11a (Phase B gate): the read-side migration off the
@@ -746,6 +851,26 @@ pub fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
             .get("profile")
             .filter(|v| !v.is_null())
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        pi_profile_settings: rec
+            .get("piProfile")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        pi_launch_prompt: rec
+            .get("piLaunchPrompt")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        pi_resume: rec
+            .get("pi")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        metrics: rec
+            .get("metrics")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        resource_policy: rec
+            .get("resourcePolicy")
+            .filter(|v| !v.is_null())
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
     })
 }
 
@@ -936,6 +1061,9 @@ pub fn load_persisted(app: &AppHandle) {
                 system_prompt: m.system_prompt,
                 extra_args: m.extra_args,
                 profile: m.profile,
+                pi_profile_settings: m.pi_profile_settings,
+                pi_launch_prompt: m.pi_launch_prompt,
+                resource_policy: m.resource_policy,
                 response_mode: m.response_mode,
                 response_mode_sent: m.response_mode_sent,
                 queue: VecDeque::new(),
@@ -969,13 +1097,35 @@ pub fn load_persisted(app: &AppHandle) {
                 // multi-provider-grok FR-27: a reload starts false again — a
                 // fresh reminder after a restart is honest, not a bug.
                 grok_sandbox_notice_emitted: false,
+                // pi-session-durability: "Quit and reopen: old transcript is
+                // visible immediately" — there is no live connection to
+                // report `ready` for, whatever the session held last time.
+                recovery: events::RuntimeRecovery::disconnected(),
+                recovery_busy: false,
+                pi_resume: m.pi_resume,
+                // pi-models-metrics: "loaded stale: true until refreshed" —
+                // the figures survive a restart, but no live read confirmed
+                // them for THIS process yet.
+                metrics: m.metrics.map(|metrics| events::RuntimeMetrics {
+                    stale: true,
+                    ..metrics
+                }),
+                // pi-models-metrics: in-memory only, like effective_capabilities
+                // — re-derived on the next connect/switch, never persisted.
+                model_efforts: Vec::new(),
             },
         );
     }
     drop(map);
     // Start a diff watcher per restored session (FR-15).
-    for (id, cwd) in watched {
-        crate::diff::watch_session(app, &id, &cwd);
+    for (id, cwd) in &watched {
+        crate::diff::watch_session(app, id, cwd);
+    }
+    // pi-turn-controls FR-9: recover whatever the admissions sidecar still
+    // holds for each restored session — a draft still `admitting`/`queued`
+    // at crash time reloads `delivery-unknown`, never auto-submitted.
+    for (id, _cwd) in &watched {
+        engine.hydrate_admissions(app, id);
     }
 }
 
@@ -1132,6 +1282,7 @@ mod tests {
             attachments: None,
             outcome: None,
             tone: None,
+            native_entry_id: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         let back = parse_persisted_block(&line).expect("parse");
@@ -1145,6 +1296,47 @@ mod tests {
         // session states when the turn happened rather than when it was read.
         assert_eq!(back.at, 1_760_000_000_000);
         assert_eq!(classify_block(&back)["at"], 1_760_000_000_000u64);
+    }
+
+    /// pi-session-durability FR-5: `nativeEntryId` round-trips for a `User`/
+    /// `Assistant` block a projection rebuild produced, and is absent (never
+    /// null) for a block that never carried one — byte-identical to every
+    /// pre-feature line.
+    #[test]
+    fn native_entry_id_roundtrips_for_user_and_assistant_blocks_only() {
+        let mut b = BufBlock {
+            has_detail: false,
+            block_id: "b1".into(),
+            kind: BlockKind::User,
+            text: "hi".into(),
+            tool: String::new(),
+            summary: String::new(),
+            meta: None,
+            card: None,
+            streaming: false,
+            at: 1_000,
+            execution: None,
+            attachments: None,
+            outcome: None,
+            tone: None,
+            native_entry_id: Some("native-e1".into()),
+        };
+        let line = persisted_block_json(&b);
+        assert_eq!(line["nativeEntryId"], "native-e1");
+        let back = parse_persisted_block(&line.to_string()).expect("parse");
+        assert_eq!(back.native_entry_id.as_deref(), Some("native-e1"));
+
+        b.native_entry_id = None;
+        let line = persisted_block_json(&b);
+        assert!(line.get("nativeEntryId").is_none());
+
+        b.kind = BlockKind::Tool;
+        b.native_entry_id = Some("native-e1".into());
+        let line = persisted_block_json(&b);
+        assert!(
+            line.get("nativeEntryId").is_none(),
+            "a tool block never writes nativeEntryId"
+        );
     }
 
     #[test]
@@ -1173,6 +1365,7 @@ mod tests {
             attachments: None,
             outcome: None,
             tone: None,
+            native_entry_id: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"execution\""));
@@ -1202,6 +1395,7 @@ mod tests {
             attachments: Some(attachments.clone()),
             outcome: None,
             tone: None,
+            native_entry_id: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"attachments\""));
@@ -1228,6 +1422,7 @@ mod tests {
             attachments: None,
             outcome: Some("interrupted".into()),
             tone: None,
+            native_entry_id: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"outcome\":\"interrupted\""));
@@ -1253,6 +1448,7 @@ mod tests {
             attachments: None,
             outcome: None,
             tone: Some("warning".into()),
+            native_entry_id: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"tone\":\"warning\""));
@@ -1291,6 +1487,7 @@ mod tests {
             attachments: None,
             outcome: None,
             tone: None,
+            native_entry_id: None,
         };
         let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
         assert!(line.contains("\"meta\":null"));
@@ -1325,6 +1522,7 @@ mod tests {
             attachments: None,
             outcome: None,
             tone: None,
+            native_entry_id: None,
         };
         let back =
             parse_persisted_block(&serde_json::to_string(&persisted_block_json(&b)).unwrap())
@@ -1400,6 +1598,7 @@ mod tests {
         let m2 = parse_session_record(&full, 0).unwrap();
         assert_eq!(m2.claude_session_id.as_deref(), Some("cs-1"));
         assert_eq!((m2.last_activity_at, m2.context_used_tokens), (99, 512));
+        assert!(m2.pi_resume.is_none());
         // healing of a legacy made-up id
         assert_eq!(
             parse_session_record(
@@ -1412,6 +1611,229 @@ mod tests {
         );
         // missing required field → None
         assert!(parse_session_record(&json!({ "name": "x" }), 0).is_none());
+    }
+
+    /// pi-session-durability FR-1/FR-2/FR-6: the nested `pi` key (persist's
+    /// own write shape for `PiResumeRecord`) round-trips through
+    /// `parse_session_record` — a malformed value loads as "never connected"
+    /// rather than costing the session its whole record.
+    #[test]
+    fn the_nested_pi_resume_record_round_trips_and_a_malformed_one_is_dropped() {
+        let full = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "agentRuntime": "pi", "protocol": null,
+            "pi": {
+                "schemaVersion": 1, "nativeSessionId": "native-1",
+                "nativeSessionFile": "/data/runtimes/pi/sessions/abc/native-1.jsonl",
+                "accountId": "pi-acct-1", "configDir": "/home/user/.pi", "cwd": "/x",
+                "piVersion": "0.85.1", "lastEntryId": "e3", "leafId": "e3",
+                "projectionVersion": 1,
+            },
+        });
+        let m = parse_session_record(&full, 0).unwrap();
+        let pi = m.pi_resume.expect("pi resume record present");
+        assert_eq!(pi.native_session_id, "native-1");
+        assert_eq!(pi.last_entry_id.as_deref(), Some("e3"));
+
+        let malformed = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "pi": { "nativeSessionId": "native-1" }, // missing required fields
+        });
+        let m = parse_session_record(&malformed, 0).unwrap();
+        assert!(m.pi_resume.is_none());
+
+        let absent = json!({ "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet" });
+        assert!(parse_session_record(&absent, 0)
+            .unwrap()
+            .pi_resume
+            .is_none());
+    }
+
+    /// pi-migration-rollout FR-3: the nested `piProfile` key (persist's own
+    /// write shape for `PiProfileSettings`) round-trips through
+    /// `parse_session_record` — the same "malformed loads as absent, never
+    /// costs the session its whole record" tolerance as `pi_resume`/`profile`.
+    #[test]
+    fn the_pi_profile_settings_snapshot_round_trips_and_a_malformed_one_is_dropped() {
+        let full = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "agentRuntime": "pi", "protocol": null,
+            "piProfile": {
+                "systemPromptMode": "replace", "systemPrompt": "be terse",
+                "instructionPaths": [], "skillPaths": [], "tools": ["read"],
+                "projectResources": "ignore",
+            },
+        });
+        let m = parse_session_record(&full, 0).unwrap();
+        let settings = m.pi_profile_settings.expect("settings present");
+        assert_eq!(settings.system_prompt.as_deref(), Some("be terse"));
+
+        let malformed = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "piProfile": { "systemPromptMode": "not-a-real-mode" },
+        });
+        assert!(parse_session_record(&malformed, 0)
+            .unwrap()
+            .pi_profile_settings
+            .is_none());
+
+        let absent = json!({ "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet" });
+        assert!(parse_session_record(&absent, 0)
+            .unwrap()
+            .pi_profile_settings
+            .is_none());
+    }
+
+    /// pi-migration-rollout FR-3 (read-once fix): the nested `piLaunchPrompt`
+    /// key round-trips through `parse_session_record`, same tolerance as
+    /// `piProfile` above — a malformed value loads as unresolved rather than
+    /// costing the session its whole record, and a record with `piProfile`
+    /// but no `piLaunchPrompt` key (the pre-fix shape) loads as unresolved
+    /// too, never as a parse failure.
+    #[test]
+    fn the_pi_launch_prompt_snapshot_round_trips_and_a_malformed_one_is_dropped() {
+        let full = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "agentRuntime": "pi", "protocol": null,
+            "piProfile": {
+                "systemPromptMode": "replace", "systemPrompt": "be terse",
+                "instructionPaths": [], "skillPaths": [], "tools": ["read"],
+                "projectResources": "ignore",
+            },
+            "piLaunchPrompt": { "text": "be terse" },
+        });
+        let m = parse_session_record(&full, 0).unwrap();
+        let prompt = m.pi_launch_prompt.expect("prompt present");
+        assert_eq!(prompt.text.as_deref(), Some("be terse"));
+
+        let malformed = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "piLaunchPrompt": { "text": 12345 },
+        });
+        assert!(parse_session_record(&malformed, 0)
+            .unwrap()
+            .pi_launch_prompt
+            .is_none());
+
+        // A record carrying `piProfile` but no `piLaunchPrompt` key — the
+        // exact shape a build BETWEEN the original snapshot feature and this
+        // fix would have written — loads as unresolved, not as a failure.
+        let pre_fix = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "agentRuntime": "pi", "protocol": null,
+            "piProfile": {
+                "systemPromptMode": "default",
+                "instructionPaths": [], "skillPaths": [], "tools": [],
+                "projectResources": "ignore",
+            },
+        });
+        let m = parse_session_record(&pre_fix, 0).unwrap();
+        assert!(m.pi_profile_settings.is_some());
+        assert!(m.pi_launch_prompt.is_none());
+    }
+
+    /// pi-migration-rollout FR-3 (read-once fix): the resolved launch-prompt
+    /// snapshot is CORE-PRIVATE — like `pi_profile_settings` itself, it must
+    /// never ride the wire in `SessionMeta`, whether or not the session
+    /// actually carries one.
+    #[test]
+    fn the_pi_launch_prompt_snapshot_never_appears_in_serialized_session_meta() {
+        let mut s = test_session();
+        s.pi_profile_settings = Some(crate::profiles::PiProfileSettings {
+            system_prompt_mode: crate::profiles::PiSystemPromptMode::Replace,
+            system_prompt: Some("a secret system prompt".into()),
+            instruction_paths: Vec::new(),
+            skill_paths: Vec::new(),
+            tools: Vec::new(),
+            project_resources: crate::profiles::PiProjectResources::Ignore,
+        });
+        s.pi_launch_prompt = Some(adapter::pi::PiLaunchPrompt {
+            text: Some("a secret system prompt".into()),
+        });
+        let meta = serde_json::to_value(s.meta(&fake_accounts())).unwrap();
+        let meta_obj = meta.as_object().unwrap();
+        assert!(!meta_obj.contains_key("piLaunchPrompt"));
+        assert!(!meta_obj.contains_key("pi_launch_prompt"));
+        assert!(!meta_obj.contains_key("piProfile"));
+        // Belt-and-suspenders: the prompt text itself must not leak into ANY
+        // field of the serialized meta.
+        assert!(!meta.to_string().contains("a secret system prompt"));
+    }
+
+    /// pi-skills-capabilities §6: "Resource policy is snapshotted/persisted
+    /// with session" — the `resourcePolicy` key round-trips through
+    /// `parse_session_record`, same omit-not-null / malformed-drops-to-absent
+    /// tolerance as `piProfile`/`pi_resume`/`metrics` above. Critically, the
+    /// acknowledgment survives EXACTLY as recorded — neither silently reset
+    /// to `false` (which would re-block every send after a restart) nor to
+    /// `true` (which would be worse: an unseen notice treated as seen).
+    #[test]
+    fn the_resource_policy_snapshot_round_trips_and_a_malformed_one_is_dropped() {
+        for acknowledged in [true, false] {
+            let full = json!({
+                "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+                "agentRuntime": "pi", "protocol": null,
+                "resourcePolicy": {
+                    "projectResources": "allow", "extensions": "disabled",
+                    "acknowledgedUnrestrictedTools": acknowledged,
+                },
+            });
+            let m = parse_session_record(&full, 0).unwrap();
+            let policy = m.resource_policy.expect("policy present");
+            assert_eq!(
+                policy.project_resources,
+                adapter::pi::ProjectResources::Allow
+            );
+            assert_eq!(policy.acknowledged_unrestricted_tools, acknowledged);
+        }
+
+        let malformed = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "resourcePolicy": { "projectResources": "not-a-real-choice" },
+        });
+        assert!(parse_session_record(&malformed, 0)
+            .unwrap()
+            .resource_policy
+            .is_none());
+
+        let absent = json!({ "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet" });
+        assert!(parse_session_record(&absent, 0)
+            .unwrap()
+            .resource_policy
+            .is_none());
+    }
+
+    /// pi-models-metrics: the nested `metrics` key round-trips through
+    /// `parse_session_record`, and `load_persisted` marks it stale (checked
+    /// separately below since that half needs the live `Session` literal).
+    #[test]
+    fn persisted_metrics_round_trip_and_a_malformed_one_is_dropped() {
+        let full = json!({
+            "id": "abc", "name": "n", "cwd": "/x", "modelId": "sonnet",
+            "metrics": {
+                "inputTokens": 120, "outputTokens": 45,
+                "cacheReadTokens": null, "cacheWriteTokens": null,
+                "contextTokens": 3400, "contextWindow": 200000,
+                "contextBasis": "reported", "costUsd": 0.0123, "costBasis": "estimated",
+                "measuredAt": 1000, "stale": false,
+            },
+        });
+        let m = parse_session_record(&full, 0).unwrap();
+        let metrics = m.metrics.expect("metrics present");
+        assert_eq!(metrics.input_tokens, Some(120));
+        assert_eq!(metrics.context_basis, "reported");
+
+        let malformed = json!({
+            "id": "abc", "name": "n", "cwd": "/x",
+            "metrics": { "inputTokens": "not-a-number" },
+        });
+        assert!(parse_session_record(&malformed, 0)
+            .unwrap()
+            .metrics
+            .is_none());
+
+        let absent = json!({ "id": "abc", "name": "n", "cwd": "/x" });
+        assert!(parse_session_record(&absent, 0).unwrap().metrics.is_none());
     }
 
     // ---------- display-openai-model-name FR-1/FR-9 ----------

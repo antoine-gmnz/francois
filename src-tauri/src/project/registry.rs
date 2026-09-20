@@ -995,6 +995,7 @@ mod tests {
         let mut p = project_fixture("p1", "francois", &dir.to_string_lossy(), 40);
         p.defaults = ProjectDefaults {
             model_id: Some("opus".into()),
+            runtime_model: None,
             effort: None,
             permission_mode: Some("acceptEdits".into()),
             runtime: None,
@@ -1140,6 +1141,7 @@ mod tests {
         );
         p.defaults = ProjectDefaults {
             model_id: Some("claude-opus-4".into()),
+            runtime_model: None,
             effort: Some("high".into()),
             permission_mode: Some("plan".into()),
             runtime: Some("wsl".into()),

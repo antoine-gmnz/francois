@@ -6,6 +6,7 @@
 
 import type { SessionMeta } from '../../contract/common';
 import { runtimeCapabilities, type CapabilityState, type RuntimeCapability } from '../../contract/multi-provider-seam';
+import { PI_UNRESTRICTED_TOOLS_NOTICE } from '../../contract/pi-skills-capabilities';
 
 /**
  * The capability state for one session's runtime. `meta` absent (no session
@@ -30,9 +31,14 @@ export function sessionCapability(
   return live.available ? baseline : live;
 }
 
-/** Sandbox selection is separate from interactive approval support. */
+/**
+ * Sandbox selection is separate from interactive approval support. For Pi
+ * (pi-skills-capabilities FR-5) this is not "not built yet" — there is no
+ * François-enforced sandbox for a permission mode to select, so the reason is
+ * the same FR-5 notice every Pi surface shows, not a generic unavailability line.
+ */
 export function sandboxSelectionCapability(meta: SessionMeta | null | undefined): CapabilityState {
   return meta?.agentRuntime === 'pi'
-    ? { available: false, reason: 'Runtime sandbox selection is unavailable.' }
+    ? { available: false, reason: PI_UNRESTRICTED_TOOLS_NOTICE }
     : { available: true };
 }

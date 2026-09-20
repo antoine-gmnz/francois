@@ -12,11 +12,12 @@ import { reconcileCatalogModel } from '../../lib/model-catalog';
 // every field subcomponent, ChipGroup option table and CSS class below.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AppError, ClaudeRuntime, PermissionMode, ResponseMode, SessionId, SessionMeta } from '../../../contract/common';
+import type { AppError, ClaudeRuntime, PermissionMode, ResponseMode, RuntimeModelRef, SessionId, SessionMeta } from '../../../contract/common';
 import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
 import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
+import { runtimeModelKey } from '../../../contract/pi-models-metrics';
 import { projectUpdate, sessionCreate, sessionUpdateSettings } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { useMounted } from '../../lib/hooks/useMounted';
@@ -26,10 +27,13 @@ import { toneVar } from '../../lib/tone';
 import { STATUS_COLOR, statusPulses } from '../../../contract/fleet-board';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
-import { Chip } from '../../ui/Chip';
-import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
+import { ChipGroup } from '../../ui/ChipGroup';
 import { StatusDot } from '../../ui/StatusDot';
+import { GitRow, PermissionsRow, ResponseRow, RUNTIME_CHIP_OPTIONS } from './SharedSettingsRows';
 import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
+import { accountIsPi } from '../accounts/pi';
+import { PiPolicyField } from './PiPolicyField';
+import { DEFAULT_PI_RESOURCE_POLICY, resourcePolicyFor, seedProjectResources } from './pi-resource-policy';
 import { AccountField } from './AccountField';
 import { ProfileField } from './ProfileField';
 import { ProjectField } from './ProjectField';
@@ -38,12 +42,18 @@ import { NameField } from './NameField';
 import { ModelField } from './ModelField';
 import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useProjectList } from './useProjectList';
-import { useProjectDefaults } from './useProjectDefaults';
+import { useProjectDefaults, projectRuntimeModelDefault } from './useProjectDefaults';
 import { useDirectoryPicker } from './useDirectoryPicker';
 import { useWorktreeGroup } from './useWorktreeGroup';
 import { WorktreeField } from './WorktreeField';
 import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
 import { SESSION_NAME_MAX, canCommitRename, nameLength } from './rename';
+import { modelSelectionMismatch, profileRuntimeMismatch } from './new-session-form';
+import { PiModelField } from './PiModelField';
+import { PiRunModelSwitch } from './PiRunModelSwitch';
+import { useRuntimeModelCatalog } from './useRuntimeModelCatalog';
+import { runtimeSelectionIsFresh } from './runtime-model';
+import { recordRecentModel } from './runtime-model-favorites';
 import {
   SET_PROJECT_DEFAULT_COPY,
   SET_PROJECT_DEFAULT_TITLE,
@@ -64,70 +74,6 @@ import {
   type SettingsDraft,
 } from './session-settings';
 import './session-settings-sheet.css';
-
-// session-permission-mode FR-8 / response-mode FR-13: the contract tables are
-// the single source for label/hint/danger — no component maps a mode on its own.
-const PERMISSION_CHIP_OPTIONS: ChipOption<PermissionMode>[] = PERMISSION_MODE_OPTIONS.map((opt) => ({
-  value: opt.mode,
-  label: opt.label,
-  danger: opt.danger,
-}));
-const RESPONSE_CHIP_OPTIONS: ChipOption<ResponseMode>[] = RESPONSE_MODE_OPTIONS.map((opt) => ({
-  value: opt.mode,
-  label: opt.label,
-}));
-const RUNTIME_CHIP_OPTIONS: ChipOption<ClaudeRuntime>[] = (['native', 'wsl'] as const).map((runtime) => ({
-  value: runtime,
-  label: runtime,
-}));
-
-// CreateSheet and EditSheet render the same PERMISSIONS/RESPONSE/GIT rows —
-// EditSheet wraps each in its own `field()` (dirty highlight + "was" line),
-// CreateSheet renders it bare, but the row markup itself is identical.
-function PermissionsRow({ value, onChange }: { value: PermissionMode; onChange: (mode: PermissionMode) => void }) {
-  return (
-    <div>
-      <label className="new-session-modal__label">PERMISSIONS</label>
-      <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
-        <ChipGroup options={PERMISSION_CHIP_OPTIONS} value={value} onChange={onChange} />
-      </div>
-      <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-        {PERMISSION_MODE_OPTIONS.find((opt) => opt.mode === value)?.hint}
-      </div>
-    </div>
-  );
-}
-
-function ResponseRow({ value, onChange }: { value: ResponseMode; onChange: (mode: ResponseMode) => void }) {
-  return (
-    <div>
-      <label className="new-session-modal__label">RESPONSE</label>
-      <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
-        <ChipGroup options={RESPONSE_CHIP_OPTIONS} value={value} onChange={onChange} />
-      </div>
-      {/* FR-9: PERMISSIONS and RESPONSE alike get a consequence hint under the row. */}
-      <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-        {RESPONSE_MODE_OPTIONS.find((opt) => opt.mode === value)?.hint}
-      </div>
-    </div>
-  );
-}
-
-function GitRow({ value, onChange }: { value: boolean; onChange: (allow: boolean) => void }) {
-  return (
-    <div>
-      <label className="new-session-modal__label">GIT</label>
-      <div className="new-session-modal__chip-row">
-        <Chip selected={value} onClick={() => onChange(!value)}>
-          {value ? '✓ ' : ''}allow git commands
-        </Chip>
-      </div>
-      <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-        auto-approve git &amp; gh commands (commit, push, PRs) without a prompt — other tools still follow the permission setting above
-      </div>
-    </div>
-  );
-}
 
 export type SessionSettingsSheetProps =
   | { mode: 'create'; seed?: SessionSettingsCarryOver; onClose: () => void; onCreated: (meta: SessionMeta) => void }
@@ -165,6 +111,21 @@ function CreateSheet({
   const [accountId, setAccountId] = useState<string>(seed?.accountId ?? DEFAULT_ACCOUNT_ID);
   const [accountFromProject, setAccountFromProject] = useState(false);
   const [profileId, setProfileId] = useState(seed?.profileId ?? '');
+  // pi-skills-capabilities FR-5/FR-7: a Pi account's policy field. Seeded
+  // safe-by-default; a Pi profile's own choice re-seeds it until the user
+  // picks for themselves (piProjectResourcesTouched), and never fabricates
+  // the acknowledgment.
+  const [piProjectResources, setPiProjectResources] = useState<'ignore' | 'allow'>(
+    DEFAULT_PI_RESOURCE_POLICY.projectResources,
+  );
+  const [piProjectResourcesTouched, setPiProjectResourcesTouched] = useState(false);
+  const [piAcknowledged, setPiAcknowledged] = useState(DEFAULT_PI_RESOURCE_POLICY.acknowledgedUnrestrictedTools);
+  // pi-models-metrics FR-1/FR-4: the Pi model track's own selection — an EXACT
+  // provider/model pair, never a plain modelId (a Pi account's identity is not
+  // a single string — see runtime-model.ts). Kept separate from `modelId`
+  // above rather than overloading it, so a non-Pi account's track stays
+  // byte-for-byte unchanged.
+  const [piModel, setPiModel] = useState<RuntimeModelRef | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<AppError | null>(null);
   const openRef = useMounted();
@@ -173,6 +134,7 @@ function CreateSheet({
   const accounts = useStore((s) => s.accounts);
   const catalogState = useModelCatalog(accountId, seed?.modelId);
   const { models, modelsLoading, modelId, setModelId } = catalogState;
+  const piCatalog = useRuntimeModelCatalog(accountId);
   const providerHeading = modelPickerProviderHeading(accounts, accountId);
 
   const activeProjectId = useStore((s) => s.activeProjectId);
@@ -197,6 +159,33 @@ function CreateSheet({
   }, [projects, seed?.projectId]);
 
   const profiles = useStore((s) => s.profiles);
+
+  // pi-skills-capabilities FR-5/FR-7: whether the SELECTED account is a Pi
+  // account — the field, and the notice replacing the permission chips, only
+  // ever render for one. Keyed on the account's kind, never on a runtime
+  // literal (the session does not exist yet, so there is no agentRuntime to read).
+  const selectedAccount = accounts.find((a) => a.id === accountId) ?? null;
+  const isPiAccount = selectedAccount !== null && accountIsPi(selectedAccount);
+
+  // pi-models-metrics FR-4: seed the Pi model track from the project's own
+  // default the same way `useProjectDefaults` seeds every other field — once
+  // per project selection, never overriding a manual pick afterwards. A
+  // project with no Pi default (or none at all) seeds `undefined`, same as
+  // every other optional default.
+  const piModelAppliedRef = useRef<string | null>(seed !== undefined ? projectId : null);
+  useEffect(() => {
+    if (piModelAppliedRef.current === projectId) return;
+    piModelAppliedRef.current = projectId;
+    setPiModel(projectRuntimeModelDefault(project));
+  }, [projectId, project]);
+
+  // session-profiles FR-16: a selected Pi profile seeds the choice until the
+  // user picks for themselves — never the acknowledgment (pi-resource-policy.ts).
+  useEffect(() => {
+    if (piProjectResourcesTouched) return;
+    const selected = profiles.find((p) => p.id === profileId) ?? null;
+    setPiProjectResources(seedProjectResources(selected));
+  }, [profileId, profiles, piProjectResourcesTouched]);
 
   const pendingNewSessionProfileId = useStore((s) => s.pendingNewSessionProfileId);
   const setPendingNewSessionProfileId = useStore((s) => s.setPendingNewSessionProfileId);
@@ -245,7 +234,11 @@ function CreateSheet({
     nameTouched,
     setName,
     openRef,
-    modelId,
+    // pi-models-metrics FR-4: this gate only ever checks non-emptiness (worktree.ts
+    // `canOpenWorktreeRecovery`) — the legacy `modelId` is always '' for a Pi
+    // account (its catalog is a different command), so the worktree-recovery
+    // race-condition card would otherwise stay permanently blocked for one.
+    modelId: isPiAccount ? (piModel ? runtimeModelKey(accountId, piModel.providerId, piModel.modelId) : '') : modelId,
     projectRootMissing,
     submitting,
     sessions,
@@ -263,17 +256,46 @@ function CreateSheet({
     if (effort && !modelEfforts.includes(effort)) setEffort('');
   }, [modelId, models, modelsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
+  // pi-migration-rollout §7: a legacy profile on a Pi account (or the
+  // reverse) is refused by the core as PROFILE_RUNTIME_MISMATCH — surfaced
+  // here so Create is disabled pre-emptively, same reason ProfileField's own
+  // inline warning already names.
+  const profileMismatch = profileRuntimeMismatch(selectedProfile, selectedAccount);
+  // pi-models-metrics FR-4: belt-and-suspenders against the exact shape the
+  // core itself validates (SessionCreateInput) — the branches below never
+  // construct a mismatched payload, but this keeps the guard honest if that
+  // ever changes.
+  const modelMismatch = modelSelectionMismatch(selectedAccount, isPiAccount ? '' : modelId, isPiAccount ? piModel : undefined);
+  // pi-models-metrics FR-2/FR-4: a stale, loading or errored catalogue never
+  // authorizes Create — nor does a saved/default selection that vanished from
+  // a fresh snapshot (it stays visible, disabled, per runtime-model.ts).
+  const piModelReady = !isPiAccount || runtimeSelectionIsFresh(piCatalog, piModel);
   const canCreate =
-    cwd.trim() !== '' && name.trim() !== '' && models.some(m => m.id === modelId) && !submitting && !projectRootMissing && !worktree.blocked;
+    cwd.trim() !== '' &&
+    name.trim() !== '' &&
+    (isPiAccount ? piModelReady : models.some((m) => m.id === modelId)) &&
+    profileMismatch === null &&
+    modelMismatch === null &&
+    !submitting &&
+    !projectRootMissing &&
+    !worktree.blocked;
   const cwdIsWsl = isWslUncPath(cwd);
 
   const createSession = async (overrideCwd: string, worktreeOpts?: { branch: string; baseRef: string; adopt?: boolean }) => {
     setSubmitting(true);
     setSubmitError(null);
+    // pi-migration-rollout §5: a legacy profile sends its own systemPrompt/extraArgs
+    // (unchanged); a Pi profile sends its typed settings as `piProfile` and NEVER
+    // systemPrompt/extraArgs — the two are mutually exclusive on the wire.
     const res = await sessionCreate({
       cwd: overrideCwd,
       name,
-      modelId,
+      // pi-models-metrics FR-4: `runtimeModel` for a Pi account, `modelId`
+      // for everyone else — the two are mutually exclusive on the wire, and a
+      // Pi account's identity is never `modelId` alone.
+      modelId: isPiAccount ? undefined : modelId,
+      runtimeModel: isPiAccount ? piModel : undefined,
       effort: effort || undefined,
       permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
       responseMode: responseMode !== 'default' ? responseMode : undefined,
@@ -283,8 +305,12 @@ function CreateSheet({
       worktree: worktreeOpts,
       accountId: accountIdForSessionCreate(accountId),
       profileId: profileId || undefined,
-      systemPrompt: profiles.find((p) => p.id === profileId)?.systemPrompt,
-      extraArgs: profiles.find((p) => p.id === profileId)?.extraArgs,
+      systemPrompt: selectedProfile?.kind === 'legacy' ? selectedProfile.systemPrompt : undefined,
+      extraArgs: selectedProfile?.kind === 'legacy' ? selectedProfile.extraArgs : undefined,
+      piProfile: selectedProfile?.kind === 'pi' ? selectedProfile.settings : undefined,
+      // pi-skills-capabilities: REQUIRED for a Pi account — never fabricated
+      // for any other one (INVALID_INPUT if sent).
+      resourcePolicy: isPiAccount ? resourcePolicyFor(piProjectResources, piAcknowledged) : undefined,
     });
     if (!openRef.current) {
       if (res.ok) onCreated(res.data);
@@ -293,6 +319,9 @@ function CreateSheet({
     setSubmitting(false);
     worktree.setRecovering(false);
     if (res.ok) {
+      // pi-models-metrics: favorites/recents are UI preferences (FR-3) —
+      // recorded on a successful create, mirroring the run chip's live switch.
+      if (isPiAccount && piModel) recordRecentModel(accountId, piModel);
       onCreated(res.data);
       onClose();
     } else {
@@ -376,9 +405,27 @@ function CreateSheet({
         )}
 
         {/* FR-7/FR-8: EFFORT joins MODEL's row, fixed width, right — and renders no
-            track at all when the model advertises none, per the existing rule. */}
+            track at all when the model advertises none, per the existing rule.
+            pi-models-metrics FR-1/FR-4: a Pi account gets its own provider-grouped
+            track instead — its descriptor advertises no discrete effort list at
+            all (runtime-model.ts), so this row never grows an EFFORT half for it. */}
         <div className={modelEfforts.length > 0 ? 'session-settings-sheet__pair session-settings-sheet__pair--effort' : undefined}>
-          <ModelField catalogState={catalogState} models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} providerHeading={providerHeading} />
+          {isPiAccount ? (
+            <PiModelField
+              accountId={accountId}
+              catalog={piCatalog}
+              selected={piModel}
+              onSelect={setPiModel}
+              providerHeading={providerHeading}
+              onOpenSetup={() => {
+                onClose();
+                useStore.getState().setAccountsAutoPiSetupId(accountId);
+                useStore.getState().setAccountsOpen(true);
+              }}
+            />
+          ) : (
+            <ModelField catalogState={catalogState} models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} providerHeading={providerHeading} />
+          )}
           {modelEfforts.length > 0 && (
             <div>
               <label className="new-session-modal__label">EFFORT</label>
@@ -403,7 +450,17 @@ function CreateSheet({
           }}
         />
 
-        <ProfileField profiles={profiles} profileId={profileId} onChange={setProfileId} />
+        <ProfileField
+          profiles={profiles}
+          profileId={profileId}
+          onChange={setProfileId}
+          accounts={accounts}
+          accountId={accountId}
+          onCreatePiCopy={() => {
+            onClose();
+            useStore.getState().setProfilesOpen(true);
+          }}
+        />
 
         {IS_WINDOWS && (
           <div>
@@ -434,7 +491,23 @@ function CreateSheet({
           </div>
         )}
 
-        <PermissionsRow value={permissionMode} onChange={setPermissionMode} />
+        {/* pi-skills-capabilities FR-5: a Pi session has no François-enforced
+            permission mode to pick — the notice + project-resources choice
+            replace the plan/accept-edits/bypass chips rather than sitting
+            disabled beside them. */}
+        {isPiAccount ? (
+          <PiPolicyField
+            projectResources={piProjectResources}
+            acknowledged={piAcknowledged}
+            onProjectResourcesChange={(value) => {
+              setPiProjectResources(value);
+              setPiProjectResourcesTouched(true);
+            }}
+            onAcknowledgedChange={setPiAcknowledged}
+          />
+        ) : (
+          <PermissionsRow value={permissionMode} onChange={setPermissionMode} />
+        )}
 
         <ResponseRow value={responseMode} onChange={setResponseMode} />
 
@@ -567,7 +640,7 @@ function EditSheet({
     if (!draft || !session?.projectId) return;
     const project = projects.find((p) => p.id === session.projectId);
     if (!project) return;
-    const res = await projectUpdate({ projectId: project.id, defaults: nextProjectDefaults(project.defaults, draft) });
+    const res = await projectUpdate({ projectId: project.id, defaults: nextProjectDefaults(project.defaults, draft, session) });
     if (!alive.current) return;
     if (res.ok) setProjects(projects.map((p) => (p.id === res.data.id ? res.data : p)));
     else {
@@ -665,36 +738,45 @@ function EditSheet({
           <div className="new-session-modal__hint new-session-modal__hint--error">name is too long</div>
         )}
 
-        <div className={modelEfforts.length > 0 ? 'session-settings-sheet__pair session-settings-sheet__pair--effort' : undefined}>
-          {field(
-            'modelId',
-            session.model.label,
-            <ModelField
-              catalogState={catalogState}
-              models={catalog}
-              modelId={draft.modelId}
-              loading={modelsLoading}
-              onChange={onModelChange}
-              providerHeading={providerHeading}
-            />,
-          )}
-          {(modelEfforts.length > 0 || draft.effort !== '') &&
-            field(
-              'effort',
-              baseline.effort || 'default',
-              <div>
-                <label className="new-session-modal__label">EFFORT</label>
-                <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
-                  {draft.effort && !modelEfforts.includes(draft.effort) && <span>{draft.effort} · Not in the current catalogue</span>}
-                  <ChipGroup
-                    options={[{ value: '', label: selectedModel?.defaultEffort ? `Model default · ${selectedModel.defaultEffort}` : 'Model default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
-                    value={draft.effort}
-                    onChange={(v) => setField('effort', v)}
-                  />
-                </div>
-              </div>,
+        {/* pi-models-metrics FR-5/FR-6: a Pi session's model/effort switch is
+            its OWN immediate round trip (session_switch_model/switch_effort),
+            never the batched session_update_settings patch below — the Pi
+            adapter's `.models()` always answers empty, so a modelId patch can
+            never validate for it (see PiRunModelSwitch's own doc comment). */}
+        {session.agentRuntime === 'pi' ? (
+          <PiRunModelSwitch session={session} />
+        ) : (
+          <div className={modelEfforts.length > 0 ? 'session-settings-sheet__pair session-settings-sheet__pair--effort' : undefined}>
+            {field(
+              'modelId',
+              session.model.label,
+              <ModelField
+                catalogState={catalogState}
+                models={catalog}
+                modelId={draft.modelId}
+                loading={modelsLoading}
+                onChange={onModelChange}
+                providerHeading={providerHeading}
+              />,
             )}
-        </div>
+            {(modelEfforts.length > 0 || draft.effort !== '') &&
+              field(
+                'effort',
+                baseline.effort || 'default',
+                <div>
+                  <label className="new-session-modal__label">EFFORT</label>
+                  <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
+                    {draft.effort && !modelEfforts.includes(draft.effort) && <span>{draft.effort} · Not in the current catalogue</span>}
+                    <ChipGroup
+                      options={[{ value: '', label: selectedModel?.defaultEffort ? `Model default · ${selectedModel.defaultEffort}` : 'Model default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
+                      value={draft.effort}
+                      onChange={(v) => setField('effort', v)}
+                    />
+                  </div>
+                </div>,
+              )}
+          </div>
+        )}
 
         {field(
           'permissionMode',

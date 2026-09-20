@@ -16,6 +16,7 @@
 import type { ModelInfo, ResponseMode, SessionMeta } from '../../../contract/common';
 import { RESPONSE_MODE_OPTIONS, type ResponseModeOption } from '../../../contract/response-mode';
 import { permissionModeOption } from '../permissions/permission-mode';
+import { UNKNOWN_METRIC, contextReadout, costReadout } from './runtime-metrics';
 
 export interface RunChipParts {
   /** The model's display label — `Opus 5`. */
@@ -71,6 +72,24 @@ export function effortHint(model: ModelInfo): string {
   if (levels.length === 0) return 'no effort';
   if (levels.length === 1) return levels[0]!;
   return `${levels[0]} → ${levels[levels.length - 1]}`;
+}
+
+/**
+ * pi-models-metrics: the hover title's tail — context/cost, appended after
+ * the chip's own model/mode/response summary, and only when the session has
+ * something to report. `null` when metrics are absent (every non-Pi runtime,
+ * and a Pi session before its first `metrics` event) — the tooltip stays
+ * exactly what it was before this feature for every one of those.
+ */
+export function runChipMetricsTitle(metrics: SessionMeta['metrics']): string | null {
+  const bits: string[] = [];
+  const context = contextReadout(metrics);
+  if (context) bits.push(`context ${context.label}`);
+  const cost = metrics ? costReadout(metrics) : null;
+  if (cost && cost !== UNKNOWN_METRIC) bits.push(cost);
+  if (bits.length === 0) return null;
+  if (metrics?.stale) bits.push('stale');
+  return bits.join(' · ');
 }
 
 /** A 24h local wall clock, zero-padded — `18:41`. */

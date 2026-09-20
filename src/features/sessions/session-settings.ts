@@ -225,15 +225,28 @@ export function canSetProjectDefault(session: SessionMeta): boolean {
  * merges rather than patches. FR-17: written from the sheet's CURRENT draft —
  * including unapplied edits — not from the session's last-persisted meta. An
  * absent effort DELETES the key rather than leaving the project's old level behind.
+ *
+ * pi-models-metrics FR-4: `session` is the live session this action reads
+ * `runtimeModel` off (`draft.modelId` is the Pi picker's own composite
+ * (accountId, providerId, modelId) key — never a real modelId, so it can never
+ * be the value this writes for a Pi session). `runtimeModel`/`modelId` are
+ * mutually exclusive on `ProjectDefaults`, so picking one always clears the other.
  */
-export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDraft): ProjectDefaults {
+export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDraft, session?: SessionMeta): ProjectDefaults {
   const next: ProjectDefaults = {
     ...current,
-    modelId: draft.modelId,
     permissionMode: draft.permissionMode,
     responseMode: draft.responseMode,
     allowGit: draft.allowGit,
   };
+  if (session?.agentRuntime === 'pi') {
+    delete next.modelId;
+    if (session.runtimeModel) next.runtimeModel = session.runtimeModel;
+    else delete next.runtimeModel;
+  } else {
+    next.modelId = draft.modelId;
+    delete next.runtimeModel;
+  }
   if (draft.effort) next.effort = draft.effort;
   else delete next.effort;
   return next;

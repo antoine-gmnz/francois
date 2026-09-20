@@ -4,6 +4,7 @@ use super::*;
 use crate::ipc::ErrorCode;
 
 use crate::ipc::{err, ok, IpcResult};
+use crate::session::admission;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
@@ -24,11 +25,24 @@ pub struct SkillInfo {
     pub(crate) description: String,
     pub(crate) installed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) scope: Option<String>, // project | user | plugin
+    pub(crate) scope: Option<String>, // project | user | plugin | path
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) kind: Option<String>, // skill | command
     #[serde(rename = "pluginId", skip_serializing_if = "Option::is_none")]
     pub(crate) plugin_id: Option<String>, // '<plugin>@<marketplace>' — enabling target for available entries
+    // ---- pi-skills-capabilities §5 (RuntimeSkillFields). Absent for every
+    // non-Pi entry (the Claude-shaped fields above already say everything a
+    // Claude session needs); REQUIRED on every Pi entry — see `pi_skill_info`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) invocation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source: Option<String>, // skill | prompt
+    #[serde(rename = "sourcePath", skip_serializing_if = "Option::is_none")]
+    pub(crate) source_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) loaded: Option<bool>,
+    #[serde(rename = "unavailableReason", skip_serializing_if = "Option::is_none")]
+    pub(crate) unavailable_reason: Option<String>,
 }
 
 pub fn commands_dir(base: &std::path::Path) -> std::path::PathBuf {
@@ -133,7 +147,161 @@ pub fn skill_entry(
         scope: Some(scope.into()),
         kind: Some(kind.into()),
         plugin_id,
+        invocation: None,
+        source: None,
+        source_path: None,
+        loaded: None,
+        unavailable_reason: None,
     }
+}
+
+// ---------- pi-skills-capabilities: Pi routing ----------
+//
+// FR-1/FR-8: `skills_list`/`skills_run` for a Pi session never scan
+// `.claude/` and never count marketplace entries — the runtime's OWN
+// `get_commands` (via `RuntimeSessionControl::list_commands`) is
+// authoritative. `pi_skill_info` is the ONE place a `RuntimeCommandInfo`
+// becomes a `SkillInfo`; `scope` is always `'path'` (FR-1: "loaded from an
+// explicit path" — Pi carries no project/user/plugin distinction of its own).
+
+fn pi_skill_info(c: adapter::RuntimeCommandInfo) -> SkillInfo {
+    SkillInfo {
+        name: adapter::pi::skill_name_from_invocation(&c.invocation),
+        description: c.description,
+        installed: c.loaded,
+        scope: Some("path".into()),
+        kind: Some(
+            match c.source {
+                adapter::RuntimeCommandSource::Skill => "skill",
+                adapter::RuntimeCommandSource::Prompt => "command",
+            }
+            .into(),
+        ),
+        plugin_id: None,
+        invocation: Some(c.invocation),
+        source: Some(
+            match c.source {
+                adapter::RuntimeCommandSource::Skill => "skill",
+                adapter::RuntimeCommandSource::Prompt => "prompt",
+            }
+            .into(),
+        ),
+        source_path: c.source_path,
+        loaded: Some(c.loaded),
+        unavailable_reason: c.unavailable_reason,
+    }
+}
+
+/// FR-1: the runtime's ACTUAL loaded commands after the session's resource
+/// policy — no `.claude/` scan, no marketplace entries.
+fn pi_discover_skills(engine: &Engine, session_id: &str) -> Result<Vec<SkillInfo>, AppError> {
+    let connection = engine.runtime_connection_for(session_id).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::RuntimeExited,
+            "this session has no live Pi connection",
+        )
+    })?;
+    Ok(connection
+        .list_commands()?
+        .into_iter()
+        .map(pi_skill_info)
+        .collect())
+}
+
+/// The pure half of FR-2's lookup: does `name` (the bare name a listing
+/// returned) resolve to a currently LOADED command? Split out of
+/// `pi_skills_run` so this decision is unit-testable with no `AppHandle` and
+/// no live connection — `pi_skills_run` only adds the I/O (emit + admission)
+/// each outcome implies.
+#[derive(Debug, PartialEq, Eq)]
+enum PiSkillLookup {
+    /// Found and loaded — the exact invocation to submit.
+    Loaded(String),
+    /// Listed, but not currently runnable under the resource policy.
+    Blocked(Option<String>),
+    /// Not listed at all — vanished on reconnect (or never existed).
+    Vanished,
+}
+
+fn lookup_pi_skill(commands: &[adapter::RuntimeCommandInfo], name: &str) -> PiSkillLookup {
+    match commands
+        .iter()
+        .find(|c| adapter::pi::skill_name_from_invocation(&c.invocation) == name)
+    {
+        Some(c) if c.loaded => PiSkillLookup::Loaded(c.invocation.clone()),
+        Some(c) => PiSkillLookup::Blocked(c.unavailable_reason.clone()),
+        None => PiSkillLookup::Vanished,
+    }
+}
+
+/// FR-2: resolve a listed skill's exact `invocation` and submit it through
+/// the SAME internal admissions function as `session_submit` — never a raw
+/// RPC call, never a second queue. A name that is no longer LOADED (vanished
+/// on reconnect, or blocked by the resource policy) is `RUNTIME_UNSUPPORTED`;
+/// only the "vanished entirely" case emits `skills.changed` to refresh the
+/// listing (a still-listed-but-unloaded entry did not change).
+#[allow(clippy::too_many_arguments)]
+fn pi_skills_run(
+    app: &AppHandle,
+    engine: &Engine,
+    session_id: &str,
+    name: &str,
+    args: Option<&str>,
+    client_message_id: Option<String>,
+    delivery: Option<admission::DeliveryMode>,
+) -> Result<(), AppError> {
+    if let Err((code, msg)) = engine.require_capability(session_id, "skills") {
+        return Err(AppError::new(code, msg));
+    }
+    let (Some(client_message_id), Some(delivery)) = (client_message_id, delivery) else {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "clientMessageId and delivery are required to run a skill on a Pi session",
+        ));
+    };
+    let connection = engine.runtime_connection_for(session_id).ok_or_else(|| {
+        AppError::new(
+            ErrorCode::RuntimeExited,
+            "this session has no live Pi connection",
+        )
+    })?;
+    let commands = connection.list_commands()?;
+    let invocation = match lookup_pi_skill(&commands, name) {
+        PiSkillLookup::Loaded(invocation) => invocation,
+        PiSkillLookup::Blocked(reason) => {
+            let reason = reason.map(|r| format!(": {r}")).unwrap_or_default();
+            return Err(AppError::new(
+                ErrorCode::RuntimeUnsupported,
+                format!("'{name}' is not available under the current resource policy{reason}"),
+            ));
+        }
+        PiSkillLookup::Vanished => {
+            // FR-2: vanished on reconnect — refresh the listing.
+            let _ = app.emit(
+                "francois://skills/event",
+                serde_json::json!({ "type": "skills.changed", "sessionId": session_id }),
+            );
+            return Err(AppError::new(
+                ErrorCode::RuntimeUnsupported,
+                format!("'{name}' is no longer listed for this session"),
+            ));
+        }
+    };
+    let text = match args {
+        Some(a) if !a.trim().is_empty() => format!("{} {}", invocation, a.trim()),
+        _ => invocation,
+    };
+    admission::admit_and_deliver(
+        app,
+        engine,
+        app,
+        session_id,
+        &client_message_id,
+        &text,
+        delivery,
+        Vec::new(),
+    )
+    .map(|_| ())
 }
 
 /// Full skills+commands list for a cwd (FR-3/4): installed (project ∪ user ∪ enabled
@@ -280,9 +448,19 @@ pub fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
 
 #[tauri::command(async)]
 pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<SkillInfo>> {
-    let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
+    let Some((cwd, agent_runtime)) =
+        engine.with_session(&session_id, |s| (s.cwd.clone(), s.agent_runtime))
+    else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };
+    // pi-skills-capabilities FR-1/FR-8: a Pi session's list is the runtime's
+    // OWN loaded commands — never the Claude-shaped `.claude/` scan below.
+    if agent_runtime == AgentRuntime::Pi {
+        return match pi_discover_skills(&engine, &session_id) {
+            Ok(list) => ok(list),
+            Err(error) => IpcResult::Err { ok: false, error },
+        };
+    }
     ok(discover_skills(&cwd))
 }
 
@@ -386,7 +564,28 @@ pub fn skills_run(
     session_id: String,
     name: String,
     args: Option<String>,
+    // pi-skills-capabilities: REQUIRED for a Pi session (validated exactly
+    // as `RuntimeMessageInput`'s fields); ignored by every other runtime.
+    client_message_id: Option<String>,
+    delivery: Option<admission::DeliveryMode>,
 ) -> IpcResult<Option<()>> {
+    let Some(agent_runtime) = engine.with_session(&session_id, |s| s.agent_runtime) else {
+        return err(ErrorCode::SessionNotFound, "no such session");
+    };
+    if agent_runtime == AgentRuntime::Pi {
+        return match pi_skills_run(
+            &app,
+            &engine,
+            &session_id,
+            &name,
+            args.as_deref(),
+            client_message_id,
+            delivery,
+        ) {
+            Ok(()) => ok(None),
+            Err(error) => IpcResult::Err { ok: false, error },
+        };
+    }
     if let Err((code, msg)) = engine.require_capability(&session_id, "skills") {
         return err(code, msg);
     }
@@ -437,5 +636,101 @@ mod tests {
     fn skill_description_missing_is_empty() {
         assert_eq!(parse_skill_description_str("# no frontmatter\nhi"), "");
         assert_eq!(parse_skill_description_str("---\nname: x\n---\n"), "");
+    }
+
+    // ---------- pi-skills-capabilities ----------
+
+    fn pi_command(
+        invocation: &str,
+        source: adapter::RuntimeCommandSource,
+        loaded: bool,
+        unavailable_reason: Option<&str>,
+    ) -> adapter::RuntimeCommandInfo {
+        adapter::RuntimeCommandInfo {
+            invocation: invocation.into(),
+            description: "does a thing".into(),
+            source,
+            source_path: Some("/repo/.pi/skills/review".into()),
+            loaded,
+            unavailable_reason: unavailable_reason.map(String::from),
+        }
+    }
+
+    #[test]
+    fn pi_skill_info_maps_a_loaded_skill_and_derives_its_bare_name() {
+        let c = pi_command(
+            "/skill:review",
+            adapter::RuntimeCommandSource::Skill,
+            true,
+            None,
+        );
+        let info = pi_skill_info(c);
+        assert_eq!(info.name, "review");
+        assert_eq!(info.invocation.as_deref(), Some("/skill:review"));
+        assert_eq!(info.source.as_deref(), Some("skill"));
+        assert_eq!(info.kind.as_deref(), Some("skill"));
+        assert_eq!(info.scope.as_deref(), Some("path"));
+        assert!(info.installed);
+        assert_eq!(info.loaded, Some(true));
+        assert_eq!(info.plugin_id, None);
+    }
+
+    #[test]
+    fn pi_skill_info_maps_an_unloaded_prompt_with_its_reason() {
+        let c = pi_command(
+            "/summarize",
+            adapter::RuntimeCommandSource::Prompt,
+            false,
+            Some("project resources are disabled for this session"),
+        );
+        let info = pi_skill_info(c);
+        assert_eq!(info.name, "summarize");
+        assert_eq!(info.source.as_deref(), Some("prompt"));
+        assert_eq!(info.kind.as_deref(), Some("command"));
+        assert!(!info.installed);
+        assert_eq!(info.loaded, Some(false));
+        assert_eq!(
+            info.unavailable_reason.as_deref(),
+            Some("project resources are disabled for this session")
+        );
+    }
+
+    #[test]
+    fn lookup_pi_skill_finds_a_loaded_command_by_its_bare_name() {
+        let commands = vec![pi_command(
+            "/skill:review",
+            adapter::RuntimeCommandSource::Skill,
+            true,
+            None,
+        )];
+        assert_eq!(
+            lookup_pi_skill(&commands, "review"),
+            PiSkillLookup::Loaded("/skill:review".into())
+        );
+    }
+
+    #[test]
+    fn lookup_pi_skill_reports_a_listed_but_unloaded_command_as_blocked() {
+        let commands = vec![pi_command(
+            "/skill:review",
+            adapter::RuntimeCommandSource::Skill,
+            false,
+            Some("project resources are disabled"),
+        )];
+        assert_eq!(
+            lookup_pi_skill(&commands, "review"),
+            PiSkillLookup::Blocked(Some("project resources are disabled".into()))
+        );
+    }
+
+    #[test]
+    fn lookup_pi_skill_is_vanished_for_an_unknown_name() {
+        let commands = vec![pi_command(
+            "/skill:review",
+            adapter::RuntimeCommandSource::Skill,
+            true,
+            None,
+        )];
+        assert_eq!(lookup_pi_skill(&commands, "gone"), PiSkillLookup::Vanished);
     }
 }

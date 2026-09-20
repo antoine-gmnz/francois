@@ -110,6 +110,11 @@ mod tests {
             scope: Some("user".into()),
             kind: Some(kind.into()),
             plugin_id: None,
+            invocation: None,
+            source: None,
+            source_path: None,
+            loaded: None,
+            unavailable_reason: None,
         }
     }
 
@@ -225,6 +230,11 @@ mod tests {
                         scope: s.scope.clone(),
                         kind: s.kind.clone(),
                         plugin_id: s.plugin_id.clone(),
+                        invocation: s.invocation.clone(),
+                        source: s.source.clone(),
+                        source_path: s.source_path.clone(),
+                        loaded: s.loaded,
+                        unavailable_reason: s.unavailable_reason.clone(),
                     })
                     .collect()
             }

@@ -20,15 +20,54 @@ export interface ModelFamilyGroup {
   items: ModelInfo[];
 }
 
-/** First-seen family order — not alphabetical, not sorted. */
-export function groupByFamily(models: ModelInfo[]): ModelFamilyGroup[] {
+/**
+ * pi-models-metrics §5: the generic building block `groupByFamily` is built on
+ * top of — first-seen KEY order, not alphabetical, not sorted. `groupByFamily`
+ * groups by family (the existing multi-provider-openai/codex consumers, byte
+ * for byte); `runtime-model.ts`'s `groupByProvider` groups by `providerId`
+ * (FR-1: two providers can share a modelId, so family/label alone would
+ * collapse them into one group).
+ */
+export function groupModelsBy(models: ModelInfo[], keyOf: (model: ModelInfo) => string): ModelFamilyGroup[] {
   const map = new Map<string, ModelInfo[]>();
   for (const m of models) {
-    const family = familyOf(m);
-    if (!map.has(family)) map.set(family, []);
-    map.get(family)!.push(m);
+    const key = keyOf(m);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(m);
   }
   return Array.from(map, ([family, items]) => ({ family, items }));
+}
+
+/** First-seen family order — not alphabetical, not sorted. */
+export function groupByFamily(models: ModelInfo[]): ModelFamilyGroup[] {
+  return groupModelsBy(models, familyOf);
+}
+
+/**
+ * pi-models-metrics (design brief §Flows): "Search provider and model labels."
+ * Case-insensitive substring match against the label plus, when present, the
+ * Pi identity (provider id / model id) so a search for a provider name finds
+ * every model under it even when the provider isn't in the display label.
+ */
+export function filterModelInfos(models: ModelInfo[], query: string): ModelInfo[] {
+  const q = query.trim().toLowerCase();
+  if (q === '') return models;
+  return models.filter((m) => {
+    const ref = m.descriptor?.ref ?? m.runtimeModel;
+    const haystack = [m.label, ref?.providerId, ref?.modelId].filter((s): s is string => typeof s === 'string').join(' ');
+    return haystack.toLowerCase().includes(q);
+  });
+}
+
+/**
+ * pi-models-metrics (design brief §Flows): favorites float to the top of
+ * whatever order the caller already has, without otherwise reordering either
+ * half — a stable partition, not a sort.
+ */
+export function sortFavoritesFirst<T>(items: T[], isFavorite: (item: T) => boolean): T[] {
+  const favorites = items.filter(isFavorite);
+  const rest = items.filter((item) => !isFavorite(item));
+  return favorites.length === 0 ? items : [...favorites, ...rest];
 }
 
 export function modelPickerPlacement(

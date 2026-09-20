@@ -84,6 +84,40 @@
   padding-top: 0;
 }
 
+/* ---------- pi-migration-rollout: the Pi settings editor + Create Pi copy ---------- */
+
+/* A row of toggle/selectable chips (kind, prompt mode, tools, project
+   resources) — `.chip` is authored inline (no wrap/gap of its own), same as
+   session-settings-sheet's `.new-session-modal__chip-row--wrap`. */
+.pf-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+/* The instruction/skill path lists: shorter than the prompt (`.pf-prompt`),
+   monospace so a long absolute path is legible. */
+.pf-paths {
+  min-height: 56px;
+  font-size: var(--font-size-11);
+  font-family: var(--font-mono, monospace);
+}
+
+/* The row's kind marker — PI stands out the same way an over-cap/denied field
+   does (this IS the one property a saved profile can never change again). */
+.pf-kind-tag {
+  flex-shrink: 0;
+  font-size: var(--font-size-9);
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.pf-copy-banner {
+  background: var(--bg-deep);
+  border-radius: var(--radius-base);
+  padding: var(--space-8) var(--space-10);
+}
+
 /* ---------- chip (FR-22) — pane [1] + welcome header, not the modal ---------- */
 
 .pf-chip {

@@ -221,15 +221,53 @@ pub(crate) struct RuntimeConnectContext {
     pub(crate) profile_snapshot: RuntimeProfileSnapshot,
     pub(crate) model: RuntimeModelRef,
     pub(crate) resume: Option<String>,
+    /// pi-session-durability HIGH remediation (pi-provider-auth FR-5 wiring):
+    /// the pinned Pi account's own config dir (`PI_CODING_AGENT_DIR`) —
+    /// `process::spawn` needs it to build the child's environment through
+    /// `crate::account::pi_account_env`. `None` only in a test that builds a
+    /// context with no real Pi account behind it; a production connect
+    /// always populates it — the gate that supplies it
+    /// (`crate::account::pi_execution_preflight_for`) is what a missing
+    /// account fails on, before a context is ever built.
+    pub(crate) config_dir: Option<String>,
+    /// Mirrors `PiAccountConfig.inheritEnvironmentCredentials` — whether this
+    /// account opted into inheriting ambient provider credentials (FR-5).
+    pub(crate) inherit_environment_credentials: bool,
+    /// pi-migration-rollout FR-3/FR-5: the session's OWN creation-time
+    /// snapshot of its Pi profile settings, if it carries one — never
+    /// re-resolved from the profile registry (FR-3's "editing a profile
+    /// never retroactively changes a session"). `None` means the session
+    /// was created with no profile override at all, in which case Pi
+    /// launches with its own defaults. `process::spawn` is the ONE call
+    /// site that spends this (`profile_args::build_pi_profile_args`).
+    pub(crate) pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
+    /// pi-migration-rollout FR-3 (read-once fix): the ALREADY-RESOLVED launch
+    /// prompt snapshot that pairs with `pi_profile_settings` above — resolved
+    /// exactly once (`pi::resolve_launch_prompt`, at session creation, or
+    /// lazily once for a session persisted before this fix) and carried
+    /// through unchanged from then on. `process::full_pi_args` reads this
+    /// directly and performs NO filesystem read of its own; `None` whenever
+    /// `pi_profile_settings` is `None` too.
+    pub(crate) pi_launch_prompt: Option<pi::PiLaunchPrompt>,
+    /// pi-skills-capabilities FR-6/FR-7: the session's pinned launch policy —
+    /// REQUIRED for a real Pi connect (`process::pi_args` refuses with
+    /// `Internal` otherwise, the same defensive shape `config_dir` already
+    /// follows). `None` only in a test that builds a context with no real Pi
+    /// session behind it.
+    pub(crate) resource_policy: Option<pi::RuntimeResourcePolicy>,
 }
 
+/// pi-models-metrics: widened from `pub(crate)` to `pub` — `session_create`/
+/// `session_switch_model` (both `pub fn`, required for Tauri's command
+/// registration) now take this directly as a `runtimeModel` parameter, and a
+/// `pub fn` may not expose a less-visible type in its own signature.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[allow(dead_code)]
-pub(crate) struct RuntimeModelRef {
+pub struct RuntimeModelRef {
     #[serde(rename = "providerId")]
-    pub(crate) provider_id: String,
+    pub provider_id: String,
     #[serde(rename = "modelId")]
-    pub(crate) model_id: String,
+    pub model_id: String,
 }
 
 /// Core-owned capability snapshot. A missing snapshot is intentionally
@@ -242,6 +280,34 @@ pub struct CapabilityState {
 }
 
 pub type RuntimeCapabilities = BTreeMap<String, CapabilityState>;
+
+/// pi-skills-capabilities §5: one command the runtime reports as actually
+/// loaded (Pi's `get_commands`), pre-policy-labelled — neutral vocabulary.
+/// `session::skills`/`session::slash` (which own `SkillInfo`/
+/// `SlashCommandInfo`) project this onto their own contract-mirroring
+/// shapes; this module knows nothing about either.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimeCommandInfo {
+    /// The exact command text, spelling preserved (e.g. `/skill:review` or
+    /// `/summarize`) — never rebuilt from a derived name (FR-1).
+    pub(crate) invocation: String,
+    pub(crate) description: String,
+    pub(crate) source: RuntimeCommandSource,
+    pub(crate) source_path: Option<String>,
+    /// false ⇒ listed but not runnable under the session's policy; see
+    /// `unavailable_reason`.
+    pub(crate) loaded: bool,
+    pub(crate) unavailable_reason: Option<String>,
+}
+
+/// A skill vs. a prompt template — mirrors contract `SkillInfo.source`.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RuntimeCommandSource {
+    Skill,
+    Prompt,
+}
 
 /// Task 08 expands this message vocabulary further. pi-transcript-events FR-7
 /// adds the one already-validated multimodal shape every session-scoped
@@ -266,6 +332,53 @@ pub(crate) trait RuntimeSessionControl: Send + Sync {
     fn capabilities(&self) -> RuntimeCapabilities;
     fn cancel(&self) -> Result<(), AppError>;
     fn shutdown(&self) -> Result<(), AppError>;
+    /// pi-models-metrics FR-5/FR-6: send a model/effort change, then READ BACK
+    /// the accepted values before returning — an implementer must never
+    /// report success without confirming what the runtime actually applied.
+    /// The second tuple member is the READ-BACK level (never the requested
+    /// one echoed back unconfirmed); the third is the FULL set of levels the
+    /// runtime reports for this model (lead clarification: the descriptor
+    /// carries only `reasoning: boolean` — the caller projects this list onto
+    /// `SessionMeta.model.efforts`, never the descriptor). Default:
+    /// unsupported, for every runtime that has no live model-switching
+    /// connection.
+    fn switch_model(
+        &self,
+        _model: RuntimeModelRef,
+        _effort: Option<String>,
+    ) -> Result<(events::RuntimeModelDescriptor, Option<String>, Vec<String>), AppError> {
+        Err(runtime_unsupported())
+    }
+    /// pi-models-metrics FR-7: read current usage/cost off the runtime.
+    fn read_metrics(&self) -> Result<events::RuntimeMetrics, AppError> {
+        Err(runtime_unsupported())
+    }
+    /// pi-turn-controls FR-5/FR-6: clear whatever the runtime is currently
+    /// holding in its OWN queue — part of the Stop sequence
+    /// (`adapter::pi::controls::stop_sequence`), and the sole cancellation
+    /// path for a Pi-owned message once `session_unqueue` can no longer
+    /// remove it individually. Default: unsupported.
+    fn clear_queue(&self) -> Result<(), AppError> {
+        Err(runtime_unsupported())
+    }
+    /// pi-turn-controls FR-6: abort the in-flight turn — distinct from
+    /// `cancel` (the audit: "clear_queue and abort are separate"; `cancel`
+    /// stays the generic single-verb path every other runtime's simple
+    /// interrupt uses). Default: unsupported.
+    fn abort(&self) -> Result<(), AppError> {
+        Err(runtime_unsupported())
+    }
+    /// pi-turn-controls FR-8: manual compaction over THIS connection — never
+    /// a side-spawn. Blocks up to the 180s deadline. Default: unsupported.
+    fn compact(&self) -> Result<(), AppError> {
+        Err(runtime_unsupported())
+    }
+    /// pi-skills-capabilities FR-1/FR-2: the runtime's OWN currently-loaded
+    /// commands (Pi's `get_commands`) — never a `.claude/` scan. Default:
+    /// unsupported, for every runtime with no live command listing.
+    fn list_commands(&self) -> Result<Vec<RuntimeCommandInfo>, AppError> {
+        Err(runtime_unsupported())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -806,6 +919,11 @@ mod connect_snapshot_tests {
                 model_id: "exact:model".into(),
             },
             resume: None,
+            config_dir: Some("/pi/acct".into()),
+            inherit_environment_credentials: false,
+            pi_profile_settings: None,
+            pi_launch_prompt: None,
+            resource_policy: None,
         }
     }
     #[test]

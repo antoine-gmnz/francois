@@ -143,6 +143,7 @@ fn buf_block(
         attachments: None,
         outcome: None,
         tone: None,
+        native_entry_id: None,
     }
 }
 

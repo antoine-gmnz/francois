@@ -205,6 +205,20 @@ pub enum ErrorCode {
     ModelUnavailable,
     /// pi-runtime-boundary FR-6: a tool call failed
     ToolFailed,
+    /// pi-session-durability: reconnect/newFrom refused while a turn or another recovery is in flight
+    SessionBusy,
+    /// pi-session-durability FR-3: the recorded native conversation file is gone
+    RuntimeSessionMissing,
+    /// pi-session-durability FR-3: the native file/identity failed validation or its parent chain is broken
+    RuntimeSessionCorrupt,
+    /// pi-session-durability FR-3: the pinned account was removed; never falls back to a default
+    RuntimeAccountMissing,
+    /// pi-turn-controls FR-4: the session already holds 20 pending intents
+    QueueFull,
+    /// pi-skills-capabilities FR-5: first submit refused until the unrestricted-tools acknowledgment is recorded
+    RuntimePolicyRequired,
+    /// pi-migration-rollout: a legacy profile selected for a Pi account, or Pi settings for another runtime
+    ProfileRuntimeMismatch,
     Internal,
 }
 
@@ -308,6 +322,13 @@ impl ErrorCode {
         ErrorCode::ProviderUnavailable,
         ErrorCode::ModelUnavailable,
         ErrorCode::ToolFailed,
+        ErrorCode::SessionBusy,
+        ErrorCode::RuntimeSessionMissing,
+        ErrorCode::RuntimeSessionCorrupt,
+        ErrorCode::RuntimeAccountMissing,
+        ErrorCode::QueueFull,
+        ErrorCode::RuntimePolicyRequired,
+        ErrorCode::ProfileRuntimeMismatch,
         ErrorCode::Internal,
     ];
 
@@ -411,6 +432,13 @@ impl ErrorCode {
             ErrorCode::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
             ErrorCode::ModelUnavailable => "MODEL_UNAVAILABLE",
             ErrorCode::ToolFailed => "TOOL_FAILED",
+            ErrorCode::SessionBusy => "SESSION_BUSY",
+            ErrorCode::RuntimeSessionMissing => "RUNTIME_SESSION_MISSING",
+            ErrorCode::RuntimeSessionCorrupt => "RUNTIME_SESSION_CORRUPT",
+            ErrorCode::RuntimeAccountMissing => "RUNTIME_ACCOUNT_MISSING",
+            ErrorCode::QueueFull => "QUEUE_FULL",
+            ErrorCode::RuntimePolicyRequired => "RUNTIME_POLICY_REQUIRED",
+            ErrorCode::ProfileRuntimeMismatch => "PROFILE_RUNTIME_MISMATCH",
             ErrorCode::Internal => "INTERNAL",
         }
     }

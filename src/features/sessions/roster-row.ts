@@ -15,6 +15,7 @@ import type { SessionDerived } from '../../../contract/fleet-board';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { abbreviate } from '../../lib/path';
 import { pathLeaf } from './roster-groups';
+import { UNKNOWN_METRIC } from './runtime-metrics';
 import { worktreeChipLabel } from './worktree';
 
 export interface AskLine {
@@ -66,9 +67,8 @@ export function rowTitle(session: SessionMeta, home: string): string {
   if (cwd) parts.push(cwd);
   if (session.worktree) parts.push(worktreeChipLabel(session.worktree));
   if (session.model.label) parts.push(session.model.label);
-  if (session.contextLimitTokens > 0) {
-    parts.push(`${formatContextTokens(session.contextUsedTokens)}/${formatContextTokens(session.contextLimitTokens)}`);
-  }
+  const context = rosterContextReadout(session);
+  if (context) parts.push(`${context.usedLabel}/${context.windowLabel}`);
   return parts.join(' · ');
 }
 
@@ -120,8 +120,62 @@ export function formatLineCount(n: number): string {
 }
 
 /** Fill fraction of the context bar, clamped to 0..1. 0 when there is no limit
- *  to measure against (an unknown window is not a full one). */
+ *  to measure against (an unknown window is not a full one). Legacy-runtime
+ *  only — Pi's own occupancy comes from `rosterContextReadout` below. */
 export function contextFraction(session: SessionMeta): number {
   if (session.contextLimitTokens <= 0) return 0;
   return Math.max(0, Math.min(1, session.contextUsedTokens / session.contextLimitTokens));
+}
+
+export interface RosterContextReadout {
+  /** 0..1, clamped. */
+  fraction: number;
+  usedLabel: string;
+  windowLabel: string;
+}
+
+/**
+ * pi-models-metrics: "remove the use of the Claude context fallback for Pi"
+ * (spec §6) — a Pi session's `contextUsedTokens`/`contextLimitTokens` are never
+ * populated, so every roster figure for it comes ONLY from `session.metrics`.
+ * `null` ⇒ render no bar at all: an unknown occupancy is neither a full one
+ * nor an empty one (pi-models-metrics FR-7), same rule `contextFraction`
+ * already applied to a legacy session with no window to measure against.
+ */
+export function rosterContextReadout(session: SessionMeta): RosterContextReadout | null {
+  if (session.agentRuntime === 'pi') {
+    const metrics = session.metrics;
+    if (!metrics || metrics.contextTokens === null || metrics.contextWindow === null || metrics.contextWindow <= 0) return null;
+    return {
+      fraction: Math.max(0, Math.min(1, metrics.contextTokens / metrics.contextWindow)),
+      usedLabel: formatContextTokens(metrics.contextTokens),
+      windowLabel: formatContextTokens(metrics.contextWindow),
+    };
+  }
+  if (session.contextLimitTokens <= 0) return null;
+  return {
+    fraction: contextFraction(session),
+    usedLabel: formatContextTokens(session.contextUsedTokens),
+    windowLabel: formatContextTokens(session.contextLimitTokens),
+  };
+}
+
+/**
+ * The RUNNING row's figure — unlike the settled rows it renders even with no
+ * window to divide by (a raw used count still says something while a turn is
+ * live). Byte-identical to the pre-feature ternary for every non-Pi session;
+ * a Pi session with no context tokens reported yet reads as an em dash rather
+ * than a fabricated 0 (FR-7).
+ */
+export function runningContextFigure(session: SessionMeta): string {
+  if (session.agentRuntime === 'pi') {
+    const metrics = session.metrics;
+    if (!metrics || metrics.contextTokens === null) return UNKNOWN_METRIC;
+    return metrics.contextWindow !== null && metrics.contextWindow > 0
+      ? `${formatContextTokens(metrics.contextTokens)}/${formatContextTokens(metrics.contextWindow)}`
+      : formatContextTokens(metrics.contextTokens);
+  }
+  return session.contextLimitTokens > 0
+    ? `${formatContextTokens(session.contextUsedTokens)}/${formatContextTokens(session.contextLimitTokens)}`
+    : formatContextTokens(session.contextUsedTokens);
 }

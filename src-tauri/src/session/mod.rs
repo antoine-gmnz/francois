@@ -16,6 +16,13 @@
 //    matching FR-19's lazy-error path rather than failing `create`.
 
 mod adapter;
+/// pi-turn-controls: the per-session admissions ledger (specs/
+/// pi-turn-controls.md FR-1..FR-5, FR-9) — `DeliveryMode`/`RuntimeMessageReceipt`/
+/// `RuntimeQueueEntry` mirrors, the pure `AdmissionLedger` state machine, its
+/// atomic app-data sidecar, and the ONE internal admission entry point
+/// (`admit_and_deliver`) `session_submit` and a later wave's `skills_run` both
+/// route through.
+mod admission;
 mod agent_transcript;
 mod agents;
 mod attachments;
@@ -41,6 +48,15 @@ mod remote_discovery;
 /// names it.
 mod response_mode;
 mod runtime;
+/// pi-models-metrics/pi-transcript-events/pi-turn-controls: the
+/// `RuntimeEventPayload` wire union and the payload structs its variants
+/// carry (`RuntimeToolCall`, `RuntimeAttachmentRef`, `RuntimeModelDescriptor`,
+/// `RuntimeMetrics`) — split out of `events` per §Code layout once three Pi
+/// features pushed it past the ~1000-line ceiling. A SIBLING of `events`
+/// (not a child of it), so `super::*` still resolves to the whole `session`
+/// module exactly as it does in `events.rs`; `events` re-exports the names
+/// other files already reach through `events::*`.
+mod runtime_events;
 mod skills;
 mod slash;
 mod spawn;
@@ -85,6 +101,9 @@ mod worktree;
 // two children is a compile error here — resolve by qualifying at the use
 // site, not by re-adding the glob).
 // ---------------------------------------------------------------------------
+/// pi-turn-controls FR-6/FR-7: `session_interrupt`'s Pi branch (session/
+/// commands/lifecycle.rs) calls this for the whole Stop sequence.
+pub(crate) use adapter::pi::run_stop_sequence;
 /// pi-runtime-distribution §5: `francois:runtime:installation` — installation
 /// discovery only, independent of `adapter::pi`'s (still-stub) RPC transport.
 pub use adapter::pi::{
@@ -136,27 +155,34 @@ pub use cloud::{
 pub(crate) use commands::switch_permission_mode_in_engine;
 pub(crate) use commands::validate_catalog_selection;
 pub use commands::{
-    __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__session_answer_question,
-    __cmd__session_clear, __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt,
-    __cmd__session_list, __cmd__session_pick_directory, __cmd__session_remove,
-    __cmd__session_rename, __cmd__session_send, __cmd__session_switch_effort,
-    __cmd__session_switch_model, __cmd__session_switch_permission_mode,
-    __cmd__session_switch_response_mode, __cmd__session_unqueue, __cmd__session_update_settings,
+    RuntimeModelCatalogOut, SendSource, SessionSettingsPatch, __cmd__conversation_get_transcript,
+    __cmd__permissions_decide, __cmd__runtime_models, __cmd__session_acknowledge_policy,
+    __cmd__session_answer_question, __cmd__session_clear, __cmd__session_clear_queue,
+    __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt, __cmd__session_list,
+    __cmd__session_metrics, __cmd__session_new_from, __cmd__session_pick_directory,
+    __cmd__session_reconnect, __cmd__session_remove, __cmd__session_rename, __cmd__session_send,
+    __cmd__session_submit, __cmd__session_switch_effort, __cmd__session_switch_model,
+    __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
+    __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
+    __tauri_command_name_runtime_models, __tauri_command_name_session_acknowledge_policy,
     __tauri_command_name_session_answer_question, __tauri_command_name_session_clear,
-    __tauri_command_name_session_compact, __tauri_command_name_session_create,
-    __tauri_command_name_session_interrupt, __tauri_command_name_session_list,
-    __tauri_command_name_session_pick_directory, __tauri_command_name_session_remove,
+    __tauri_command_name_session_clear_queue, __tauri_command_name_session_compact,
+    __tauri_command_name_session_create, __tauri_command_name_session_interrupt,
+    __tauri_command_name_session_list, __tauri_command_name_session_metrics,
+    __tauri_command_name_session_new_from, __tauri_command_name_session_pick_directory,
+    __tauri_command_name_session_reconnect, __tauri_command_name_session_remove,
     __tauri_command_name_session_rename, __tauri_command_name_session_send,
-    __tauri_command_name_session_switch_effort, __tauri_command_name_session_switch_model,
-    __tauri_command_name_session_switch_permission_mode,
+    __tauri_command_name_session_submit, __tauri_command_name_session_switch_effort,
+    __tauri_command_name_session_switch_model, __tauri_command_name_session_switch_permission_mode,
     __tauri_command_name_session_switch_response_mode, __tauri_command_name_session_unqueue,
     __tauri_command_name_session_update_settings, apply_model_switch, conversation_get_transcript,
-    do_send, permissions_decide, session_answer_question, session_clear, session_compact,
-    session_create, session_interrupt, session_list, session_pick_directory, session_remove,
-    session_rename, session_send, session_switch_effort, session_switch_model,
-    session_switch_permission_mode, session_switch_response_mode, session_unqueue,
-    session_update_settings, SendSource, SessionSettingsPatch,
+    do_send, permissions_decide, runtime_models, session_acknowledge_policy,
+    session_answer_question, session_clear, session_clear_queue, session_compact, session_create,
+    session_interrupt, session_list, session_metrics, session_new_from, session_pick_directory,
+    session_reconnect, session_remove, session_rename, session_send, session_submit,
+    session_switch_effort, session_switch_model, session_switch_permission_mode,
+    session_switch_response_mode, session_unqueue, session_update_settings,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -432,6 +458,20 @@ pub struct SessionMeta {
     /// this only widens `meta()` to project the field that was already there.
     #[serde(rename = "allowGit")]
     allow_git: bool,
+    /// pi-session-durability: present for Pi sessions only; absent for every
+    /// other runtime. Republished on `session.meta` whenever it changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<events::RuntimeRecovery>,
+    /// pi-models-metrics: the most recent runtime-reported usage. Persisted
+    /// with the session and loaded `stale: true` after a restart until
+    /// refreshed. Absent for a runtime that reports none — never synthesized
+    /// from `contextUsedTokens`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<events::RuntimeMetrics>,
+    /// pi-skills-capabilities: present for Pi sessions only; the pinned
+    /// launch policy. Never converts into an allow/deny tool rule.
+    #[serde(rename = "resourcePolicy", skip_serializing_if = "Option::is_none")]
+    resource_policy: Option<adapter::pi::RuntimeResourcePolicy>,
 }
 
 #[derive(Serialize, Clone)]
@@ -667,6 +707,14 @@ pub struct BufBlock {
     /// to the SESSION transcript — agent-tab's `AgentNoticeBlock` carries no
     /// tone, so its notices leave this `None`.
     tone: Option<String>,
+    /// pi-session-durability FR-5: the Pi native entry id this `User`/
+    /// `Assistant` block was rebuilt from — core-private bookkeeping never
+    /// serialized to IPC (`classify_block` has no slot for it), persisted
+    /// only so a LATER rebuild can recognize an entry it has already shown
+    /// and reuse the SAME block id rather than minting a new one (never text
+    /// matching). `None` for every block from every other runtime, and for
+    /// any Pi block a projection rebuild has not produced.
+    native_entry_id: Option<String>,
 }
 
 impl BufBlock {
@@ -695,6 +743,7 @@ impl BufBlock {
             attachments: None,
             outcome: None,
             tone: None,
+            native_entry_id: None,
         }
     }
 }
@@ -799,6 +848,37 @@ pub struct Session {
     /// session-profiles FR-16: the profile identity this session was created
     /// from, if any — snapshot-only, never re-resolved.
     profile: Option<SessionProfileRef>,
+    /// pi-migration-rollout FR-3: the fully resolved, validated Pi profile
+    /// settings snapshot this session was created with, if any — CORE-
+    /// PRIVATE (never in `SessionMeta`, never over IPC; `profile` above
+    /// carries the identity a frontend may show). Snapshotted ONCE at
+    /// creation from either the resolved profile's own settings or the New
+    /// Session form's edited override — never re-read from the registry, so
+    /// editing the profile or a project default never retroactively changes
+    /// an existing session, and a resume/reconnect relaunches with this
+    /// SAME snapshot (`adapter::pi::recovery`'s `RuntimeConnectContext`).
+    /// `None` when the session carries no Pi profile at all — Pi then
+    /// launches with its own defaults, unrestricted by this mechanism.
+    pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
+    /// pi-migration-rollout FR-3 (read-once fix): the launch prompt resolved
+    /// from `pi_profile_settings.instructionPaths` — CORE-PRIVATE, same as
+    /// `pi_profile_settings` above (never in `SessionMeta`, never over IPC).
+    /// Resolved EXACTLY ONCE (`adapter::pi::resolve_launch_prompt`): at
+    /// creation for every session created under this build, or lazily once
+    /// — and then persisted — for a session whose record predates this fix
+    /// (`piProfile` present, no `piLaunchPrompt` key yet). Every later
+    /// connect/reconnect/new-from carries this SAME snapshot
+    /// (`adapter::RuntimeConnectContext.pi_launch_prompt`) rather than
+    /// re-reading the instruction files off disk. `None` whenever
+    /// `pi_profile_settings` is `None` too, or (transiently, on a pre-fix
+    /// record) until the lazy resolve above has run.
+    pi_launch_prompt: Option<crate::session::adapter::pi::PiLaunchPrompt>,
+    /// pi-skills-capabilities FR-5/FR-6/FR-7: the session's pinned resource
+    /// policy — `None` for every non-Pi session. Coordination note (core-10b):
+    /// this field/constructor slot exists so `session_create`'s
+    /// `resourcePolicy` branch (pi-skills-capabilities, a concurrent wave)
+    /// compiles; that wave owns its shape, validation and every other read site.
+    resource_policy: Option<crate::session::adapter::pi::RuntimeResourcePolicy>,
     /// response-mode FR-1/FR-4: the mode the NEXT turn spawns with. Changing it
     /// signals no process and writes nothing to a running child — a turn keeps
     /// the mode it was snapshotted with (`TurnContext.response_mode`).
@@ -884,6 +964,40 @@ pub struct Session {
     /// accidentally pre-set it, and a reload starts false again (a fresh
     /// reminder after a restart is honest, not a bug).
     grok_sandbox_notice_emitted: bool,
+    /// pi-session-durability: presentation state for the recovery banner —
+    /// meaningful for Pi sessions only (`meta()` omits it for every other
+    /// runtime). Starts `disconnected` (no live connection, history is
+    /// readable) and is updated by `adapter::pi::recovery`'s validate-then-
+    /// connect flow. NOT persisted: a reload always starts `disconnected`
+    /// again, matching "Quit and reopen: old transcript is visible
+    /// immediately" — there is no live connection to report ready.
+    recovery: events::RuntimeRecovery,
+    /// pi-session-durability: `SESSION_BUSY` guard — claimed for the whole
+    /// span of a `session_reconnect`/`session_new_from` call touching this
+    /// session, so two overlapping calls (or a reconnect racing a newFrom
+    /// reading the same source) can never interleave their filesystem/RPC
+    /// work. In-memory only, always `false` after a restart.
+    recovery_busy: bool,
+    /// pi-session-durability FR-1/FR-2: the persisted resume anchor + cursor
+    /// for a Pi session's native conversation. `None` ⇔ never successfully
+    /// connected. Written by `adapter::pi::recovery` after a successful
+    /// connection and BEFORE any first prompt (FR-2's "Pi owns messages/tree/
+    /// context" — this is François's OWN ownership/cursor record, never
+    /// replayed as a prompt).
+    pi_resume: Option<adapter::pi::PiResumeRecord>,
+    /// pi-models-metrics: the most recent runtime-reported usage. Persisted
+    /// alongside the rest of the record, loaded `stale: true` until an
+    /// explicit or automatic refresh lands. `None` for a runtime that has
+    /// never reported one.
+    metrics: Option<events::RuntimeMetrics>,
+    /// pi-models-metrics (lead clarification): the runtime-REPORTED reasoning
+    /// levels for the CURRENT model — projected onto `SessionMeta.model.
+    /// efforts` (`ModelInfo.efforts`) for Pi sessions only, since
+    /// `RuntimeModelDescriptor` itself carries only `reasoning: boolean`.
+    /// In-memory only, like `effective_capabilities`: re-derived on every
+    /// connect/switch, empty otherwise. Never Claude's/Codex's effort
+    /// vocabulary.
+    model_efforts: Vec<String>,
 }
 
 impl Session {
@@ -921,6 +1035,9 @@ impl Session {
         extra_args: Vec<String>,
         profile: Option<SessionProfileRef>,
         response_mode: ResponseMode,
+        pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
+        pi_launch_prompt: Option<crate::session::adapter::pi::PiLaunchPrompt>,
+        resource_policy: Option<crate::session::adapter::pi::RuntimeResourcePolicy>,
     ) -> Session {
         Session {
             id,
@@ -952,6 +1069,9 @@ impl Session {
             system_prompt,
             extra_args,
             profile,
+            pi_profile_settings,
+            pi_launch_prompt,
+            resource_policy,
             response_mode,
             // response-mode FR-10: a brand-new session's thread has been told
             // nothing yet — the first turn is a fresh thread and sends whatever
@@ -984,6 +1104,11 @@ impl Session {
             workflow_scripts: HashMap::new(),
             cli_commands: Vec::new(),
             grok_sandbox_notice_emitted: false,
+            recovery: events::RuntimeRecovery::disconnected(),
+            recovery_busy: false,
+            pi_resume: None,
+            metrics: None,
+            model_efforts: Vec::new(),
         }
     }
 
@@ -1020,7 +1145,17 @@ impl Session {
             // display-openai-model-name FR-2: built from the session's OWN
             // persisted label — no catalog lookup here (allocation-cheap,
             // never touches disk or network; this runs on every emitted event).
-            model: model(&self.model_id, &self.model_label),
+            // pi-models-metrics (lead clarification): for Pi, `efforts`
+            // carries the runtime-REPORTED levels for the current model —
+            // `RuntimeModelDescriptor` itself has no such list.
+            model: if agent_runtime == AgentRuntime::Pi {
+                ModelInfo {
+                    efforts: self.model_efforts.clone(),
+                    ..model(&self.model_id, &self.model_label)
+                }
+            } else {
+                model(&self.model_id, &self.model_label)
+            },
             status: self.status.clone(),
             context_used_tokens: self.context_used_tokens,
             context_limit_tokens: self.context_limit_tokens,
@@ -1043,6 +1178,12 @@ impl Session {
             profile: self.profile.clone(),
             response_mode: self.response_mode,
             allow_git: self.allow_git,
+            // pi-session-durability: presentation only for Pi sessions — every
+            // other runtime omits the key entirely (contract: "Present for Pi
+            // sessions only").
+            recovery: (agent_runtime == AgentRuntime::Pi).then(|| self.recovery.clone()),
+            metrics: self.metrics.clone(),
+            resource_policy: self.resource_policy,
         }
     }
 
@@ -1474,6 +1615,10 @@ pub struct Engine {
     unsupported_runtime_records: Mutex<HashMap<String, Value>>,
     runtime_connections: Mutex<HashMap<String, Arc<dyn adapter::RuntimeSessionControl>>>,
     sessions: Mutex<HashMap<String, Session>>,
+    /// pi-turn-controls: one admissions ledger per session — a sibling map to
+    /// `sessions`, not a `Session` field, so nothing here widens the
+    /// already-oversized `Session` struct/constructor.
+    admissions: Mutex<HashMap<String, admission::AdmissionLedger>>,
     /// workflow-details §6: run id → the incremental scan state of its run
     /// directory (per-file byte offsets + running aggregates, FR-5) and the
     /// `notify` watcher keeping it live (FR-6). Dropping an entry stops the
