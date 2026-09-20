@@ -35,6 +35,7 @@ export interface SessionUpdateSettingsRequest {
  *  - 'SESSION_NOT_FOUND'    — no session with that id (§7 case 1)
  *  - 'SESSION_NOT_RUNNING'  — session is done/error and the patch touches a run key (§7 case 2)
  *  - 'INVALID_INPUT'        — an enum/modelId/name failed re-validation; nothing written (§7 cases 3–5)
+ *  - 'RUNTIME_UNSUPPORTED'  — an effective capability rejects a requested run setting; nothing written
  *  - 'INTERNAL'             — unexpected core failure after the in-memory write (§7 case 6)
  *  - Codex catalogue failures from session-engine.ts when model/effort validation needs discovery.
  */

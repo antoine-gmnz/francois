@@ -516,6 +516,7 @@ pub fn cloud_adopt(
                     code: e.code,
                     message: e.message.clone(),
                     detail: e.detail.clone(),
+                    runtime_failure: None,
                 },
             });
             crate::ipc::AppError::from(e).into()

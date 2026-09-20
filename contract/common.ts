@@ -19,6 +19,8 @@ export interface AppError {
   code: ErrorCode;
   message: string; // human-readable, safe to render
   detail?: unknown;
+  /** Sanitized runtime provenance; raw provider and Pi RPC payloads never cross IPC. */
+  runtimeFailure?: RuntimeFailure;
 }
 
 export type ErrorCode =
@@ -110,6 +112,17 @@ export type ErrorCode =
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
   | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
   | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
+  | 'RUNTIME_UNAVAILABLE'
+  | 'STEP_DETAIL_NOT_FOUND' // command-inspect: no captured detail record for this block
+  | 'RUNTIME_INCOMPATIBLE'
+  | 'RUNTIME_PROTOCOL_ERROR'
+  | 'RUNTIME_TIMEOUT'
+  | 'RUNTIME_EXITED'
+  | 'RUNTIME_UNSUPPORTED'
+  | 'PROVIDER_AUTH_FAILED'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'MODEL_UNAVAILABLE'
+  | 'TOOL_FAILED'
   | 'INTERNAL';
 
 // ---------- sessions ----------
@@ -188,7 +201,7 @@ export type ClaudeRuntime = 'native' | 'wsl';
  * Every `match` on this type in the core is exhaustive with NO wildcard arm
  * (multi-provider-grok FR-1) — a fifth member must fail the build, not default.
  */
-export type AgentRuntime = 'claude-code' | 'francois' | 'codex' | 'grok';
+export type AgentRuntime = 'claude-code' | 'francois' | 'codex' | 'grok' | 'pi';
 
 /**
  * Which wire dialect the session's endpoint speaks (multi-provider-seam FR-11a).
@@ -197,7 +210,65 @@ export type AgentRuntime = 'claude-code' | 'francois' | 'codex' | 'grok';
  * a single collapsed enum could not name. Vendor IDENTITY is neither of these
  * two; it is the session's account and its endpoint baseUrl.
  */
-export type ProviderProtocol = 'anthropic' | 'openai';
+export type ProviderProtocol = 'anthropic' | 'openai' | null;
+
+/** Opaque provider/model identity. Both identifiers are nonempty UTF-8 strings up to 256 bytes. */
+export interface RuntimeModelRef {
+  providerId: string;
+  modelId: string;
+}
+
+export type RuntimeCapability =
+  | 'mcp'
+  | 'subagents'
+  | 'skills'
+  | 'skillsInstall'
+  | 'workflows'
+  | 'interactiveCommands'
+  | 'permissions'
+  | 'remoteControl'
+  | 'usageBar'
+  | 'compaction'
+  | 'steering'
+  | 'followUps'
+  | 'resumableSessions'
+  | 'modelSwitching'
+  | 'images'
+  | 'contextMetrics'
+  | 'costMetrics';
+
+/** `reason` is present iff `available` is false. */
+export interface CapabilityState {
+  available: boolean;
+  reason?: string;
+}
+
+export type RuntimeCapabilities = Record<RuntimeCapability, CapabilityState>;
+
+export interface RuntimeFailure {
+  origin: 'application' | 'runtime' | 'provider' | 'tool';
+  code: ErrorCode;
+  message: string;
+  retryable: boolean;
+  requestId?: string;
+  toolCallId?: string;
+}
+
+export type RuntimeEventPayload =
+  | { kind: 'run.state'; state: 'starting' | 'running' | 'idle' | 'stopping' | 'failed' }
+  | { kind: 'capabilities'; capabilities: RuntimeCapabilities }
+  | { kind: 'failure'; failure: RuntimeFailure };
+
+export interface RuntimeEventEnvelope {
+  type: 'runtime.event';
+  sessionId: SessionId;
+  generation: string;
+  sequence: number;
+  runId?: string;
+  requestId?: string;
+  at: number;
+  event: RuntimeEventPayload;
+}
 
 export interface ModelInfo {
   id: string; // e.g. 'claude-sonnet-5'
@@ -280,6 +351,12 @@ export interface SessionMeta {
    * Absent ⇒ 'anthropic'; superseded `provider: 'openai-compatible'` ⇒ 'openai'.
    */
   protocol: ProviderProtocol;
+  /** Explicit provider/model pair for runtime-owned connections; Pi supplies it after initialization. */
+  runtimeModel?: RuntimeModelRef;
+  /** Live core snapshot may narrow static defaults; a missing Pi snapshot enables no action. */
+  effectiveCapabilities?: RuntimeCapabilities;
+  /** Core-minted UUID for the currently connected runtime child; never persisted as a live handle. */
+  runtimeGeneration?: string;
   /** Present ⇔ created from a profile; snapshot-only (session-profiles FR-16). */
   profile?: SessionProfileRef;
   /** How this session's NEXT turn is told to write. A persisted record without
@@ -635,6 +712,7 @@ export interface SlashCommandInfo {
 
 export type SessionEvent =
   | { type: 'session.meta'; meta: SessionMeta } // full snapshot (created/updated)
+  | RuntimeEventEnvelope
   | { type: 'session.status'; sessionId: SessionId; status: SessionStatus }
   | { type: 'session.removed'; sessionId: SessionId }
   | { type: 'message.user'; sessionId: SessionId; blockId: BlockId; text: string }

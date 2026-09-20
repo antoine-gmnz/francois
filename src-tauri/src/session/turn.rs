@@ -173,15 +173,27 @@ pub fn begin_turn(
     let account_id = engine
         .with_session(session_id, |s| s.account_id.clone())
         .unwrap_or_default();
+    if let Some(Err((code, msg))) =
+        engine.with_session(session_id, |s| s.validate_attachment_submission(&text))
+    {
+        fail_session(app, session_id, code, msg);
+        return;
+    }
+    // pi-runtime-boundary FR-1/FR-8: no account kind maps to Pi, so a Pi
+    // session dispatches on its stored runtime (and fails as unavailable).
     let (agent_runtime, _protocol) =
-        AgentRuntime::from_account_kind(crate::account::kind_of(app, &account_id));
+        if engine.with_session(session_id, |s| s.agent_runtime) == Some(AgentRuntime::Pi) {
+            (AgentRuntime::Pi, ProviderProtocol::Pi)
+        } else {
+            AgentRuntime::from_account_kind(crate::account::kind_of(app, &account_id))
+        };
     let adapter = adapter_for(agent_runtime);
     let Some(ctx) = build_turn_context(&engine, session_id, block_id, text, mode) else {
         return;
     };
 
     if let Err(e) = adapter.preflight(app, &ctx) {
-        fail_session(app, session_id, e.code, &e.message);
+        fail_session_error(app, session_id, e);
         return;
     }
 
@@ -212,7 +224,7 @@ pub fn begin_turn(
                 s.current = Some(control);
             });
         }
-        Err(e) => fail_session(app, session_id, e.code, &e.message),
+        Err(e) => fail_session_error(app, session_id, e),
     }
 }
 
@@ -385,6 +397,8 @@ pub fn finish_turn(app: &AppHandle, session_id: &str, errored: bool, error_msg: 
                     },
                     message: msg,
                     detail: None,
+
+                    runtime_failure: None,
                 },
             },
         );
@@ -433,9 +447,17 @@ pub fn apply_fail_session(
 }
 
 pub fn fail_session(app: &AppHandle, session_id: &str, code: ErrorCode, msg: &str) {
+    fail_session_error(app, session_id, AppError::new(code, msg));
+}
+
+/// pi-runtime-boundary FR-6: settles the session carrying the full `AppError`,
+/// so a `runtimeFailure` survives onto `session.error`.
+pub(crate) fn fail_session_error(app: &AppHandle, session_id: &str, error: AppError) {
     let engine = app.state::<Engine>();
     let (agent_ems, workflow_runs) = engine
-        .with_session_mut(session_id, |s| apply_fail_session(s, msg, now_ms()))
+        .with_session_mut(session_id, |s| {
+            apply_fail_session(s, &error.message, now_ms())
+        })
         .unwrap_or_default();
     // usage-bar FR-13: running → error. multi-account FR-29: that session's
     // account only.
@@ -451,11 +473,7 @@ pub fn fail_session(app: &AppHandle, session_id: &str, code: ErrorCode, msg: &st
         app,
         SessionEvent::Error {
             session_id: session_id.into(),
-            error: AppError {
-                code,
-                message: msg.into(),
-                detail: None,
-            },
+            error,
         },
     );
     emit(

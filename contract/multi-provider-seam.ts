@@ -15,39 +15,9 @@
 // belongs to the model-level flag set (streaming, vision, reasoning,
 // parallel_tool_calls, structured_output) a later feature will need.
 
-import type { AgentRuntime } from './common';
+import type { AgentRuntime, RuntimeCapabilities } from './common';
 
-export type RuntimeCapability =
-  | 'mcp'
-  | 'subagents'
-  | 'skills'
-  | 'skillsInstall'
-  | 'workflows'
-  | 'interactiveCommands'
-  /**
-   * multi-provider-codex FR-11: whether Francois' OWN approval cards + rules
-   * editor govern this runtime's tool calls. True for 'claude-code' (Claude Code
-   * asks over the control channel and we render the card) and for 'francois'
-   * (that adapter IS the gate — multi-provider-openai FR-9..FR-13). False for
-   * 'codex', whose transport is non-interactive: `codex exec` takes its prompt on
-   * stdin and then closes it, so there is no channel to park an ask on. Its
-   * enforcement is the sandbox `permissionMode` selects (FR-9), which is real
-   * enforcement — just not ours, and the UI has to say so rather than render a
-   * rules editor that governs nothing.
-   */
-  | 'permissions'
-  | 'remoteControl'
-  | 'usageBar'
-  | 'compaction';
-
-/** `reason` is present iff `available` is false; it is what a disabled pane renders. */
-export interface CapabilityState {
-  available: boolean;
-  reason?: string;
-}
-
-/** Exhaustive over RuntimeCapability — a new member without both values must not compile. */
-export type RuntimeCapabilities = Record<RuntimeCapability, CapabilityState>;
+export type { CapabilityState, RuntimeCapability, RuntimeCapabilities } from './common';
 
 const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
   'claude-code': {
@@ -61,6 +31,13 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     remoteControl: { available: true },
     usageBar: { available: true },
     compaction: { available: true },
+    steering: { available: false, reason: "Steering isn't available on this provider yet." },
+    followUps: { available: false, reason: "Follow-ups aren't available on this provider yet." },
+    resumableSessions: { available: false, reason: "Resumable sessions aren't available on this provider yet." },
+    modelSwitching: { available: true },
+    images: { available: true },
+    contextMetrics: { available: false, reason: "Context metrics aren't available on this provider yet." },
+    costMetrics: { available: false, reason: "Cost metrics aren't available on this provider yet." },
   },
   // Every `false` here is a CURRENT gap, not a permanent property of the runner,
   // except `remoteControl` and `usageBar` — those two are genuinely Anthropic
@@ -98,6 +75,13 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
     usageBar: { available: false, reason: 'This provider bills per token, not against a plan.' },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
+    steering: { available: false, reason: "Steering isn't available on this provider yet." },
+    followUps: { available: false, reason: "Follow-ups aren't available on this provider yet." },
+    resumableSessions: { available: false, reason: "Resumable sessions aren't available on this provider yet." },
+    modelSwitching: { available: true },
+    images: { available: true },
+    contextMetrics: { available: false, reason: "Context metrics aren't available on this provider yet." },
+    costMetrics: { available: false, reason: "Cost metrics aren't available on this provider yet." },
   },
   // multi-provider-codex FR-16. Codex owns its own loop like claude-code, but
   // over a NON-INTERACTIVE transport (`codex exec --json`, prompt on stdin, stdin
@@ -136,6 +120,13 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
     usageBar: { available: false, reason: "Plan limits aren't available on this provider yet." },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
+    steering: { available: false, reason: "Steering isn't available on this provider yet." },
+    followUps: { available: false, reason: "Follow-ups aren't available on this provider yet." },
+    resumableSessions: { available: false, reason: "Resumable sessions aren't available on this provider yet." },
+    modelSwitching: { available: true },
+    images: { available: true },
+    contextMetrics: { available: false, reason: "Context metrics aren't available on this provider yet." },
+    costMetrics: { available: false, reason: "Cost metrics aren't available on this provider yet." },
   },
   // multi-provider-grok FR-26. Grok owns its own loop like claude-code and codex,
   // over the same shape of NON-INTERACTIVE transport as codex (`grok -p
@@ -173,6 +164,32 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
       reason: 'A Grok CLI session bills against your SuperGrok / X Premium+ plan.',
     },
     compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
+    steering: { available: false, reason: "Steering isn't available on this provider yet." },
+    followUps: { available: false, reason: "Follow-ups aren't available on this provider yet." },
+    resumableSessions: { available: false, reason: "Resumable sessions aren't available on this provider yet." },
+    modelSwitching: { available: true },
+    images: { available: true },
+    contextMetrics: { available: false, reason: "Context metrics aren't available on this provider yet." },
+    costMetrics: { available: false, reason: "Cost metrics aren't available on this provider yet." },
+  },
+  pi: {
+    mcp: { available: false, reason: 'Runtime is not connected.' },
+    subagents: { available: false, reason: 'Runtime is not connected.' },
+    skills: { available: false, reason: 'Runtime is not connected.' },
+    skillsInstall: { available: false, reason: 'Runtime is not connected.' },
+    workflows: { available: false, reason: 'Runtime is not connected.' },
+    interactiveCommands: { available: false, reason: 'Runtime is not connected.' },
+    permissions: { available: false, reason: 'Runtime is not connected.' },
+    remoteControl: { available: false, reason: 'Runtime is not connected.' },
+    usageBar: { available: false, reason: 'Runtime is not connected.' },
+    compaction: { available: false, reason: 'Runtime is not connected.' },
+    steering: { available: false, reason: 'Runtime is not connected.' },
+    followUps: { available: false, reason: 'Runtime is not connected.' },
+    resumableSessions: { available: false, reason: 'Runtime is not connected.' },
+    modelSwitching: { available: false, reason: 'Runtime is not connected.' },
+    images: { available: false, reason: 'Runtime is not connected.' },
+    contextMetrics: { available: false, reason: 'Runtime is not connected.' },
+    costMetrics: { available: false, reason: 'Runtime is not connected.' },
   },
 };
 

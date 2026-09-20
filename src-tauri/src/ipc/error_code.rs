@@ -1,6 +1,6 @@
 // core-architecture-wave3 FR-4: THE error-code vocabulary, one variant per
 // member of the `ErrorCode` union in `contract/common.ts`. Before this existed
-// `AppError.code` was a `String` agreeing with an 82-member TS union by hand,
+// `AppError.code` was a `String` agreeing with an 92-member TS union by hand,
 // across a language boundary, with no compiler, no test and no lint — a typo
 // shipped, and a code added on one side only was invisible until a `switch` in
 // the frontend silently fell through.
@@ -179,6 +179,26 @@ pub enum ErrorCode {
     ProfileNotFound,
     /// session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
     ProfileArgDenied,
+    /// pi-runtime-boundary FR-6: the selected runtime is not installed or not selectable
+    RuntimeUnavailable,
+    /// pi-runtime-boundary FR-6: the runtime answered with an incompatible version/protocol
+    RuntimeIncompatible,
+    /// pi-runtime-boundary FR-6: the runtime emitted a frame the core could not parse
+    RuntimeProtocolError,
+    /// pi-runtime-boundary FR-6: the runtime did not answer in time
+    RuntimeTimeout,
+    /// pi-runtime-boundary FR-6: the runtime child exited
+    RuntimeExited,
+    /// pi-runtime-boundary FR-4: the capability is unsupported by the effective runtime
+    RuntimeUnsupported,
+    /// pi-runtime-boundary FR-6: the provider rejected the credentials
+    ProviderAuthFailed,
+    /// pi-runtime-boundary FR-6: the provider could not be reached
+    ProviderUnavailable,
+    /// pi-runtime-boundary FR-6: the requested model is not available
+    ModelUnavailable,
+    /// pi-runtime-boundary FR-6: a tool call failed
+    ToolFailed,
     Internal,
 }
 
@@ -269,6 +289,16 @@ impl ErrorCode {
         ErrorCode::ExtConsentStale,
         ErrorCode::ProfileNotFound,
         ErrorCode::ProfileArgDenied,
+        ErrorCode::RuntimeUnavailable,
+        ErrorCode::RuntimeIncompatible,
+        ErrorCode::RuntimeProtocolError,
+        ErrorCode::RuntimeTimeout,
+        ErrorCode::RuntimeExited,
+        ErrorCode::RuntimeUnsupported,
+        ErrorCode::ProviderAuthFailed,
+        ErrorCode::ProviderUnavailable,
+        ErrorCode::ModelUnavailable,
+        ErrorCode::ToolFailed,
         ErrorCode::Internal,
     ];
 
@@ -359,6 +389,16 @@ impl ErrorCode {
             ErrorCode::ExtConsentStale => "EXT_CONSENT_STALE",
             ErrorCode::ProfileNotFound => "PROFILE_NOT_FOUND",
             ErrorCode::ProfileArgDenied => "PROFILE_ARG_DENIED",
+            ErrorCode::RuntimeUnavailable => "RUNTIME_UNAVAILABLE",
+            ErrorCode::RuntimeIncompatible => "RUNTIME_INCOMPATIBLE",
+            ErrorCode::RuntimeProtocolError => "RUNTIME_PROTOCOL_ERROR",
+            ErrorCode::RuntimeTimeout => "RUNTIME_TIMEOUT",
+            ErrorCode::RuntimeExited => "RUNTIME_EXITED",
+            ErrorCode::RuntimeUnsupported => "RUNTIME_UNSUPPORTED",
+            ErrorCode::ProviderAuthFailed => "PROVIDER_AUTH_FAILED",
+            ErrorCode::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
+            ErrorCode::ModelUnavailable => "MODEL_UNAVAILABLE",
+            ErrorCode::ToolFailed => "TOOL_FAILED",
             ErrorCode::Internal => "INTERNAL",
         }
     }

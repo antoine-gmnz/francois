@@ -148,6 +148,7 @@ fn update_codex_settings_with(
                     "Session changed while loading models. Please retry.",
                 ));
             }
+            settings_capability_guard(s, patch)?;
             apply_validated_settings(s, validated, models);
             Ok(s.meta(accounts))
         })
@@ -636,6 +637,9 @@ pub fn session_remove(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Option<()>> {
+    if let Err(error) = engine.shutdown_runtime(&session_id) {
+        return crate::ipc::IpcResult::Err { ok: false, error };
+    }
     let removed = {
         let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.remove(&session_id)
@@ -690,6 +694,9 @@ pub fn session_switch_model(
     session_id: String,
     model_id: String,
 ) -> IpcResult<Value> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "modelSwitching") {
+        return err(code, msg);
+    }
     if model_id.trim().is_empty() {
         return err(ErrorCode::InvalidInput, "model is empty");
     }
@@ -713,6 +720,11 @@ pub fn apply_model_switch(
     model_id: &str,
 ) -> Result<SessionMeta, AppError> {
     let engine = app.state::<Engine>();
+    // pi-runtime-boundary FR-4: the `/model` path reaches here without the
+    // command's preliminary check.
+    engine
+        .require_capability(session_id, "modelSwitching")
+        .map_err(|(code, message)| AppError::new(code, message))?;
     if engine.with_session(session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
         let meta = update_codex_settings(
             app,
@@ -729,17 +741,46 @@ pub fn apply_model_switch(
         .with_session(session_id, |s| s.account_id.clone())
         .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
     let (label, limit) = resolve_model_display(app, &account_id, model_id);
-    let meta = engine
-        .with_session_mut(session_id, |s| {
-            s.model_id = model_id.to_string();
-            s.model_label = label;
-            s.context_limit_tokens = limit;
-            s.meta(app)
-        })
-        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+    let meta = switch_model_in_engine(&engine, app, session_id, model_id, label, limit)?;
     persist(app, &engine);
     emit(app, SessionEvent::Meta { meta: meta.clone() });
     Ok(meta)
+}
+
+/// pi-runtime-boundary FR-4: the capability is re-checked under the same lock
+/// as the mutation, so a snapshot narrowed after the preliminary check wins.
+fn switch_model_in_engine(
+    engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
+    session_id: &str,
+    model_id: &str,
+    label: String,
+    limit: u64,
+) -> Result<SessionMeta, AppError> {
+    engine
+        .with_session_mut(session_id, |s| {
+            if !adapter::resolve_capability(
+                s.agent_runtime,
+                s.effective_capabilities.as_ref(),
+                "modelSwitching",
+            ) {
+                return Err(AppError::new(
+                    ErrorCode::RuntimeUnsupported,
+                    "runtime capability is unavailable",
+                ));
+            }
+            if status::is_terminal(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
+            }
+            s.model_id = model_id.to_string();
+            s.model_label = label;
+            s.context_limit_tokens = limit;
+            Ok(s.meta(accounts))
+        })
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?
 }
 
 /// session-permission-mode FR-2: `francois:session:switchPermissionMode`'s enum
@@ -772,6 +813,13 @@ pub fn switch_permission_mode_in_engine(
     session_id: &str,
     mode: &str,
 ) -> Result<SessionMeta, AppError> {
+    // Sandbox selection is independent of interactive approval cards.
+    if engine.with_session(session_id, |s| s.agent_runtime == AgentRuntime::Pi) == Some(true) {
+        return Err(AppError::new(
+            ErrorCode::RuntimeUnsupported,
+            "runtime sandbox selection is unavailable",
+        ));
+    }
     match engine.with_session(session_id, |s| !status::is_terminal(&s.status)) {
         None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
         Some(false) => {
@@ -825,10 +873,26 @@ pub fn switch_effort_in_engine(
     }
     engine
         .with_session_mut(session_id, |s| {
+            if !adapter::resolve_capability(
+                s.agent_runtime,
+                s.effective_capabilities.as_ref(),
+                "modelSwitching",
+            ) {
+                return Err(AppError::new(
+                    ErrorCode::RuntimeUnsupported,
+                    "runtime capability is unavailable",
+                ));
+            }
+            if status::is_terminal(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
+            }
             s.effort = effort.map(String::from);
-            s.meta(accounts)
+            Ok(s.meta(accounts))
         })
-        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?
 }
 
 /// rework-top-bar (design 11c): `francois:session:switchEffort`. Same shape and
@@ -1184,11 +1248,41 @@ pub(crate) fn update_settings_in_engine(
     let validated = validate_settings_patch(patch, catalog)?;
     let meta = engine
         .with_session_mut(session_id, |s| {
+            settings_capability_guard(s, patch)?;
             apply_validated_settings(s, validated, catalog);
-            s.meta(accounts)
+            Ok::<_, AppError>(s.meta(accounts))
         })
-        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))??;
     Ok((meta, true))
+}
+
+/// pi-runtime-boundary FR-4: a patch touching a capability the session's
+/// effective snapshot narrows is rejected WHOLE, under the mutation's lock.
+fn settings_capability_guard(s: &Session, patch: &SessionSettingsPatch) -> Result<(), AppError> {
+    // Sandbox selection is independent of interactive approval support.
+    if patch.permission_mode.is_some() && s.agent_runtime == AgentRuntime::Pi {
+        return Err(AppError::new(
+            ErrorCode::RuntimeUnsupported,
+            "runtime sandbox selection is unavailable",
+        ));
+    }
+    for (needed, key) in [
+        (
+            patch.model_id.is_some() || patch.effort.is_some(),
+            "modelSwitching",
+        ),
+        (patch.allow_git.is_some(), "permissions"),
+    ] {
+        if needed
+            && !adapter::resolve_capability(s.agent_runtime, s.effective_capabilities.as_ref(), key)
+        {
+            return Err(AppError::new(
+                ErrorCode::RuntimeUnsupported,
+                "runtime capability is unavailable",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// session-settings-sheet FR-2: `francois:session:updateSettings` /
@@ -1243,25 +1337,23 @@ pub fn session_update_settings(
 
 #[tauri::command(async)]
 pub fn session_interrupt(engine: State<'_, Engine>, session_id: String) -> IpcResult<Option<()>> {
-    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(s) = map.get_mut(&session_id) else {
-        return err(ErrorCode::SessionNotFound, "no such session");
-    };
-    // is_busy, not `== running`: interrupting a turn parked on an approval or a
-    // question is exactly when the brake matters most — the user has decided they
-    // want out rather than to answer. The reader-thread teardown cancels the
-    // pending ask (session-questions FR-13).
-    if !status::is_busy(&s.status) {
-        return ok(None); // FR-23 no-op
+    if let Err(error) = engine.cancel_runtime(&session_id) {
+        return IpcResult::Err { ok: false, error };
     }
-    if let Some(turn) = &s.current {
-        // multi-provider-seam FR-8: reached only through TurnControl.
+    let turn = match engine.with_session(&session_id, |s| {
+        if status::is_busy(&s.status) {
+            s.current.clone()
+        } else {
+            None
+        }
+    }) {
+        None => return err(ErrorCode::SessionNotFound, "no such session"),
+        Some(turn) => turn,
+    };
+    if let Some(turn) = turn {
         turn.interrupt();
         turn.kill();
     }
-    // The turn's reader thread observes the kill, closes the open block, and
-    // routes completion (drain queue or go idle) — FR-24. A pending question is
-    // cancelled by the same reader-thread teardown (session-questions FR-13).
     ok(None)
 }
 
@@ -2222,5 +2314,222 @@ mod tests {
         assert!(!crate::account::wsl_translatable_config_dir(
             "\\\\server\\share\\accounts\\a1"
         ));
+    }
+}
+
+#[cfg(test)]
+mod capability_guard_tests {
+    use super::*;
+    use crate::session::testutil::{fake_accounts, test_engine_with, test_session};
+    #[test]
+    fn model_switch_rechecks_capability_after_preliminary_check() {
+        let session = test_session();
+        let original_model = session.model_id.clone();
+        let original_limit = session.context_limit_tokens;
+        let engine = test_engine_with(session);
+        assert!(engine.require_capability("s1", "modelSwitching").is_ok());
+        engine.with_session_mut("s1", |s| {
+            s.effective_capabilities = Some(
+                [(
+                    "modelSwitching".into(),
+                    adapter::CapabilityState {
+                        available: false,
+                        reason: None,
+                    },
+                )]
+                .into(),
+            );
+        });
+        assert_eq!(
+            switch_model_in_engine(
+                &engine,
+                &fake_accounts(),
+                "s1",
+                "new-model",
+                "New model".into(),
+                1
+            )
+            .err()
+            .unwrap()
+            .code,
+            ErrorCode::RuntimeUnsupported
+        );
+        assert_eq!(
+            engine.with_session("s1", |s| (s.model_id.clone(), s.context_limit_tokens)),
+            Some((original_model, original_limit))
+        );
+    }
+    #[test]
+    fn effort_rejects_missing_pi_and_disabled_legacy_capabilities_without_mutation() {
+        for runtime in [
+            AgentRuntime::Pi,
+            AgentRuntime::ClaudeCode,
+            AgentRuntime::Codex,
+            AgentRuntime::Grok,
+        ] {
+            let mut session = test_session();
+            session.agent_runtime = runtime;
+            session.effort = Some("low".into());
+            if runtime != AgentRuntime::Pi {
+                session.effective_capabilities = Some(
+                    [(
+                        "modelSwitching".into(),
+                        adapter::CapabilityState {
+                            available: false,
+                            reason: None,
+                        },
+                    )]
+                    .into(),
+                );
+            }
+            let engine = test_engine_with(session);
+            for effort in [Some("high"), None] {
+                assert_eq!(
+                    switch_effort_in_engine(&engine, &fake_accounts(), "s1", effort)
+                        .err()
+                        .unwrap()
+                        .code,
+                    ErrorCode::RuntimeUnsupported
+                );
+                assert_eq!(
+                    engine.with_session("s1", |s| s.effort.clone()).unwrap(),
+                    Some("low".into())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_permissions_prevent_mutation_and_legacy_missing_is_preserved() {
+        let mut session = test_session();
+        let id = session.id.clone();
+        session.agent_runtime = AgentRuntime::Pi;
+        let engine = test_engine_with(session);
+        assert_eq!(
+            switch_permission_mode_in_engine(&engine, &fake_accounts(), &id, "plan")
+                .err()
+                .unwrap()
+                .code,
+            ErrorCode::RuntimeUnsupported
+        );
+        assert_eq!(
+            engine
+                .with_session(&id, |s| s.permission_mode.clone())
+                .unwrap(),
+            "default"
+        );
+        engine.with_session_mut(&id, |s| s.agent_runtime = AgentRuntime::ClaudeCode);
+        assert!(switch_permission_mode_in_engine(&engine, &fake_accounts(), &id, "plan").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod narrowed_settings_tests {
+    use super::*;
+    use crate::session::testutil::{fake_accounts, test_engine_with, test_session};
+
+    #[test]
+    fn batch_sandbox_selection_is_independent_of_approval_capabilities() {
+        for runtime in [
+            AgentRuntime::ClaudeCode,
+            AgentRuntime::Codex,
+            AgentRuntime::Grok,
+            AgentRuntime::Pi,
+        ] {
+            for available in [None, Some(false), Some(true)] {
+                let mut session = test_session();
+                let original_name = session.name.clone();
+                session.agent_runtime = runtime;
+                session.effective_capabilities = available.map(|available| {
+                    [(
+                        "permissions".into(),
+                        adapter::CapabilityState {
+                            available,
+                            reason: None,
+                        },
+                    )]
+                    .into()
+                });
+                let engine = test_engine_with(session);
+                let patch = SessionSettingsPatch {
+                    name: Some("changed".into()),
+                    permission_mode: Some("plan".into()),
+                    ..Default::default()
+                };
+                let result =
+                    update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &[]);
+                if runtime == AgentRuntime::Pi {
+                    assert_eq!(result.err().unwrap().code, ErrorCode::RuntimeUnsupported);
+                    assert_eq!(
+                        engine
+                            .with_session("s1", |s| (s.name.clone(), s.permission_mode.clone()))
+                            .unwrap(),
+                        (original_name, "default".into())
+                    );
+                } else {
+                    let (meta, persist) = result.unwrap();
+                    assert!(persist);
+                    assert_eq!(meta.name, "changed");
+                    assert_eq!(meta.permission_mode, "plan");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrowed_settings_reject_entire_patch() {
+        for (key, patch) in [
+            (
+                "modelSwitching",
+                SessionSettingsPatch {
+                    model_id: Some("opus".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "modelSwitching",
+                SessionSettingsPatch {
+                    effort: Some("high".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "permissions",
+                SessionSettingsPatch {
+                    allow_git: Some(true),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let mut s = test_session();
+            let original_name = s.name.clone();
+            s.effective_capabilities = Some(
+                [(
+                    key.into(),
+                    adapter::CapabilityState {
+                        available: false,
+                        reason: Some("Disabled".into()),
+                    },
+                )]
+                .into(),
+            );
+            let engine = test_engine_with(s);
+            let patch = SessionSettingsPatch {
+                name: Some("changed".into()),
+                ..patch
+            };
+            let catalog = [crate::ipc::model("opus", "Opus")];
+            assert_eq!(
+                update_settings_in_engine(&engine, &fake_accounts(), "s1", &patch, &catalog)
+                    .err()
+                    .unwrap()
+                    .code,
+                ErrorCode::RuntimeUnsupported
+            );
+            assert_eq!(
+                engine.with_session("s1", |s| s.name.clone()).unwrap(),
+                original_name
+            );
+        }
     }
 }

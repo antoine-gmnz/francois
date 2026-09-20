@@ -129,7 +129,9 @@ impl SessionAdapter for GrokAdapter {
                     message: "this session's account is not signed in to Grok — use Sign in in the Accounts modal"
                         .into(),
                     detail: None,
-                });
+
+                runtime_failure: None,
+});
             }
         }
         Ok(())

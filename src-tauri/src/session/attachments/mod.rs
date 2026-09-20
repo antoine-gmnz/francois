@@ -151,6 +151,7 @@ impl From<AttachError> for crate::ipc::AppError {
             code: e.code,
             message: e.message,
             detail: e.detail,
+            runtime_failure: None,
         }
     }
 }
@@ -207,11 +208,45 @@ impl AttachError {
             code: self.code,
             message: self.message.clone(),
             detail: self.detail.clone(),
+            runtime_failure: None,
         }
     }
 }
 
 // ---------- model mutations ----------
+
+impl Session {
+    pub(crate) fn validate_attachment_kind(
+        &self,
+        kind: &str,
+    ) -> Result<(), (ErrorCode, &'static str)> {
+        if kind == "image"
+            && !super::adapter::resolve_capability(
+                self.agent_runtime,
+                self.effective_capabilities.as_ref(),
+                "images",
+            )
+        {
+            return Err((
+                ErrorCode::RuntimeUnsupported,
+                "runtime images capability is unavailable",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_attachment_submission(
+        &self,
+        text: &str,
+    ) -> Result<(), (ErrorCode, &'static str)> {
+        // Sent refs can be reused in later prompts, so check every referenced image.
+        for a in &self.attachments {
+            if text.contains(&format!("@{}", a.ref_path)) {
+                self.validate_attachment_kind(&a.kind)?;
+            }
+        }
+        Ok(())
+    }
+}
 
 impl Session {
     /// Stage a freshly ingested ref.
@@ -577,5 +612,40 @@ mod tests {
             ]
         );
         assert!(engine.sessions_of_project("nobody").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod narrowed_tests {
+    use super::*;
+    use crate::session::{adapter, testutil::test_session};
+    #[test]
+    fn image_staging_and_consumption_recheck_narrowed_capabilities() {
+        let mut s = test_session();
+        let image = testutil::att(
+            "image",
+            "shot.png",
+            std::path::Path::new("shot.png"),
+            false,
+            "staged",
+        );
+        s.stage_attachment(image.clone());
+        s.effective_capabilities = Some(
+            [(
+                "images".into(),
+                adapter::CapabilityState {
+                    available: false,
+                    reason: Some("Disabled".into()),
+                },
+            )]
+            .into(),
+        );
+        assert!(s.validate_attachment_kind("image").is_err());
+        assert!(s
+            .validate_attachment_submission("look at @shot.png")
+            .is_err());
+        assert!(s.validate_attachment_submission("ordinary text").is_ok());
+        assert!(s.validate_attachment_kind("file").is_ok());
+        assert_eq!(s.attachments[0].state, "staged");
     }
 }

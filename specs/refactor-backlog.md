@@ -324,3 +324,9 @@ filtering relative PATH entries is right for extension spawns, it is right every
 
 - [ ] MEDIUM · src-tauri/src/session/adapter/openai/runner.rs:370 · quality · build_step_detail is called with is_error hardcoded false for every francois/openai capture, so a failed Bash always records as succeeded rather than FR-15's failed outcome chip — thread a real success/failure signal out of tools::bash()/execute() (same signature change refactor-backlog.md:319 already defers) · deferred:command-inspect
 - [ ] LOW · src/features/conversation/step-detail.ts:93 · quality · `stepOutputTotals` reuses `formatFileSize` (whole-KB rounding: 8100 B → `8 KB`), but spec §3 and design brief §8 both give the worked example `8.1 KB` — add a one-decimal-at-KB-scale formatter for step output totals, or correct the spec/design prose to `8 KB` · deferred:command-inspect
+
+## deferred:pi-runtime-boundary — SHIP-round leftovers (review round 10)
+
+- [ ] LOW · src/app/app.css:495-1076 · quality · ~60 comment lines re-saved with mojibake (`â€"`, `Â§`, `Ã—`…) instead of UTF-8 punctuation — re-save as UTF-8 and restore the characters from `git show HEAD:src/app/app.css` · deferred:pi-runtime-boundary
+- [ ] LOW · src-tauri/src/session/adapter/claude_code.rs:288-290 · quality · the `runtime_failure: None` codemod left misindented `AppError` literals (blank line, column-0 `});`) in ~19 files; rustfmt skips them (over max width) so `cargo fmt --check` stays green — hand-reindent, or split the long message strings so rustfmt can take over · deferred:pi-runtime-boundary
+- [ ] LOW · src-tauri/src/session/adapter/mod.rs · complexity · `resolve_capability` treats `RUNTIME_CAPABILITIES[..10]` as the legacy set by bare slice index — split into named `LEGACY_CAPABILITIES`/`ADDED_CAPABILITIES` consts and test membership · deferred:pi-runtime-boundary

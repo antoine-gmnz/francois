@@ -1253,6 +1253,14 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     const step: AgentStep = { seq: 1, kind: 'text', at: 0, label: 'thinking' };
     const server: McpServerInfo = { name: 'fs', status: 'connected' };
     const ignored: SessionEvent[] = [
+      {
+        type: 'runtime.event',
+        sessionId: 'x',
+        generation: 'g1',
+        sequence: 1,
+        at: 0,
+        event: { kind: 'run.state', state: 'running' },
+      },
       { type: 'session.removed', sessionId: 'x' },
       { type: 'agent.update', agent },
       { type: 'agent.step', sessionId: 'x', agentId: 'a1', step },

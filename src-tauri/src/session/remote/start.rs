@@ -338,6 +338,9 @@ pub fn remote_start(
     session_id: String,
     name: Option<String>,
 ) -> IpcResult<RemoteStatus> {
+    if let Err((code, msg)) = engine.require_capability(&session_id, "remoteControl") {
+        return err(code, msg);
+    }
     let mut map = reg.0.lock().unwrap();
 
     if let Some(entry) = map.get(&session_id) {

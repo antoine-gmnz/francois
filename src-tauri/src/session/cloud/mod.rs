@@ -209,6 +209,7 @@ impl From<AdoptError> for crate::ipc::AppError {
             code: e.code,
             message: e.message,
             detail: e.detail,
+            runtime_failure: None,
         }
     }
 }
@@ -501,6 +502,8 @@ mod tests {
                     code: ErrorCode::CloudAdoptStalled,
                     message: "took too long".into(),
                     detail: Some(json!({ "phase": "teleporting" })),
+
+                    runtime_failure: None,
                 }
             })
             .unwrap(),

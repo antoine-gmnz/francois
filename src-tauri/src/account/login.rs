@@ -349,6 +349,8 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
                     code: ErrorCode::Internal,
                     message: "account state is unavailable".into(),
                     detail: None,
+
+                    runtime_failure: None,
                 },
             },
         );
@@ -399,6 +401,8 @@ fn settle_success(app: &AppHandle, login_id: &str, email: String, organization: 
                         code,
                         message,
                         detail: None,
+
+                        runtime_failure: None,
                     },
                 },
             );
@@ -435,6 +439,8 @@ fn settle_failure(app: &AppHandle, login_id: &str, code: ErrorCode, message: Str
                 code,
                 message,
                 detail: None,
+
+                runtime_failure: None,
             },
         },
     );

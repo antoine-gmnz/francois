@@ -218,6 +218,7 @@ pub(super) fn begin_turn(
                 format!("could not start codex: {e}")
             },
             detail: None,
+            runtime_failure: None,
         })?;
 
     // The prompt, then EOF. A failure here means the child died before reading
@@ -239,6 +240,8 @@ pub(super) fn begin_turn(
             code: ErrorCode::SpawnFailed,
             message: format!("could not send the prompt to codex: {e}"),
             detail: None,
+
+            runtime_failure: None,
         });
     }
 

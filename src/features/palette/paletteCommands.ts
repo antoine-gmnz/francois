@@ -4,8 +4,10 @@ import { modelCatalogStep } from './model-catalog';
 // bootstraps are centralized here and called once at app mount; each command still
 // delegates to its owning feature's own action/channel exactly as the spec pins.
 
-import type { Result } from '../../../contract/common';
-import { registerPaletteCommand, requestBodyFocusOnClose, showToast } from './palette';
+import type { PaletteCommand } from '../../../contract/command-palette';
+import { sessionCapability } from '../../lib/runtimeCapability';
+import type { RuntimeCapability, Result } from '../../../contract/common';
+import { registerPaletteCommand as registerCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteRunningAgents, getPaletteSkills } from './paletteData';
 import { agentsKill, sessionClearAttachments, sessionCompact, skillsRun } from '../../lib/api';
 import { useNotificationsStore } from '../../lib/notificationsStore';
@@ -17,6 +19,50 @@ import { requestWorktreePreset } from '../sessions/worktree';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
+
+const commandCapabilities: Record<string, RuntimeCapability> = {
+  'switch-model': 'modelSwitching', 'compact-context': 'compaction',
+  'run-skill': 'skills', 'attach-mcp-server': 'mcp',
+  'new-agent': 'subagents', 'kill-agent': 'subagents', 'manage-permissions': 'permissions',
+};
+
+function registerPaletteCommand(command: PaletteCommand): void {
+  const capability = commandCapabilities[command.id];
+  if (!capability) {
+    registerCommand(command);
+    return;
+  }
+  const state = (sessionId: string | null) => {
+    if (!sessionId) return { available: false, reason: 'Select a session first.' };
+    const meta = useStore.getState().sessions.find(s => s.id === sessionId);
+    return meta ? sessionCapability(meta, capability) : { available: false, reason: 'Session is not available.' };
+  };
+  const allowed = (sessionId: string | null) => {
+    const cap = state(sessionId);
+    if (!cap.available) showToast(cap.reason ?? 'Action unavailable.', 'error');
+    return cap.available;
+  };
+  registerCommand({
+    ...command,
+    enabled: ctx => state(ctx.activeSessionId).available && (command.enabled?.(ctx) ?? true),
+    hint: () => {
+      const cap = state(useStore.getState().activeSessionId);
+      return cap.available ? (command.hint?.() ?? '') : (cap.reason ?? 'Action unavailable.');
+    },
+    run: ctx => {
+      const sessionId = ctx.activeSessionId;
+      if (!allowed(sessionId)) return;
+      const step = command.run(ctx);
+      if (!step) return;
+      return {
+        ...step,
+        onPick: id => {
+          if (allowed(sessionId)) step.onPick(id);
+        },
+      };
+    },
+  });
+}
 
 const formatTokens = (t: number): string => (t >= 1000 ? (t / 1000).toFixed(1) + 'K' : String(t));
 

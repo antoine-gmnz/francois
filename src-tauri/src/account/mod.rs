@@ -670,6 +670,8 @@ mod tests {
                 code: ErrorCode::AccountDuplicate,
                 message: "already registered".into(),
                 detail: None,
+
+                runtime_failure: None,
             },
         })
         .unwrap();

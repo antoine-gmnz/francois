@@ -123,7 +123,9 @@ impl SessionAdapter for CodexAdapter {
                     message: "this session's account is not signed in to Codex — use Sign in in the Accounts modal"
                         .into(),
                     detail: None,
-                });
+
+                runtime_failure: None,
+});
             }
         }
         Ok(())

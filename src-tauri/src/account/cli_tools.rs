@@ -357,6 +357,8 @@ fn install_failure(code: Option<i32>, tail: &Mutex<String>) -> AppError {
             None => "npm was terminated before it finished".into(),
         },
         detail: Some(json!({ "code": code, "tail": tail.trim_end() })),
+
+        runtime_failure: None,
     }
 }
 
@@ -365,6 +367,8 @@ fn error(code: ErrorCode, message: impl Into<String>) -> AppError {
         code,
         message: message.into(),
         detail: None,
+
+        runtime_failure: None,
     }
 }
 

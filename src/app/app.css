@@ -1,4 +1,4 @@
-/* app-shell layout (App.tsx) — migrated from inline styles (refactor Phase
+/* app-shell layout (App.tsx) â€” migrated from inline styles (refactor Phase
    2). These classes cover the static shapes only; genuinely dynamic values
    (pane-toggle grid columns, focus/status-driven border and text colors that
    vary per render) stay inline in App.tsx per REFACTOR-CONVENTIONS.md. */
@@ -10,7 +10,7 @@
   background: var(--bg-app);
 }
 
-/* The body is `<left> 12px 1fr`. There is no status-bar row — [3]–[6] live in
+/* The body is `<left> 12px 1fr`. There is no status-bar row â€” [3]â€“[6] live in
    the roster's footer and the chrome lives in the two rows above. The left
    track is 282px by default but user-set from here on; see appShell.ts
    `shellColumns`.
@@ -25,13 +25,13 @@
    decoration: resizable-sidebar FR-1 makes it the roster drag handle's hit area
    (RosterDivider renders into it), having deliberately chosen a real track over
    an overlay that would steal clicks from the roster's right edge. So this is
-   the one place the window is still allowed to show through — the same
+   the one place the window is still allowed to show through â€” the same
    reasoning as .app-split-grid's gutter, where the window between two panes on
    the SAME surface IS their separation. `column-gap: 0` because the track
    already provides the spacing; a gap on top would double it.
 
    (RosterDivider measures `.app-grid`'s content-box left as border-box left +
-   paddingLeft. That still holds with the padding gone — the term is just 0.) */
+   paddingLeft. That still holds with the padding gone â€” the term is just 0.) */
 .app-grid {
   flex: 1;
   min-height: 0;
@@ -40,21 +40,21 @@
   column-gap: 0;
 }
 
-/* ── .app-grid item placement: DOM order, never `grid-row` ──────────────────
+/* â”€â”€ .app-grid item placement: DOM order, never `grid-row` â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    The three children (roster-or-rail, the drag handle, the main cell) take the
    three tracks purely by document order. Do NOT pin `grid-row: 1` on any of
    them, however harmless it looks in a one-row grid.
 
-   Why: CSS Grid's placement algorithm (§8.5) runs items with a DEFINITE row in
-   step 2, before auto-positioned items in step 4 — so a pinned item claims the
+   Why: CSS Grid's placement algorithm (Â§8.5) runs items with a DEFINITE row in
+   step 2, before auto-positioned items in step 4 â€” so a pinned item claims the
    earliest free column regardless of where it sits in the DOM. These three used
    to be pinned while RosterDivider (`.app-split-divider`, added with
    resizable-sidebar) was not, which placed the main cell in the 12px handle
    track and the handle itself across the whole 1fr:
 
        .app-col-left  -> col 1   (step 2, definite row)
-       .app-main-cell -> col 2   (step 2 — the GUTTER)
-       RosterDivider  -> col 3   (step 4 — the whole main pane)
+       .app-main-cell -> col 2   (step 2 â€” the GUTTER)
+       RosterDivider  -> col 3   (step 4 â€” the whole main pane)
 
    The result was a 12px-wide transcript beside a full-width invisible drag
    handle. Unpinned, all three are auto-placed in order into the single row. */
@@ -62,8 +62,8 @@
   min-height: 0;
 }
 
-/* The single content cell. Two stacked children — the persistent panel host and
-   the main view — of which exactly one is displayed at a time. */
+/* The single content cell. Two stacked children â€” the persistent panel host and
+   the main view â€” of which exactly one is displayed at a time. */
 .app-main-cell {
   display: flex;
   flex-direction: column;
@@ -78,7 +78,7 @@
   flex-direction: column;
 }
 
-/* design 9a: the pane stops being a card. No border, no radius — it is the
+/* design 9a: the pane stops being a card. No border, no radius â€” it is the
    TERMINAL, the deepest surface in the app (--bg-canvas), and the step down
    from the rail beside it and the chrome above it is the whole separation. */
 .app-main-section {
@@ -108,15 +108,15 @@
   min-height: 0;
 }
 
-/* ── design 7a: the two chrome tiers ────────────────────────────────────────
+/* â”€â”€ design 7a: the two chrome tiers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Both are full-bleed strips under the native caption, fixed height in every
    state so nothing below them ever reflows. Sans throughout: the mock's font
-   boundary is drawn at the panel edge — chrome is sans and clickable, the
+   boundary is drawn at the panel edge â€” chrome is sans and clickable, the
    terminal body below is mono and historical. NO MOTION anywhere in either row
    (usage-bar FR-25): permanent chrome that animates repaints forever on a
    software-composited webview. */
 
-/* app row (42px) — what the whole app is doing. 9a: the ONE raised tier in the
+/* app row (42px) â€” what the whole app is doing. 9a: the ONE raised tier in the
    app (--bg-chrome), which is what lets its bottom rule go: it is lighter than
    everything under it, so the edge draws itself. */
 .app-row {
@@ -201,8 +201,8 @@
   background: var(--attn);
   flex-shrink: 0;
 }
-/* 9a has no rules in the chrome, so the divider keeps its JOB — separating two
-   clusters in the row — and drops its line: it becomes the gap it was drawn in.
+/* 9a has no rules in the chrome, so the divider keeps its JOB â€” separating two
+   clusters in the row â€” and drops its line: it becomes the gap it was drawn in.
    (Kept as an element rather than folded into `gap` so the two clusters stay
    independently spaced and App.tsx's markup is unchanged.) */
 .app-row__divider {
@@ -244,24 +244,24 @@
   background: var(--bg-hover);
 }
 
-/* session row (36px) — what ONE session is doing. Recessed a step below the app
+/* session row (36px) â€” what ONE session is doing. Recessed a step below the app
    row so the two read as an outer and an inner tier rather than one 78px band. */
 .session-row {
   height: 36px;
   flex: 0 0 36px;
   display: flex;
   align-items: center;
-  /* design 10a: an 8px gap and an 8px inset, and every control 26px tall — the row
+  /* design 10a: an 8px gap and an 8px inset, and every control 26px tall â€” the row
      used to mix 20px and 23px targets sitting shoulder to shoulder. */
   gap: var(--space-8);
   padding: 0 var(--space-8);
   /* 9a: the session row shares the RAIL surface with the roster beside it, so
-     the two read as one continuous L of chrome around the terminal — recessed
+     the two read as one continuous L of chrome around the terminal â€” recessed
      a step under the app row above, raised a step over the terminal below. */
   background: var(--bg-panel);
   font-size: var(--font-size-11);
   /* NO overflow clip: the project switcher's dropdown is absolutely positioned
-     inside the crumbs and drops BELOW this 36px strip — a clip here cuts it off
+     inside the crumbs and drops BELOW this 36px strip â€” a clip here cuts it off
      at the row's edge, which no z-index can escape. Nothing needs the clip: every
      child either truncates itself (`.truncate` + a max-width) or shrinks. */
 }
@@ -288,7 +288,7 @@
 }
 /* design 10a: the ONE thing in the row that may shrink; every sibling is
    `flex-shrink: 0`, which is what stops mid-string crops.
-   `0 1 auto`, not `1 1 auto` — 11a's markup moves the growing to the spacer AFTER
+   `0 1 auto`, not `1 1 auto` â€” 11a's markup moves the growing to the spacer AFTER
    the tab cluster. A title that also GREW would re-flow the tabs beside it every
    time the right-hand cluster changed width (`Stop` appearing when a turn starts,
    the status word going at the compact tier), so the extension and agent tabs
@@ -306,7 +306,7 @@
   color: var(--accent);
 }
 /* The separation between the title and the tab cluster. 9a draws no rules in the
-   chrome, so a divider keeps its JOB and drops its line — see .app-row__divider. */
+   chrome, so a divider keeps its JOB and drops its line â€” see .app-row__divider. */
 .session-row__gap {
   width: var(--space-2);
   flex-shrink: 0;
@@ -321,7 +321,7 @@
   height: 26px;
   padding: 0 var(--space-9);
   /* 9a: tone instead of stroke. The hue arrives inline from the contract's
-     STATUS_COLOR, so `currentColor` is all this file needs to know — it never
+     STATUS_COLOR, so `currentColor` is all this file needs to know â€” it never
      re-states that map. */
   border: 0;
   background: color-mix(in srgb, currentColor 13%, var(--bg-panel));
@@ -356,7 +356,7 @@
 .session-row__mode--danger {
   color: var(--error);
 }
-/* design 10a: the context readout is context ALONE now — the `. 19:13` it used to
+/* design 10a: the context readout is context ALONE now â€” the `. 19:13` it used to
    carry was the same number the status pill already showed, and merging the two
    clocks is one of the three things turn 10 fixes before anything else. The bar
    outlives the figure by one tier: a proportion stays glanceable at a width where
@@ -388,7 +388,7 @@
   flex-shrink: 0;
   white-space: nowrap;
 }
-/* The view segment — a recessed track, icon-only at this height. */
+/* The view segment â€” a recessed track, icon-only at this height. */
 .session-row__views {
   display: flex;
   align-items: center;
@@ -418,7 +418,7 @@
   background: var(--bg-hover-2);
   color: var(--text-bright);
 }
-/* The diff count. Accent, and the only accent this row carries — the session
+/* The diff count. Accent, and the only accent this row carries â€” the session
    row's job is to say what changed while you were reading. */
 .session-row__view-badge {
   position: absolute;
@@ -435,7 +435,7 @@
   text-align: center;
 }
 /* agent-tab FR-12: one chip per opened subagent/workflow run, outside the
-   segment — they are content, not chrome, so they are not upper-cased or
+   segment â€” they are content, not chrome, so they are not upper-cased or
    tracked and they carry their own close affordance. */
 .session-row__agent {
   display: flex;
@@ -471,7 +471,7 @@
   color: var(--text-bright);
 }
 /* Muted, not accent: 9a's accent means THE live thing, and a branch name is a
-   readout. The `\2442` alone is what survives the medium tier — the name moves to its
+   readout. The `\2442` alone is what survives the medium tier â€” the name moves to its
    tooltip, which is where 10a also sent the path. */
 .session-row__branch {
   font-family: var(--font-mono);
@@ -556,14 +556,14 @@
   text-transform: uppercase;
   color: var(--text-muted);
 }
-/* Same treatment as .app-row__divider — the gap, not the line. */
+/* Same treatment as .app-row__divider â€” the gap, not the line. */
 .session-row__divider {
   width: var(--space-5);
   height: 16px;
   background: transparent;
   flex-shrink: 0;
 }
-/* The one destructive control in the chrome. Red-family at rest but unfilled —
+/* The one destructive control in the chrome. Red-family at rest but unfilled â€”
    stopping a turn is ordinary, and a filled red button in permanent chrome
    would read as an error state the app is permanently in. */
 .session-row__stop {
@@ -573,7 +573,7 @@
   flex-shrink: 0;
   height: 26px;
   padding: 0 var(--space-10);
-  /* 9a draws this as a filled red-family chip (#2b1c1a) with no edge — the fill
+  /* 9a draws this as a filled red-family chip (#2b1c1a) with no edge â€” the fill
      alone is enough to read as destructive without it being a filled BUTTON,
      which in permanent chrome would look like an error the app is stuck in. */
   background: color-mix(in srgb, var(--error) 14%, var(--bg-panel));
@@ -601,7 +601,7 @@
   min-height: 0;
 }
 /* 9a: the strip under a reading surface is a RAIL, the same one the composer
-   sits in — which is what replaces its top rule. */
+   sits in â€” which is what replaces its top rule. */
 .app-shell-footer {
   padding: var(--space-10) var(--space-14);
   display: flex;
@@ -613,8 +613,8 @@
   flex-shrink: 0;
 }
 
-/* unbound-panes FR-6/edge cases 3/4 — a project-owned shell pane's spawning /
-   error states. Errors render IN PLACE, never as a toast (design §Notes). */
+/* unbound-panes FR-6/edge cases 3/4 â€” a project-owned shell pane's spawning /
+   error states. Errors render IN PLACE, never as a toast (design Â§Notes). */
 .shell-pane-hint {
   flex: 1;
   display: flex;
@@ -638,12 +638,12 @@
   font-size: var(--font-size-11-5);
 }
 
-/* multiple-shells §8: the SHELL tab's sub-tab strip (.shell-strip/.shell-chip
+/* multiple-shells Â§8: the SHELL tab's sub-tab strip (.shell-strip/.shell-chip
    .shell-empty moved to src/features/shell/shell.css, imported from
-   ShellStrip.tsx — per-feature CSS convention. */
+   ShellStrip.tsx â€” per-feature CSS convention. */
 
 /* design 7a: the bottom status bar is GONE. Its readouts moved to where the
-   thing they describe already lives — ⌘K/theme/version/account to the app row,
+   thing they describe already lives â€” âŒ˜K/theme/version/account to the app row,
    focus and the running-agent count to the roster's own rows, the keyboard
    hints to the composer's hint line, which is where you are looking when you
    need them. */
@@ -657,7 +657,7 @@
 }
 /* design-refresh FR-2: hotkey glyphs and version strings are --font-mono; the
    surrounding label copy stays in --font-ui. Now down to the update chip's
-   version readout — design 7a took the rest of the status bar with it. */
+   version readout â€” design 7a took the rest of the status bar with it. */
 .app-key {
   font-family: var(--font-mono);
   color: var(--text-dim);
@@ -672,11 +672,11 @@
   color: var(--text-hint);
 }
 
-/* ── split-by-4 (specs/split-by-4.md §8 / turns 5b + 5d) ─────────────────────
+/* â”€â”€ split-by-4 (specs/split-by-4.md Â§8 / turns 5b + 5d) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Up to four live sessions at once. The main grid cell becomes a 1fr row at two
-   panes and a 2×2 grid above, with the shell's own 12px gutter; each pane is a
+   panes and a 2Ã—2 grid above, with the shell's own 12px gutter; each pane is a
    card in the same family as .app-main-section, differing only in the FOCUS
-   treatment. No motion — the focus swap is an instant state change, like every
+   treatment. No motion â€” the focus swap is an instant state change, like every
    other card in this app. */
 
 .app-split-grid {
@@ -689,7 +689,7 @@
 }
 /* Every split regime is resizable, so a gutter TRACK carries each drag handle
    and the tracks are overridden inline with the dragged ratios
-   (`<r>fr var(--space-12) <1-r>fr`). A handle IS the 12px gutter — hence no
+   (`<r>fr var(--space-12) <1-r>fr`). A handle IS the 12px gutter â€” hence no
    `gap` here, or the panes would sit 36px apart. */
 .app-split-grid--2,
 .app-split-grid--3,
@@ -697,8 +697,8 @@
   grid-template-columns: 1fr var(--space-12) 1fr;
   gap: 0;
 }
-/* FR-2: three and four panes both take the 2×2 grid. At three, the last pane
-   spans the bottom row rather than leaving a hole — an empty cell would read as
+/* FR-2: three and four panes both take the 2Ã—2 grid. At three, the last pane
+   spans the bottom row rather than leaving a hole â€” an empty cell would read as
    a pane that failed to load. Both the panes and the handles are placed
    explicitly (see `paneGridArea`): with gutter tracks in the way, CSS
    auto-placement would drop a pane into one. */
@@ -708,10 +708,10 @@
 }
 
 /* The grab handle between the two panes. At rest it is indistinguishable from
-   the gutter it replaces — a resize affordance is not a thing to look at until
+   the gutter it replaces â€” a resize affordance is not a thing to look at until
    the pointer is on it. Hover/focus/drag light the 2px line in the focus
    border, never in --accent: while split the accent belongs to the focused
-   pane alone (design §Notes, "one accent per view"). */
+   pane alone (design Â§Notes, "one accent per view"). */
 .app-split-divider {
   display: flex;
   align-items: center;
@@ -728,7 +728,7 @@
   border-radius: 1px;
   background: transparent;
 }
-/* The row handle: the same object turned through 90°. */
+/* The row handle: the same object turned through 90Â°. */
 .app-split-divider--y {
   cursor: row-resize;
 }
@@ -745,7 +745,7 @@
   outline: none;
 }
 
-/* Drag in progress: the pointer is over a transcript, a diff or a terminal —
+/* Drag in progress: the pointer is over a transcript, a diff or a terminal â€”
    every one of which would otherwise show a caret and start selecting text. */
 body.app-resizing-x,
 body.app-resizing-x *,
@@ -763,7 +763,7 @@ body.app-resizing-y * {
 }
 
 /* design 9a: no radius, no stroke. A split pane is the terminal surface, same
-   as the single pane — the 12px window gutter between panes is what separates
+   as the single pane â€” the 12px window gutter between panes is what separates
    them, and the FOCUS treatment is the only thing left to encode. */
 .split-pane {
   display: flex;
@@ -773,11 +773,11 @@ body.app-resizing-y * {
   overflow: hidden;
   background: var(--bg-canvas);
 }
-/* FR-6: focus is carried by the `focus` CHIP and nothing else — the chrome is
+/* FR-6: focus is carried by the `focus` CHIP and nothing else â€” the chrome is
    identical in both states. Every pane wears the same header on the same
    surface, the same tab strip and the same composer, so the eye is not asked to
    re-read the layout each time focus moves; the one thing that changes is the
-   one thing that means focus, and it says so in text (design §Accessibility).
+   one thing that means focus, and it says so in text (design Â§Accessibility).
 
    This is deliberately narrower than it used to be: the header used to lift to
    the rail tone, the pane name used to gain weight, and every tab and chip used
@@ -792,7 +792,7 @@ body.app-resizing-y * {
   background: var(--bg-panel);
   flex-shrink: 0;
 }
-/* FR-7: the pane number — what `⌘<n>` in the footer and the status bar point
+/* FR-7: the pane number â€” what `âŒ˜<n>` in the footer and the status bar point
    at. Quiet by design: it is a label, not a status. */
 .split-pane__index {
   font-family: var(--font-mono);
@@ -808,7 +808,7 @@ body.app-resizing-y * {
   min-width: 0;
 }
 
-/* The focus signal in TEXT as well as colour (design §Accessibility). */
+/* The focus signal in TEXT as well as colour (design Â§Accessibility). */
 .split-pane__focus-chip {
   font-family: var(--font-mono);
   font-size: var(--font-size-10);
@@ -818,7 +818,7 @@ body.app-resizing-y * {
   padding: 1px var(--space-5);
   flex-shrink: 0;
 }
-/* Only on the UNFOCUSED pane, in the chip's place: `waiting on you`, `working`… */
+/* Only on the UNFOCUSED pane, in the chip's place: `waiting on you`, `working`â€¦ */
 .split-pane__status {
   font-size: var(--font-size-11);
   white-space: nowrap;
@@ -851,7 +851,7 @@ body.app-resizing-y * {
   background: var(--bg-hover);
 }
 
-/* A SUB level: it must read as subordinate to the main tab strip it replaces —
+/* A SUB level: it must read as subordinate to the main tab strip it replaces â€”
    sentence-case, no uppercase, no letter-spacing, no accent underline. */
 .split-pane__tabs {
   display: flex;
@@ -861,7 +861,7 @@ body.app-resizing-y * {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   /* fix-agent-view FR-13: a half-width pane cannot fit three built-ins plus six
-     agent chips — the strip scrolls past overflow rather than squeezing them. */
+     agent chips â€” the strip scrolls past overflow rather than squeezing them. */
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -898,8 +898,8 @@ body.app-resizing-y * {
   color: var(--bg-canvas);
 }
 
-/* ── fix-agent-view: dynamic tabs in a pane's SUB-strip ──────────────────────
-   Same anatomy as `.app-tab-chip` (dot · ⇉ · name · ✕), one register down: the
+/* â”€â”€ fix-agent-view: dynamic tabs in a pane's SUB-strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Same anatomy as `.app-tab-chip` (dot Â· â‡‰ Â· name Â· âœ•), one register down: the
    sub-strip's 11.5px type, no pill border, and the active chip borrows
    `.split-tab--on`'s raised fill so a pane never shows two competing "active"
    idioms. Identical on both panes: the chip reports an AGENT's liveness, which
@@ -953,7 +953,7 @@ body.app-resizing-y * {
   flex-direction: column;
 }
 
-/* FR-15: a pane with no session yet — what splitting a one-session project
+/* FR-15: a pane with no session yet â€” what splitting a one-session project
    gives you. It has to read as an invitation, not as a pane that failed. */
 .split-pane__empty {
   display: flex;
@@ -984,7 +984,7 @@ body.app-resizing-y * {
 .split-pane__empty-new:hover {
   background: var(--bg-hover-2);
 }
-/* unbound-panes FR-9 — the two-choice affordance (replaces the single "New
+/* unbound-panes FR-9 â€” the two-choice affordance (replaces the single "New
    session" prompt above): "pick a session" / "open a shell here", side by side. */
 .split-pane__empty-choices {
   display: flex;
@@ -1015,8 +1015,8 @@ body.app-resizing-y * {
   position: relative;
 }
 
-/* unbound-panes FR-14 — the neutral project marker in the pane header, sitting
-   immediately left of the session/project name so it reads as `‹repo› name`.
+/* unbound-panes FR-14 â€” the neutral project marker in the pane header, sitting
+   immediately left of the session/project name so it reads as `â€¹repoâ€º name`.
    Never `--accent` (design: acid marks the one focused surface). */
 .split-pane__marker {
   font-family: var(--font-mono);
@@ -1029,7 +1029,7 @@ body.app-resizing-y * {
   padding: 0 var(--space-4);
   flex-shrink: 0;
 }
-/* unbound-panes FR-9 / design brief flow 4 — the pane header's `⋯` menu.
+/* unbound-panes FR-9 / design brief flow 4 â€” the pane header's `â‹¯` menu.
    Hover-revealed, like the rest of the header's actions; it stays visible while
    its own menu is open so the affordance does not vanish under the cursor. */
 .split-pane__menu {
@@ -1076,14 +1076,14 @@ body.app-resizing-y * {
   color: var(--text-bright);
 }
 
-/* unbound-panes FR-6 — a shell pane's header glyph. */
+/* unbound-panes FR-6 â€” a shell pane's header glyph. */
 .split-pane__shell-glyph {
   color: var(--text-2);
   flex-shrink: 0;
 }
 
-/* ── the grid chrome (FR-9/FR-11 / turn 5d) ──────────────────────────────────
-   At four panes a pane is ~590×350: no room for a tab row, and no room for a
+/* â”€â”€ the grid chrome (FR-9/FR-11 / turn 5d) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   At four panes a pane is ~590Ã—350: no room for a tab row, and no room for a
    second composer. The header tightens and the footer carries the state. */
 .split-pane--dense .split-pane__header {
   padding: var(--space-9) var(--space-11);
@@ -1116,8 +1116,8 @@ body.app-resizing-y * {
 .pane-footer__hint .app-key {
   color: var(--text-muted);
 }
-/* A settled pane's one offer. Green family, never acid — the accent belongs to
-   the focused pane (design §Notes, "one accent per view"). */
+/* A settled pane's one offer. Green family, never acid â€” the accent belongs to
+   the focused pane (design Â§Notes, "one accent per view"). */
 .pane-footer__diff {
   display: flex;
   align-items: center;
@@ -1151,10 +1151,10 @@ body.app-resizing-y * {
   color: var(--text-2);
 }
 
-/* ── the folded roster (FR-6 / turn 5d) ─────────────────────────────────────
+/* â”€â”€ the folded roster (FR-6 / turn 5d) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Same 46px geometry and the same 30px buttons as the right column's rail, so
    the two folded edges of the shell read as one system. */
-/* No `grid-row` — see the placement note on .app-col-left. */
+/* No `grid-row` â€” see the placement note on .app-col-left. */
 .session-rail {
   min-height: 0;
   display: flex;
@@ -1192,7 +1192,7 @@ body.app-resizing-y * {
   background: var(--bg-hover);
   color: var(--text-2);
 }
-/* Raised while a pane is showing it — the rail's job is "where is everything". */
+/* Raised while a pane is showing it â€” the rail's job is "where is everything". */
 .session-rail__tile--paned {
   background: var(--bg-hover-2);
   color: var(--text-2);
@@ -1223,7 +1223,7 @@ body.app-resizing-y * {
 .session-rail__dot--live {
   animation: pulse 1.6s steps(6, end) infinite;
 }
-/* unbound-panes FR-15 / design brief — the 1px rule separating the PINNED
+/* unbound-panes FR-15 / design brief â€” the 1px rule separating the PINNED
    (paned) tiles from the rest of the fleet. A plain flex item, so it takes its
    own slot in the column and never overlaps a tile. */
 /* 9a: the rule between the pinned tiles and the fleet becomes a gap. */
@@ -1235,7 +1235,7 @@ body.app-resizing-y * {
 }
 
 /* unbound-panes FR-14: the neutral project marker, bottom-left corner of the
-   30px tile — under the initials and status dot, never accent. */
+   30px tile â€” under the initials and status dot, never accent. */
 .session-rail__marker {
   position: absolute;
   left: -2px;
