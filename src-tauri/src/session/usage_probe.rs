@@ -318,8 +318,7 @@ fn is_codex_rate_limits_response(line: &str) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return false;
     };
-    value.get("id").and_then(serde_json::Value::as_i64) == Some(2)
-        && (value.get("result").is_some() || value.get("error").is_some())
+    json_id_is(&value, 2) && (value.get("result").is_some() || value.get("error").is_some())
 }
 
 fn codex_probe_card(command: &str, lines: &[String], timed_out: bool) -> CommandCard {
@@ -332,7 +331,7 @@ fn codex_probe_card(command: &str, lines: &[String], timed_out: bool) -> Command
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if value.get("id").and_then(serde_json::Value::as_i64) != Some(2) {
+        if !json_id_is(&value, 2) {
             continue;
         }
         if let Some(message) = value
@@ -353,43 +352,95 @@ fn codex_probe_card(command: &str, lines: &[String], timed_out: bool) -> Command
     }
 }
 
+fn json_id_is(value: &serde_json::Value, expected: i64) -> bool {
+    value
+        .get("id")
+        .and_then(|id| id.as_i64().or_else(|| id.as_str()?.parse().ok()))
+        == Some(expected)
+}
+
+fn field<'a>(
+    value: &'a serde_json::Value,
+    camel: &str,
+    snake: &str,
+) -> Option<&'a serde_json::Value> {
+    value.get(camel).or_else(|| value.get(snake))
+}
+
 fn codex_usage_answer(result: &serde_json::Value) -> Option<String> {
-    let snapshot = result
-        .get("rateLimitsByLimitId")
+    let snapshot = field(result, "rateLimitsByLimitId", "rate_limits_by_limit_id")
         .and_then(|buckets| buckets.get("codex"))
-        .or_else(|| result.get("rateLimits"))?;
+        .or_else(|| field(result, "rateLimits", "rate_limits"));
     let mut lines = Vec::new();
     for (key, fallback_label) in [
         ("primary", "Current session"),
         ("secondary", "Current week"),
     ] {
-        let Some(window) = snapshot.get(key) else {
+        let Some(snapshot) = snapshot else {
+            break;
+        };
+        let window_key = match key {
+            "primary" => ("primary", "primary_window"),
+            _ => ("secondary", "secondary_window"),
+        };
+        let Some(window) = field(snapshot, window_key.0, window_key.1) else {
             continue;
         };
-        let Some(used) = window
-            .get("usedPercent")
-            .and_then(serde_json::Value::as_f64)
+        let Some(used) = field(window, "usedPercent", "used_percent")
+            .and_then(number_as_f64)
             .map(|percent| percent.round().clamp(0.0, 100.0) as u64)
         else {
             continue;
         };
-        let label = match window
-            .get("windowDurationMins")
-            .and_then(serde_json::Value::as_i64)
+        let label = match field(window, "windowDurationMins", "window_duration_mins")
+            .and_then(number_as_i64)
         {
             Some(300) => "Current session",
             Some(10080) => "Current week",
             _ => fallback_label,
         };
-        let reset = window
-            .get("resetsAt")
-            .and_then(serde_json::Value::as_i64)
+        let reset = field(window, "resetsAt", "resets_at")
+            .and_then(number_as_i64)
             .and_then(|seconds| chrono::Local.timestamp_opt(seconds, 0).single())
             .map(|at| at.format("%Y-%m-%d %H:%M %Z").to_string())
             .unwrap_or_else(|| "unknown".into());
         lines.push(format!("{label}: {used}% used · resets {reset}"));
     }
-    (!lines.is_empty()).then(|| lines.join("\n"))
+    if !lines.is_empty() {
+        return Some(lines.join("\n"));
+    }
+
+    let plan = snapshot
+        .and_then(|value| field(value, "planType", "plan_type"))
+        .and_then(serde_json::Value::as_str);
+    let allowed = field(result, "ordinaryUsageAllowed", "ordinary_usage_allowed")
+        .and_then(serde_json::Value::as_bool)
+        .map(|allowed| if allowed { "allowed" } else { "not allowed" });
+    match (plan, allowed) {
+        (Some(plan), Some(allowed)) => Some(format!(
+            "Codex usage limits: {allowed}\nPlan: {plan}\nNo reset windows were returned."
+        )),
+        (Some(plan), None) => Some(format!(
+            "Codex usage limits\nPlan: {plan}\nNo reset windows were returned."
+        )),
+        (None, Some(allowed)) => Some(format!(
+            "Codex usage limits: {allowed}\nNo reset windows were returned."
+        )),
+        (None, None) => None,
+    }
+}
+
+fn number_as_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.parse::<f64>().ok())
+}
+
+fn number_as_i64(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_f64().map(|number| number.round() as i64))
+        .or_else(|| value.as_str()?.parse::<i64>().ok())
 }
 
 /// Release the probe slot and finalize its pending block (FR-9/10 — a pending
@@ -461,5 +512,35 @@ mod tests {
         assert!(is_codex_rate_limits_response(
             r#"{"id":2,"result":{"rateLimits":{"primary":{}}}}"#
         ));
+    }
+
+    #[test]
+    fn codex_rate_limits_accept_snake_case_and_string_values() {
+        let result = serde_json::json!({
+            "rate_limits": {
+                "primary_window": {
+                    "used_percent": "17",
+                    "window_duration_mins": "10080",
+                    "resets_at": "1790240362"
+                }
+            },
+            "ordinary_usage_allowed": true
+        });
+        let answer = codex_usage_answer(&result).expect("Codex returned rate limits");
+        assert!(answer.contains("Current week: 17% used"));
+        assert!(is_codex_rate_limits_response(
+            r#"{"id":"2","result":{"rate_limits":{"primary_window":{}}}}"#
+        ));
+    }
+
+    #[test]
+    fn codex_plan_status_without_windows_is_still_visible() {
+        let result = serde_json::json!({
+            "rateLimits": { "planType": "pro" },
+            "ordinaryUsageAllowed": true
+        });
+        let answer = codex_usage_answer(&result).expect("Codex returned plan status");
+        assert!(answer.contains("Plan: pro"));
+        assert!(answer.contains("No reset windows were returned."));
     }
 }
