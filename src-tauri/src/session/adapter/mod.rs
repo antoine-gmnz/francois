@@ -347,9 +347,15 @@ pub(crate) trait SessionAdapter: Send + Sync {
         app: &AppHandle,
         ctx: TurnContext,
     ) -> Result<std::sync::Arc<dyn TurnControl>, AppError>;
+    /// pi-rpc-sessions FR-1: `app` is threaded through (unlike `begin_turn`'s
+    /// per-turn seam, which the engine already holds a lock-free snapshot
+    /// for) because a session-scoped connection's own background reader must
+    /// keep publishing `francois://session/event` runtime envelopes for the
+    /// rest of its life, long after this call returns.
     #[allow(dead_code)]
     fn connect_session(
         &self,
+        _app: &AppHandle,
         _ctx: RuntimeConnectContext,
     ) -> Result<std::sync::Arc<dyn RuntimeSessionControl>, AppError> {
         Err(runtime_unsupported())
@@ -387,6 +393,20 @@ impl SessionAdapter for PiAdapter {
     }
     fn models(&self, _app: &AppHandle, _account_id: &str) -> Vec<ModelInfo> {
         Vec::new()
+    }
+
+    /// pi-rpc-sessions FR-1/FR-4: the real, session-scoped seam — spawn the
+    /// certified Pi child under the baseline launch policy and run the
+    /// `get_state` handshake. `preflight`/`begin_turn` above stay
+    /// unavailable: Pi does not use the per-turn `TurnControl` seam every
+    /// other runtime does (a Pi child outlives a single turn), so nothing
+    /// routes a Pi session through them today — see the module doc.
+    fn connect_session(
+        &self,
+        app: &AppHandle,
+        ctx: RuntimeConnectContext,
+    ) -> Result<std::sync::Arc<dyn RuntimeSessionControl>, AppError> {
+        Ok(pi::connect(app, ctx)? as std::sync::Arc<dyn RuntimeSessionControl>)
     }
 }
 
