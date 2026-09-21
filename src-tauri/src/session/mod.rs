@@ -348,7 +348,8 @@ use crate::profiles::SessionProfileRef;
 // usage-bar §6: the /usage meter grammar + stream-json answer extraction now live
 // in usage.rs so the usage bar and this card path share ONE grammar. Behavior here
 // is unchanged — these are the same functions, imported instead of defined.
-use crate::usage::{parse_meter_line, probe_answer, synthetic_text, UsageMeter};
+use crate::usage::{parse_meter_line, probe_answer, synthetic_text};
+use crate::usage_meter::UsageMeter;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};

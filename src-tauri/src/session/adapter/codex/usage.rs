@@ -5,7 +5,7 @@
 //! primary and secondary windows map directly onto Francois' existing usage
 //! meters.
 
-use crate::usage::UsageMeter;
+use crate::usage_meter::UsageMeter;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -191,5 +191,15 @@ mod tests {
     fn rejects_a_response_without_any_valid_window() {
         let result = json!({ "rateLimits": { "primary": { "usedPercent": 42 } } });
         assert!(meters_from_response(&result).is_none());
+    }
+
+    #[test]
+    fn usage_meter_is_available_from_the_neutral_module() {
+        let meter = crate::usage_meter::UsageMeter {
+            label: "Current session".into(),
+            percent_used: 42,
+            resets_at: "tomorrow".into(),
+        };
+        assert_eq!(meter.percent_used, 42);
     }
 }

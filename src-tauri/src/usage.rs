@@ -17,6 +17,7 @@
 use crate::ipc::ErrorCode;
 use crate::ipc::{ok, AppError, IpcResult};
 use crate::session::{account_env, now_ms, PROBE_TIMEOUT_SECS};
+use crate::usage_meter::UsageMeter;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -49,18 +50,6 @@ const MSG_NO_ANSWER: &str =
 const MSG_UNPARSEABLE: &str = "Could not read the usage response.";
 
 // ---------- shared grammar (moved from session.rs, behavior unchanged) ----------
-
-/// One plan-limit meter parsed from the CLI's /usage output (contract UsageMeter,
-/// `contract/common.ts`). Shared by the /usage transcript card and the usage bar.
-#[derive(Serialize, Clone, PartialEq, Debug)]
-pub struct UsageMeter {
-    pub label: String,
-    #[serde(rename = "percentUsed")]
-    pub percent_used: u64,
-    /// verbatim reset text, e.g. 'Jul 22, 5:29pm (Europe/Paris)'
-    #[serde(rename = "resetsAt")]
-    pub resets_at: String,
-}
 
 /// §5 meter line: `^(.+?): (\d+)% used · resets (.+)$` (the `·` is U+00B7).
 /// Lazy label — the first `": "` split whose tail matches wins.

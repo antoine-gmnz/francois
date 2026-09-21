@@ -1,7 +1,7 @@
 ---
 id: multi-provider-codex
 title: Codex CLI sessions
-status: frozen
+status: in-review
 branch: feat/multi-provider
 created: 2026-08-17
 depends_on: [multi-provider-seam, multi-account, durable-sessions, session-engine, conversation-view, projects]
@@ -495,4 +495,6 @@ No new screens. Three deltas against the existing surfaces:
 
 ## Remediation
 
-(Empty until a review returns findings.)
+### 2026-09-21 · PR #143 review
+
+- 2026-09-21 — 1 finding, all fixed: `UsageMeter` now lives in the neutral `usage_meter` leaf module.

@@ -36,5 +36,6 @@ pub mod session;
 pub mod shell;
 pub mod update;
 pub mod usage;
+pub mod usage_meter;
 pub mod window;
 pub(crate) mod wsl;
