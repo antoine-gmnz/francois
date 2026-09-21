@@ -1046,14 +1046,11 @@ describe('codex accounts', () => {
     expect(options).toHaveLength(2);
   });
 
-  // The bug this guards: a freshly added Codex account came back carrying a full
-  // Claude profile (.claude.json, projects/, sessions/) because the usage seed
-  // spawned `claude` with that account's dir as CLAUDE_CONFIG_DIR — and `claude`
-  // initializes whatever dir it is pointed at. The filter used to be
-  // `!accountIsEndpoint(a)`, which admitted every kind that was not an endpoint.
-  it('never probes plan limits for an account whose runtime has no plan', () => {
+  // The usage seed must follow the capability table: Codex now uses its own App
+  // Server probe under CODEX_HOME, while unsupported providers are not probed.
+  it('only probes plan limits for runtimes with a supported account usage endpoint', () => {
     expect(accountUsageProbeable(account({ id: 'a' }))).toBe(true);
-    expect(accountUsageProbeable(codex())).toBe(false);
+    expect(accountUsageProbeable(codex())).toBe(true);
     expect(accountUsageProbeable(account({ id: 'e', kind: 'openai-compatible' }))).toBe(false);
   });
 

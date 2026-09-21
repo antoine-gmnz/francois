@@ -784,7 +784,10 @@ pub(crate) fn resolve_capability(
         AgentRuntime::Francois => {
             matches!(key, "skills" | "permissions" | "modelSwitching" | "images")
         }
-        AgentRuntime::Codex => matches!(key, "interactiveCommands" | "modelSwitching" | "images"),
+        AgentRuntime::Codex => matches!(
+            key,
+            "interactiveCommands" | "usageBar" | "modelSwitching" | "images"
+        ),
         AgentRuntime::Grok => matches!(key, "modelSwitching" | "images"),
         AgentRuntime::Pi => false,
     };

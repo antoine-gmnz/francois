@@ -158,12 +158,10 @@ pub fn run_probe(
             // FR-10 with session-engine FR-45's actionable wording where determinable.
             let text = if runtime == "wsl" {
                 "couldn't fetch usage \u{2014} WSL not found. Install it (wsl --install) or use the native runtime."
+            } else if is_codex {
+                "couldn't fetch usage \u{2014} Codex CLI not found. Install it and ensure `codex` is on PATH."
             } else {
-                if is_codex {
-                    "couldn't fetch usage \u{2014} Codex CLI not found. Install it and ensure `codex` is on PATH."
-                } else {
-                    "couldn't fetch usage \u{2014} Claude Code CLI not found. Install it and ensure `claude` is on PATH."
-                }
+                "couldn't fetch usage \u{2014} Claude Code CLI not found. Install it and ensure `claude` is on PATH."
             };
             finish_probe(
                 &app,

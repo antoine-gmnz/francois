@@ -111,11 +111,14 @@ describe('runtimeCapabilities', () => {
     expect(caps.skillsInstall.available).toBe(false);
   });
 
-  it('exposes local slash commands alongside model and image actions on codex', () => {
+  it('exposes local slash commands, usage, model, and image actions on codex', () => {
     const caps = runtimeCapabilities('codex');
     for (const capability of CAPABILITIES) {
       expect(caps[capability].available).toBe(
-        capability === 'interactiveCommands' || capability === 'modelSwitching' || capability === 'images',
+        capability === 'interactiveCommands'
+          || capability === 'usageBar'
+          || capability === 'modelSwitching'
+          || capability === 'images',
       );
     }
   });
@@ -130,15 +133,8 @@ describe('runtimeCapabilities', () => {
     expect(reason).not.toMatch(/yet/);
   });
 
-  it('does not tell a codex session it bills per token instead of a plan (FR-16)', () => {
-    // `codex login` authenticates against a ChatGPT PLAN, so the francois row's
-    // usageBar reason would be factually wrong here. This is a gap, not a
-    // property of the runtime — and the two rows must not converge by copy.
-    const codex = runtimeCapabilities('codex').usageBar.reason!;
-    const francois = runtimeCapabilities('francois').usageBar.reason!;
-    expect(codex).not.toBe(francois);
-    expect(codex).toMatch(/yet/);
-    expect(codex).not.toMatch(/per token/);
+  it('exposes Codex plan limits through the shared usage bar (FR-16)', () => {
+    expect(runtimeCapabilities('codex').usageBar).toEqual({ available: true });
   });
 
   // multi-provider-grok FR-26.
@@ -155,13 +151,12 @@ describe('runtimeCapabilities', () => {
     expect(reason).not.toMatch(/yet/);
   });
 
-  it('gives grok its own usageBar wording distinct from francois and codex (FR-26)', () => {
+  it('gives grok its own usageBar wording distinct from francois (FR-26)', () => {
     // A Grok CLI session bills against a SuperGrok / X Premium+ plan — neither
-    // francois' "bills per token" nor codex's ChatGPT-flavored "yet" is true here.
+    // francois' "bills per token" nor Codex's supported rate-limit endpoint is
+    // the right description here.
     const grok = runtimeCapabilities('grok').usageBar.reason!;
-    const codex = runtimeCapabilities('codex').usageBar.reason!;
     const francois = runtimeCapabilities('francois').usageBar.reason!;
-    expect(grok).not.toBe(codex);
     expect(grok).not.toBe(francois);
     expect(grok).toMatch(/SuperGrok|X Premium/);
     expect(grok).not.toMatch(/per token/);
