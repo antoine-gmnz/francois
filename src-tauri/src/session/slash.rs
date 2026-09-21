@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ipc::ErrorCode;
+use crate::session::interactive::help_entries_for_runtime;
 
 use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
@@ -203,6 +204,13 @@ pub fn session_list_commands(
             Ok(commands) => ok(merge_pi_commands(&commands)),
             Err(error) => IpcResult::Err { ok: false, error },
         };
+    }
+    if agent_runtime == AgentRuntime::Codex {
+        return ok(merge_commands(
+            &help_entries_for_runtime(agent_runtime),
+            &[],
+            &[],
+        ));
     }
     ok(merge_commands(
         &help_entries(),

@@ -784,7 +784,10 @@ pub(crate) fn resolve_capability(
         AgentRuntime::Francois => {
             matches!(key, "skills" | "permissions" | "modelSwitching" | "images")
         }
-        AgentRuntime::Codex => matches!(key, "usageBar" | "modelSwitching" | "images"),
+        AgentRuntime::Codex => matches!(
+            key,
+            "interactiveCommands" | "usageBar" | "modelSwitching" | "images"
+        ),
         AgentRuntime::Grok => matches!(key, "modelSwitching" | "images"),
         AgentRuntime::Pi => false,
     };
@@ -846,6 +849,20 @@ mod boundary_tests {
             })
             .collect();
         assert!(!resolve_capability(AgentRuntime::Codex, Some(&caps), "mcp"));
+    }
+
+    #[test]
+    fn codex_exposes_francois_owned_interactive_commands() {
+        assert!(resolve_capability(
+            AgentRuntime::Codex,
+            None,
+            "interactiveCommands"
+        ));
+        assert!(!resolve_capability(
+            AgentRuntime::Grok,
+            None,
+            "interactiveCommands"
+        ));
     }
     #[test]
     fn missing_and_explicitly_disabled_snapshots() {

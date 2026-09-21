@@ -106,6 +106,21 @@ pub fn help_entries() -> Vec<HelpEntry> {
     ]
 }
 
+/// The commands that remain meaningful in a Codex `exec --json` session.
+/// `/context` is a Claude Code turn command and must not be advertised when
+/// Codex would receive it as an ordinary prompt instead.
+pub fn help_entries_for_runtime(runtime: AgentRuntime) -> Vec<HelpEntry> {
+    let entries = help_entries();
+    if runtime == AgentRuntime::Codex {
+        entries
+            .into_iter()
+            .filter(|entry| entry.command != "context")
+            .collect()
+    } else {
+        entries
+    }
+}
+
 /// FR-1 grammar — mirrors parseCommand: the trimmed text is a command iff it is a
 /// single line matching `^/([A-Za-z][A-Za-z0-9_-]*)(\s+\S.*)?$`. Returns
 /// (token lowercased, arg trimmed). None → normal passthrough turn.
@@ -388,7 +403,9 @@ pub fn run_intercepted_command(
 ) {
     match command {
         // FR-5: a present arg is ignored for usage/cost/status/help.
-        "usage" | "cost" => start_usage_probe(app, session_id, command),
+        "usage" | "cost" => {
+            start_usage_probe(app, session_id, command);
+        }
         "model" => run_model_command(app, session_id, arg),
         "status" => {
             // FR-14: instant snapshot card
@@ -408,13 +425,17 @@ pub fn run_intercepted_command(
             }
         }
         "help" => {
+            let runtime = app
+                .state::<Engine>()
+                .with_session(session_id, |s| s.agent_runtime)
+                .unwrap_or(AgentRuntime::ClaudeCode);
             finalize_command_block(
                 app,
                 session_id,
                 &uuid(),
                 "help",
                 &CommandCard::Help {
-                    entries: help_entries(),
+                    entries: help_entries_for_runtime(runtime),
                 },
             );
         }
@@ -518,6 +539,17 @@ mod tests {
         assert_eq!(clear.source, "builtin");
         assert!(!INTERCEPTED_COMMANDS.contains(&"clear"));
         assert_eq!(INTERCEPTED_COMMANDS.len(), 5); // unchanged
+    }
+
+    #[test]
+    fn codex_help_does_not_advertise_claude_context_command() {
+        let entries = help_entries_for_runtime(AgentRuntime::Codex);
+        assert!(entries.iter().any(|entry| entry.command == "model"));
+        assert!(!entries.iter().any(|entry| entry.command == "context"));
+        assert_eq!(
+            help_entries_for_runtime(AgentRuntime::ClaudeCode).len(),
+            help_entries().len()
+        );
     }
 
     #[test]
