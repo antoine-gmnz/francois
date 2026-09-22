@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { permissionActions, writesRule } from './permission-card';
+import { permissionActions, writesRule } from '../../lib/permission-actions';
 it('honors actual native offered choices and labels cancel as ending the turn', () => {
   const actions = permissionActions(['allowOnce', 'cancel']);
   expect(actions.map(a => a.decision)).toEqual(['allowOnce', 'cancel']);

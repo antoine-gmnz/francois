@@ -1,5 +1,5 @@
 import { requestReplyPending, submitRequestReply } from '../../lib/request-replies';
-import { permissionActions, writesRule } from '../permissions/permission-card';
+import { permissionActions, writesRule } from '../../lib/permission-actions';
 // design 12b — "sorted by what wants you". The roster's state-grouped body:
 // four headings that are STATES, and three row shapes whose weight matches how
 // much the session is asking of you.

@@ -9,7 +9,7 @@ import { requestReplyAvailable, requestReplyPending, submitRequestReply } from '
 // is pure in ./permission-card (unit-tested); this file is DOM assembly +
 // card-local UI state (chosen tier, disclosure, in-flight flag, inline error).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
     PermissionConversationBlock,
     PermissionDecision,
@@ -20,12 +20,11 @@ import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
+import { permissionActions, writesRule } from '../../lib/permission-actions';
 import CodeSurfaceView from './CodeSurface';
 import {
     cardClass,
     hasDetail,
-    permissionActions,
-    writesRule,
     relativeAge,
     ruleSentence,
     stateNote,
@@ -81,7 +80,7 @@ export default function PermissionCard({
   // while the card lives, so it is derived once per block rather than per key.
   const surface = useMemo(() => askCodeSurface(block.ask), [block.ask]);
 
-  const decide = (decision: PermissionDecision) => {
+  const decide = useCallback((decision: PermissionDecision) => {
     if (!interactive || !actions.some(a => a.decision === decision) || !requestReplyAvailable(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId)) return;
     void submitDecision({
       decision,
@@ -92,7 +91,7 @@ export default function PermissionCard({
       isResolved: () => resolvedRef.current,
       schedule,
     });
-  };
+  }, [interactive, actions, sessionId, block.blockId, tier, setError, schedule]);
 
   // design 7a: the numbered rows are answerable from the keyboard, exactly as
   // the mock's composer promises. Capture phase + stopPropagation so `1`–`4`
@@ -125,7 +124,7 @@ export default function PermissionCard({
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
     // `decide` closes over the CURRENT tier/interactive, so it belongs in the deps.
-  }, [interactive, sessionId, tier, actions]);
+  }, [interactive, sessionId, actions, decide]);
 
   return (
     <div ref={rootRef} className={cardClass(block.state, inFlight)}>

@@ -205,10 +205,8 @@ impl Inner {
                             RuntimeEvent::TurnFinished
                         });
                     }
-                    "error" => {
-                        if params["willRetry"] != true {
-                            output.push(RuntimeEvent::TurnFailed(transport::protocol_error()));
-                        }
+                    "error" if params["willRetry"] != true => {
+                        output.push(RuntimeEvent::TurnFailed(transport::protocol_error()));
                     }
                     _ => {}
                 }

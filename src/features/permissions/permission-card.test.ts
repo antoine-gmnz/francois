@@ -9,7 +9,6 @@ import {
   cardClass,
   hasDetail,
   hasPendingPermissionBlock,
-  PERMISSION_ACTIONS,
   relativeAge,
   ruleSentence,
   stateNote,
@@ -17,9 +16,9 @@ import {
   tierChip,
   tierControlDimmed,
   tierLabel,
-  writesRule,
   writtenRuleSentence,
 } from './permission-card';
+import { PERMISSION_ACTIONS, writesRule } from '../../lib/permission-actions';
 
 const ask: PermissionAsk = {
   toolName: 'Bash',
