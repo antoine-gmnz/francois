@@ -487,7 +487,7 @@ export type CohorteRetryScheduled = Wire<
 export type CohorteCommandAccepted = Wire<'command.accepted', { commandId: string; commandType: string; actor: { kind: 'human' | 'client' | 'system'; id: string } }>;
 /** `result` (arbitrary JSON) is dropped. */
 export type CohorteCommandCompleted = Wire<'command.completed', { commandId: string; commandType: string }>;
-export type CohorteCommandRejected = Wire<'command.rejected', { commandId: string; commandType: string; error: CohorteErrorInfo }>;
+export type CohorteCommandRejected = Wire<'command.rejected', { commandId: string; commandType: string; error: CohorteErrorInfo; /** Francois-derived: the core issued this commandId from this app within the last 60 s (Remediation R-4) — the UI toasts only these. */ issuedByFrancois: boolean }>;
 
 // ---------- git family (events/git.ts) ----------
 export type CohorteGitWorktreeCreated = Wire<'git.worktree.created', { slot: string; path: string; branch: string; baseSha: string }>;

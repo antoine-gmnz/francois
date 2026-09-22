@@ -54,8 +54,6 @@ spec says so (§2.3).
   `inspect` — not driven (gc/config-set write; providers-test hits the network).
 - Opening artifacts in an editor (artifact rows are informational, except the log row, FR-54).
 - A streaming `tail --follow` subscription: dev.8 ignores `--follow` (§2.3).
-- Native Windows Cohorte: Cohorte 3.0 ships macOS + Linux only (DESIGN §9 row 26); on Windows the
-  CLI resolves only inside WSL (FR-6).
 
 ### 2.3 Cohorte 3.0.0-dev.8 realities this spec builds on (verified in source)
 | Topic | Documented (DESIGN / brief) | Actual dev.8 (`apps/cli/src/commands/*`) | Francois does |
@@ -842,4 +840,56 @@ Manual / demo (`VITE_FRANCOIS_DEMO=1`, dark and light):
 
 ## Remediation
 
-(Empty until a review returns findings.)
+### Round 1 — 2026-09-23 (reviewer: core FIX, frontend FIX)
+
+Amendments the lead made to the frozen spec/contract for this round:
+- **Native Windows is in scope** — the non-goal is withdrawn: the user runs Cohorte natively on Windows,
+  where `cohorte` is an npm `.cmd` shim (e.g. `C:\nvm4w\nodejs\cohorte.cmd`). **FR-6b [core]**: a native
+  (non-WSL) root spawns cohorte through `process_util::resolve_cli_program` (the resolver claude/grok use:
+  handles `.cmd` shims, `CREATE_NO_WINDOW`). WSL roots keep FR-6. Argument passing must be safe on the
+  `.cmd` path too (cmd.exe metacharacters in agent/user text — apply the R-2 allowlist).
+- Contract: `command.rejected` gains `issuedByFrancois: boolean` (R-4).
+
+Core:
+- **R-1 [BLOCKING]** Terminal runs (COMPLETED/CANCELLED/FAILED) never carry a gate: `to_run` builds no gate when
+  terminal; on `run.cancelled` / `pipeline.completed` / `pipeline.failed`, and on a status showing a terminal
+  state, clear pending approvals and emit `francois.gate.resolved` for each; backfill never re-emits
+  `gate.opened` for a terminal run. Test: `approval.requested` then `run.cancelled` → `gate == null`.
+- **R-2 [MAJOR]** WSL argv must not pass through a shell: `wsl.exe -d <distro> --cd <dir> --exec bash -lc 'exec cohorte "$@"' _ <args…>`
+  (login shell so nvm-installed node/cohorte resolve; args as separate values — also fixes R-3). Defence in
+  depth: reject approve answers / pause-cancel reasons outside `^[A-Za-z0-9 ._,:/'-]+$` with `INVALID_INPUT`.
+- **R-3 [MAJOR]** Covered by R-2 (login-shell PATH inside the distro).
+- **R-4 [MAJOR]** Keep a 60 s cache of commandIds Francois issued (from the CLI's command result where available,
+  else match commandType + runId inside the window) and set `issuedByFrancois` on `command.rejected`.
+- **R-5 [MAJOR]** `watcher.rs` `refresh_run`: no indexing panic (`get` → `COHORTE_RUN_NOT_FOUND`); a slot created by
+  refresh survives one status cycle; no path leaves a poisoned mutex / `thread_running` stuck.
+- **R-6 [MAJOR]** Tail scheduling: non-terminal runs first (sort key `(terminal, next_tail_at)`); terminal runs
+  backfilled lazily; `op_list_runs` returns after status alone and the thread backfills.
+- **R-7 [MAJOR, from frontend M1]** Claude Code Bash blocks never expose the output, so FR-30 rule 1 never fires.
+  In `session/tools.rs` (Bash meta), when the command invokes `cohorte` and the result contains
+  `run_[0-9a-f]{6,32}`, the block meta carries `started run_<id>` so the existing frontend parser works for
+  Claude Code sessions. Test against real `meta_bash` output.
+- **R-8 [MINOR]** dev.8 tail prints through `sanitizeHuman`: rewrite `\xHH` → `\u00HH` before JSON parse; an
+  unparseable line is logged to the run log as a parse warning, never silently skipped.
+- **R-9 [MINOR]** Compare status `lastSequence` with hwm to set `tailTruncated`; events never overwrite the state
+  of a newer status.
+- **R-10 [MINOR]** Put `--` before free text (or drop words starting with `-`); shell-quote display hints that
+  contain whitespace; don't cache a timed-out `--version` probe; exit decision + `thread_running` write under
+  the watch_set lock; `next_status_at` from end-of-poll time; RAII guard for the read slot.
+- **R-11 [MINOR]** Parse test with the real dev.1 `cohorte doctor --json` output at
+  `.cohorte/design/real-doctor-dev1.json` (copy it into a test fixture).
+
+Frontend:
+- **R-12 [MAJOR, M2]** Gate keys: ignore `e.repeat`; while the deny confirm is armed, Enter on a focused
+  button / link / `[role=button]` passes through to that control.
+- **R-13 [MAJOR, M3]** Runs whose `projectRoot` leaves the watch set are pruned (runs, logs, busy, outcomes)
+  after the same 30 s linger; roster / Needs-you / palette only consider watched roots.
+- **R-14 [MAJOR, M4]** Toast `Cohorte rejected <commandType>: <message>` on `command.rejected` when
+  `issuedByFrancois`.
+- **R-15 [MAJOR, M5]** `approval.resolved` by another actor (not this window's last command) → an
+  `Answered by <actor> · <decision>` line for ~6 s in the panel header and the run view.
+- **R-16 [MINOR]** auth.required renders the event's own `cli`; `panelLogRunId` keyed by session; buffer events
+  that arrive while a log fetch is in flight; Settings doctor race guard (root it started for); "Cohorte:
+  Settings" works when Settings is already open; clear `lastOutcome` on gate resolved; `COHORTE_TIMEOUT` toast
+  is a warning; no fallback to `gate.request.cli` (build `cohorte approve <runId> <approvalId>` or show nothing);
+  split `cohorte.css` under 1000 lines.
