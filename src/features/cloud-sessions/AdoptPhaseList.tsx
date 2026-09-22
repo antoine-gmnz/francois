@@ -8,6 +8,7 @@
 // not have — and every row carries a text label, so state is never colour alone.
 
 import { CLOUD_ADOPT_STEPS } from '../../../contract/cloud-sessions';
+import { LoaderOrbit } from '../../ui/Loader';
 import { StatusDot } from '../../ui/StatusDot';
 import { ADOPT_STEP_LABELS, cloudErrorMessage, stepDotColor, stepState, type AdoptProgress } from './cloud-sessions';
 import './cloud-sessions.css';
@@ -18,11 +19,14 @@ export function AdoptPhaseList({ progress }: { progress: AdoptProgress }): JSX.E
       <div className="adopt-phases__steps" aria-live="polite">
         {CLOUD_ADOPT_STEPS.map((step) => {
           const state = stepState(step, progress);
+          const label = ADOPT_STEP_LABELS[step];
           return (
             <div key={step} className={`adopt-phases__row adopt-phases__row--${state}`}>
-              {/* Acid belongs to the CURRENT row and nothing else in this view. */}
-              <StatusDot color={stepDotColor(state)} size={6} pulsing={state === 'current'} />
-              <span className="adopt-phases__label">{ADOPT_STEP_LABELS[step]}</span>
+              {/* The CURRENT row is work this view only watches (it runs in the
+                  cloud), so it gets the shared Orbit rather than a pulsing dot;
+                  done/pending/failed stay the static glyph. */}
+              {state === 'current' ? <LoaderOrbit size={14} title={`${label} — in progress`} /> : <StatusDot color={stepDotColor(state)} size={6} />}
+              <span className="adopt-phases__label">{label}</span>
             </div>
           );
         })}

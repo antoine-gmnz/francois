@@ -11,6 +11,7 @@
 
 import type { ColumnDef, TableRow } from '../../../contract/extensions';
 import { ListRow } from '../../ui/ListRow';
+import { LoaderCaret } from '../../ui/Loader';
 import {
   LOAD_MORE_COPY,
   PAGE_CAP_NOTICE,
@@ -79,7 +80,7 @@ export default function ExtTable({
       {paginated && cursor.capped && <div className="ext-table__more ext-table__more--capped">{PAGE_CAP_NOTICE}</div>}
       {paginated && canLoadMore(cursor) && (
         <div className="ext-table__more" onClick={loading ? undefined : onLoadMore}>
-          {loading ? '…' : LOAD_MORE_COPY}
+          {loading ? <LoaderCaret /> : LOAD_MORE_COPY}
         </div>
       )}
     </div>

@@ -8,6 +8,7 @@ import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { HintBar } from '../../ui/HintBar';
+import { LoaderCaret } from '../../ui/Loader';
 import { StatusDot } from '../../ui/StatusDot';
 import { approvalSummary, approveAllDecision, canReconnect, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
 import { useAttachFlow } from './useAttachFlow';
@@ -201,7 +202,8 @@ function ApprovalBanner({
           onClick={onApproveAll}
           className={busy ? 'mcp-action-link mcp-action-link--dim' : 'mcp-action-link'}
         >
-          {busy ? 'saving…' : 'approve all'}
+          {busy && <LoaderCaret />}
+          approve all
         </span>
       </div>
       <div className="mcp-approval-note">
@@ -218,18 +220,23 @@ function ApprovalBanner({
 
 function ServerRow({ server, selected, onClick }: { server: McpServerInfo; selected: boolean; onClick: () => void }) {
   const detail = detailText(server);
+  const connecting = server.status === 'connecting';
   return (
     <div data-mcp-row onClick={(e) => { e.stopPropagation(); onClick(); }} className={selected ? 'mcp-row mcp-row--selected' : 'mcp-row'}>
-      <StatusDot color={dotColor(server.status)} pulsing={server.status === 'connecting'} />
+      <StatusDot color={dotColor(server.status)} />
       <span className="mcp-row-name truncate">{server.name}</span>
       {server.scope && (
         <span className="mcp-scope-badge" style={{ color: scopeColor(server.scope) }}>
           {server.scope}
         </span>
       )}
-      <span className="mcp-row-detail" style={{ color: detail.color }}>
-        {detail.text}
-      </span>
+      {connecting ? (
+        <LoaderCaret label="connecting" className="mcp-row-detail" />
+      ) : (
+        <span className="mcp-row-detail" style={{ color: detail.color }}>
+          {detail.text}
+        </span>
+      )}
     </div>
   );
 }
@@ -316,7 +323,7 @@ function DetailPopover({
 
       <div className="mcp-popover-body">
         {loading ? (
-          <span className="mcp-popover-loading">loading…</span>
+          <LoaderCaret label="loading" />
         ) : error ? (
           <span className="mcp-popover-error">{error.message}</span>
         ) : data ? (

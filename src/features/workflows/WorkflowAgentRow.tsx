@@ -7,6 +7,7 @@
 import { useRef } from 'react';
 import { formatElapsed } from '../../../contract/conversation-view';
 import type { WorkflowAgentInfo } from '../../../contract/workflow-details';
+import { LoaderOrbit } from '../../ui/Loader';
 import { StateIcon } from '../../ui/StateIcon';
 import {
   agentElapsedMs,
@@ -51,7 +52,11 @@ export default function WorkflowAgentRow({ agent, run, now, selected, onSelect }
     >
       <div className="wfd-agent__head">
         {/* waiting is stalled, not working — it takes the attention glyph, not the spinner (§2b) */}
-        <StateIcon kind={workflowStateKind(agent.status)} size={13} />
+        {agent.status === 'running' ? (
+          <LoaderOrbit size={14} title={agent.agentType} />
+        ) : (
+          <StateIcon kind={workflowStateKind(agent.status)} size={13} />
+        )}
         <span className="wfd-agent__type truncate">{agent.agentType}</span>
         {agent.model && <span className="wfd-agent__model">{agent.model}</span>}
         <span className="wfd-agent__spacer" />

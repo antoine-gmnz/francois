@@ -32,7 +32,7 @@ import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
 import StepDetailPanel from './StepDetailPanel';
-import { StatusDot } from '../../ui/StatusDot';
+import { LoaderCaret } from '../../ui/Loader';
 import { toolResultChips } from './transcript-turns';
 import './conversation.css';
 
@@ -300,7 +300,9 @@ function ToolRowImpl({
         <span className="toolrow__meta">
           <span className="toolrow__chips">
             {b.isStreaming && chips.length === 0 ? (
-              <StatusDot color="var(--accent)" size={5} pulsing />
+              // Figma "33 · Loaders" Caret — the live token cursor, so no
+              // 300ms mount delay (it IS the "still streaming" signal).
+              <LoaderCaret delay={0} />
             ) : (
               chips.map((c) => (
                 <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
@@ -318,7 +320,11 @@ function ToolRowImpl({
       </div>
       {open && sessionId && b.hasDetail && (
         <div className="step-detail-wrap">
-          {loading && <div className="step-detail__loading">loading…</div>}
+          {loading && (
+            <div className="step-detail__loading">
+              <LoaderCaret label="loading" />
+            </div>
+          )}
           {fetchError && <div className="step-detail__error">{fetchError}</div>}
           {detail && <StepDetailPanel detail={detail} sessionId={sessionId} onOpenShell={onOpenShell} />}
         </div>

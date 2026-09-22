@@ -15,8 +15,8 @@ html[data-hidden='1'] .status-dot--pulsing {
 
 /* Honour the OS-level "reduce motion" setting everywhere at once, rather than
    listing every keyframe/transition site individually — the one exception is
-   `.conv-hydrating-bar__thumb`, which already collapses to a static frame
-   under the same query in conversation.css instead of merely freezing mid-slide. */
+   the shared loaders (src/ui/loader.css), which out-specify this rule to swap
+   their motion for a 2.2s opacity breathe (Figma "33 · Loaders"). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

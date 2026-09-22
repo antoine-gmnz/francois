@@ -3,15 +3,14 @@
    provenance chip.
 
    No new colors, tokens or glyphs: everything below is a var() from
-   src/styles.css. Acid (--accent) appears exactly ONCE in this feature — the
-   in-flight phase row, which is the live thing — so the modal's title mark and
-   its hints stay neutral, and the only other acid surface (the primary Adopt
-   button, from the shared kit) is disabled, and therefore not acid, for as long
-   as an adoption is running.
+   src/styles.css. The current-step row draws the shared LoaderOrbit (violet,
+   src/ui/loader.css) instead of an acid dot — adoption runs in the cloud, so
+   this view only WATCHES it; done/pending/failed rows keep their static
+   StatusDot. The primary Adopt button (shared kit) is disabled, and therefore
+   not acid, for as long as an adoption is running.
 
-   Motion: none beyond the shared status-dot pulse. The list's loading state is
-   a set of static bars rather than a shimmer — a skeleton that moves reads as
-   activity, and the thing that is actually happening is the phase list. */
+   Motion: the list's loading state is the shared LoaderPane
+   (src/ui/Loader.tsx) rather than a skeleton. */
 
 /* ---------- modal ---------- */
 
@@ -158,32 +157,6 @@ input.cloud-modal__field {
   max-height: min(192px, 30vh);
   overflow-y: auto;
   min-height: 0;
-}
-
-.cloud-list--skeleton {
-  gap: var(--space-6);
-}
-
-.cloud-list__skeleton-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-6) var(--space-8);
-}
-
-.cloud-list__skeleton-bar {
-  height: 7px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-raised);
-}
-
-.cloud-list__skeleton-bar--title {
-  width: 45%;
-}
-
-.cloud-list__skeleton-bar--meta {
-  width: 70%;
-  background: var(--bg-hover);
 }
 
 /* FR-17: the calm state, and the COMMON one for anyone offline. One line, no

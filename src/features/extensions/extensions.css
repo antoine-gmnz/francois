@@ -149,34 +149,6 @@
   margin-top: var(--space-10);
 }
 
-/* -- loading skeletons ----------------------------------------------------- */
-
-.ext-skeleton {
-  background: var(--bg-hover);
-  border-radius: var(--radius-base);
-}
-.ext-skeleton-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-}
-.ext-skeleton-row {
-  height: 16px;
-}
-.ext-skeleton-row:nth-child(2) {
-  width: 88%;
-}
-.ext-skeleton-row:nth-child(3) {
-  width: 72%;
-}
-.ext-skeleton-row:nth-child(4) {
-  width: 80%;
-}
-.ext-stat.ext-skeleton {
-  height: 52px;
-  min-width: 120px;
-}
-
 /* -- key-value ------------------------------------------------------------- */
 
 .ext-kv {

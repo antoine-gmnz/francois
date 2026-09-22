@@ -10,7 +10,6 @@
 // makes is a pure function from accounts.ts.
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import type { AppError } from '../../../contract/common';
 import { accountAddCodex } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
@@ -83,8 +82,7 @@ export function CodexForm({ onCancel, onSaved }: Props) {
       </div>
 
       <div className="acc-endpoint-actions">
-        <Button variant="primary" onClick={save} disabled={codexSaveDisabled(label, saving)}>
-          {saving && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
+        <Button variant="primary" onClick={save} busy={saving} disabled={codexSaveDisabled(label, saving)}>
           Save
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>

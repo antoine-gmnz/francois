@@ -6,9 +6,11 @@
 // click-to-refresh affordance, mounted by AppRow instead of by App.
 //
 // Pure chrome: NOT a focusable pane (FR-3 — no tabIndex, no key handling, no
-// focus ring) and NO motion at all (FR-25 — no @keyframes, no animation, no
-// transition anywhere in this file; the webview may fall back to software
-// compositing, where permanent chrome that animates repaints forever).
+// focus ring). FR-25's original "no motion at all" is superseded for the one
+// case a background probe needs to say something: a `LoaderStitch` hairline
+// on `refreshing` (Figma "33 · Loaders") — it already pauses under
+// `html[data-hidden='1']` (loader.css), which is what FR-25 was guarding
+// against. Nothing else in this file animates.
 //
 // All logic lives in ./usage (covered by src/features/usage/usage.test.ts); this
 // file only maps the view model onto §8's tokens.
@@ -19,6 +21,7 @@ import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { accountDisplayLabel, findAccount, usageAccountId } from '../accounts/accounts';
 import { EMPTY_USAGE } from '../../lib/usageStore';
+import { LoaderCaret, LoaderStitch } from '../../ui/Loader';
 import './usage.css';
 import { requestUsageRefresh, seedAccountUsage, startUsageFeed, usageBarView, type MeterChipView } from './usage';
 
@@ -100,9 +103,11 @@ export default function UsageMeters() {
       // App.tsx's global keys only stand down while focus is in an input/terminal —
       // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
       onMouseDown={(e) => e.preventDefault()}
-      // loading WITH data: a plain opacity swap, nothing else (FR-25)
-      className={`usage-meters${view.dimmed ? ' usage-meters--dimmed' : ''}`}
+      className="usage-meters"
     >
+      {/* Loading WITH data: the old numbers stay put, undimmed — a hairline on
+          the container's own edge says a probe is running (FR-25). */}
+      {view.refreshing && <LoaderStitch edge="bottom" label="Refreshing usage" />}
       {/* split-session §8: while split the quota cluster says WHOSE quota it
           is showing — the meters silently follow the focused pane otherwise. */}
       {split && activeSession && <span className="usage-focused-label truncate">focused · {activeSession.name}</span>}
@@ -120,7 +125,9 @@ export default function UsageMeters() {
               ⚠
             </span>
           )}
-          {view.empty ? (
+          {view.loadingEmpty ? (
+            <LoaderCaret label="reading usage" />
+          ) : view.empty ? (
             <span className="usage-empty">usage —</span>
           ) : (
             view.chips.map((chip, i) => <MeterChip key={`${chip.label}:${i}`} chip={chip} />)

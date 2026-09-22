@@ -9,6 +9,7 @@ import type { GithubRepoInfo } from '../../../contract/github-page';
 import { githubFetch, githubListBranches, githubListPulls, githubOpenUrl, githubRepoInfo } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { EmptyPane } from '../../ui/EmptyPane';
+import { LoaderPane, LoaderStitch } from '../../ui/Loader';
 import { BranchesTab } from './BranchesTab';
 import { CommitsTab } from './CommitsTab';
 import { PullsTab } from './PullsTab';
@@ -104,7 +105,7 @@ export default function GitHubView(): JSX.Element {
   if (loading && !repo) {
     return (
       <div className="gh-root">
-        <EmptyPane className="gh-empty--muted">Loading…</EmptyPane>
+        <LoaderPane size={40} label="Reading repository…" />
       </div>
     );
   }
@@ -137,6 +138,7 @@ export default function GitHubView(): JSX.Element {
 
   return (
     <div className="gh-root">
+      {fetching && <LoaderStitch edge="top" label="Fetching" />}
       <RepoHeader
         repo={repo}
         tab={tab}

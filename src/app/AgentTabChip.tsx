@@ -8,22 +8,13 @@
 
 import { agentTabLabel, type AgentTabRef } from '../lib/agent-tab';
 import { Icon } from '../ui/Icon';
-import { StateIcon } from '../ui/StateIcon';
-import type { StateKind } from '../ui/state-kind';
+import { WatchedStateIcon } from '../ui/WatchedStateIcon';
 
 export interface AgentTabChipProps {
   tab: AgentTabRef;
   active: boolean;
   onOpen: () => void;
   onClose: () => void;
-}
-
-/** A workflow's status is a subset of an agent's. */
-function stateKind(status: AgentTabRef['status']): StateKind {
-  if (status === 'running') return 'running';
-  if (status === 'done') return 'done';
-  if (status === 'error') return 'failed';
-  return 'idle';
 }
 
 export default function AgentTabChip({ tab, active, onOpen, onClose }: AgentTabChipProps) {
@@ -37,7 +28,7 @@ export default function AgentTabChip({ tab, active, onOpen, onClose }: AgentTabC
     >
       {/* The glyph reports the AGENT's liveness, not the pane's focus, so it
           keeps its colour in an unfocused pane (split-by-4 FR-8). */}
-      <StateIcon kind={stateKind(tab.status)} size={11} />
+      <WatchedStateIcon status={tab.status} size={11} name={tab.name} />
       <span className="truncate">{agentTabLabel(tab.name)}</span>
       {/* design-refresh FR-5: the close renders on every chip, not just the
           hovered one — gating it on hover made the width jump under the cursor. */}

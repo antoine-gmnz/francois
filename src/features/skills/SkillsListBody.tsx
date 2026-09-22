@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { AppError, SkillInfo } from '../../../contract/common';
 import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
+import { LoaderPane } from '../../ui/Loader';
 import { ListRow } from '../../ui/ListRow';
 import { isSkillRunnable, skillInvocationLabel, skillRowKey } from './skills-loaded';
 
@@ -72,7 +73,9 @@ export function SkillsListBody({
           <span className="skills-error-icon">⚠</span>
           <span className="skills-error-msg">{listError?.message ?? 'failed to load skills'} · ⏎ retry</span>
         </div>
-      ) : status === 'loading' && skills.length === 0 ? null : visible.length === 0 && query ? (
+      ) : status === 'loading' && skills.length === 0 ? (
+        <LoaderPane size={16} label="Loading skills…" />
+      ) : visible.length === 0 && query ? (
         <div className="skills-empty">no skills match "{query}"</div>
       ) : skills.length === 0 ? (
         <div className="skills-empty">no skills or commands found</div>

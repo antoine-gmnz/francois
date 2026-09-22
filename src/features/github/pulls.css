@@ -644,11 +644,6 @@
   opacity: 0.45;
 }
 
-.pull-detail__loading,
-.commit-detail__loading {
-  font: var(--type-small);
-  color: var(--text-faint);
-}
 .pull-detail__error,
 .commit-detail__error {
   font: var(--type-small);

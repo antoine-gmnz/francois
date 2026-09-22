@@ -389,32 +389,35 @@ describe('usageBarView (FR-25/26, §8 states)', () => {
     expect(v.empty).toBe(true);
     expect(v.chips).toEqual([]);
     expect(v.error).toBeNull();
-    expect(v.dimmed).toBe(false);
+    expect(v.refreshing).toBe(false);
+    expect(v.loadingEmpty).toBe(false);
     expect(v.freshness).toBe('never');
   });
 
-  it('ready → chips, no dim, no error, timestamped freshness', () => {
+  it('ready → chips, not refreshing, no error, timestamped freshness', () => {
     const v = usageBarView(ready([meter('Current session', 42)], now - 120_000), now);
     expect(v.empty).toBe(false);
     expect(v.chips).toHaveLength(1);
-    expect(v.dimmed).toBe(false);
+    expect(v.refreshing).toBe(false);
     expect(v.error).toBeNull();
     expect(v.freshness).toBe('updated 2m ago');
   });
 
-  it('loading WITH data → the same chips, dimmed (FR-25 — no spinner, no placeholder)', () => {
+  it('loading WITH data → the same chips, refreshing (a stitch hairline, old numbers undimmed)', () => {
     const meters = [meter('Current session', 42)];
     const v = usageBarView({ status: 'loading', meters, fetchedAt: now - 30_000, error: null }, now);
-    expect(v.dimmed).toBe(true);
+    expect(v.refreshing).toBe(true);
+    expect(v.loadingEmpty).toBe(false);
     expect(v.chips).toHaveLength(1);
     expect(v.empty).toBe(false);
     expect(v.freshness).toBe('just now');
   });
 
-  it('loading with NO data → the placeholder, never dimmed into invisibility', () => {
+  it('loading with NO data → the placeholder slot, loadingEmpty (a caret reads "reading usage")', () => {
     const v = usageBarView({ status: 'loading', meters: [], fetchedAt: null, error: null }, now);
     expect(v.empty).toBe(true);
-    expect(v.dimmed).toBe(false);
+    expect(v.loadingEmpty).toBe(true);
+    expect(v.refreshing).toBe(false);
     expect(v.chips).toEqual([]);
   });
 
@@ -444,7 +447,7 @@ describe('usageBarView (FR-25/26, §8 states)', () => {
     );
     expect(v.error).toEqual({ compact: true, message: 'Timed out fetching usage.' });
     expect(v.chips).toHaveLength(1);
-    expect(v.dimmed).toBe(false);
+    expect(v.refreshing).toBe(false);
     expect(v.freshness).toBe('updated 10m ago');
   });
 

@@ -24,6 +24,7 @@ import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { useStore } from '../../lib/store';
+import { LoaderCaret } from '../../ui/Loader';
 import { Radio } from '../../ui/Radio';
 import { Tab, TabGroup } from '../../ui/Tab';
 import { effortLevels } from './run-chip';
@@ -188,7 +189,7 @@ export function RunSettingsPopover({
 
       <div className="run-settings__footer">
         <span className={error ? 'run-settings__footer-text run-settings__footer-text--error' : 'run-settings__footer-text'}>
-          {error ?? (pending ? 'Applying…' : 'Applies to this session only')}
+          {error ?? (pending ? <LoaderCaret label="applying" /> : 'Applies to this session only')}
         </span>
       </div>
     </div>

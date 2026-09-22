@@ -15,6 +15,7 @@ import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionSwitchModel } from '../../lib/api';
 import { CARD_KIND_COMMAND, cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
 import { useStore } from '../../lib/store';
+import { LoaderCaret } from '../../ui/Loader';
 import './commands.css';
 
 // The token mirror of contract/fleet-board.ts's STATUS_COLOR — same assignments,
@@ -62,17 +63,14 @@ export default function CommandBlock({ b: block, sessionId }: { b: CommandConver
 
   return (
     <div className="cmdcard">
-      {/* header: glyph + command name; loading adds the right-aligned pulse */}
+      {/* header: glyph + command name; loading adds the right-aligned caret */}
       <div className="cmdcard-header">
         <span className="cmdcard-header-glyph">▦</span>
         <span className="cmdcard-header-label">{label}</span>
         {!card && (
           <>
             <span className="cmdcard-header-spacer" />
-            <span className="cmdcard-loading">
-              <span className="cmdcard-loading-dot" />
-              <span className="cmdcard-loading-text">running…</span>
-            </span>
+            <LoaderCaret label="running" />
           </>
         )}
       </div>

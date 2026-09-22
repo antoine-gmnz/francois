@@ -8,6 +8,7 @@
 // already lean on `.btn`.
 
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { LoaderCaret } from './Loader';
 
 export type ButtonKind = 'primary' | 'secondary' | 'ghost' | 'attention' | 'danger';
 /** The pre-redesign name for `ButtonKind`. */
@@ -22,6 +23,9 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   shortcut?: string;
   className?: string;
   children?: ReactNode;
+  /** Mid-action: a Caret loader (Figma 176:17303) sits before the label, which
+   *  stays, and the button is disabled until the action settles. */
+  busy?: boolean;
 }
 
 export function buttonClassName(kind: ButtonKind, size: ButtonSize, disabled: boolean | undefined, className?: string): string {
@@ -40,10 +44,18 @@ export function Button({
   disabled,
   type = 'button',
   children,
+  busy = false,
   ...rest
 }: ButtonProps): JSX.Element {
   return (
-    <button type={type} className={buttonClassName(variant, size, disabled, className)} disabled={disabled} {...rest}>
+    <button
+      type={type}
+      className={buttonClassName(variant, size, disabled || busy, className)}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      {...rest}
+    >
+      {busy && <LoaderCaret />}
       {children}
       {shortcut && <span className="btn__shortcut">{shortcut}</span>}
     </button>

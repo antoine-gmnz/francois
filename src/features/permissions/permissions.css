@@ -348,6 +348,9 @@ button.pdone__summary:hover {
 }
 
 .pdone__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
   flex-shrink: 0;
   padding: 0;
   border: 0;

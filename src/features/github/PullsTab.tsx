@@ -8,6 +8,7 @@ import { useStore } from '../../lib/store';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { HintBar } from '../../ui/HintBar';
 import { Icon } from '../../ui/Icon';
+import { LoaderPane } from '../../ui/Loader';
 import { consumePendingPull } from './github-tab-state';
 import { sessionForBranch } from './linkage';
 import { PullDetail } from './PullDetail';
@@ -124,7 +125,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
         </div>
 
         <div className="pulls-rail__rows">
-          {loading && !pulls && <div className="pulls-rail__status">Loading…</div>}
+          {loading && !pulls && <LoaderPane size={16} label="Loading pull requests…" />}
           {error && (
             <div className="pulls-rail__status pulls-rail__status--error">
               {error}{' '}

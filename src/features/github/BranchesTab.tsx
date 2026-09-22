@@ -11,6 +11,7 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
+import { LoaderCaret, LoaderPane, LoaderStitch } from '../../ui/Loader';
 import { StateIcon } from '../../ui/StateIcon';
 import { openSession, startSessionOnBranch } from './actions';
 import {
@@ -112,7 +113,7 @@ export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: Bra
     await startSessionOnBranch(cwd, branch.name);
   }
 
-  if (loading && !branches) return <EmptyPane className="gh-empty--muted">Loading…</EmptyPane>;
+  if (loading && !branches) return <LoaderPane label="Loading branches…" />;
   if (error || !branches) {
     return (
       <EmptyPane>
@@ -126,6 +127,7 @@ export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: Bra
 
   return (
     <div className="branches-tab">
+      {loading && <LoaderStitch edge="top" label="Refreshing branches" />}
       <div className="branches-toolbar">
         <div className="branches-search">
           <Icon name="search" size={12} />
@@ -209,9 +211,10 @@ export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: Bra
                     type="button"
                     className="branches-create-btn"
                     disabled={creatingFor === b.name}
+                    aria-busy={creatingFor === b.name}
                     onClick={() => void createWorktree(b.name)}
                   >
-                    <Icon name="plus" size={11} />
+                    {creatingFor === b.name ? <LoaderCaret /> : <Icon name="plus" size={11} />}
                     {creatingFor === b.name ? 'Creating…' : 'Create'}
                   </button>
                 )}

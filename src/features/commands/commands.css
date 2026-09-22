@@ -49,24 +49,6 @@
 .cmdcard-header-spacer {
   flex: 1;
 }
-.cmdcard-loading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-.cmdcard-loading-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--warn);
-  /* design-refresh FR-16: smooth pulse, same as `.status-dot--pulsing`. */
-  animation: pulse 1.6s ease-in-out infinite;
-}
-.cmdcard-loading-text {
-  font-size: var(--font-size-9-5);
-  letter-spacing: 0.04em;
-  color: var(--warn);
-}
 .cmdcard-fetching {
   font-size: var(--font-size-12);
   color: var(--text-faint);

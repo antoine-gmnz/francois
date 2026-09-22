@@ -13,7 +13,6 @@
 // matching every other piece of this feature.
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import type { AppError } from '../../../contract/common';
 import type { Account, EndpointProbe } from '../../../contract/multi-account';
 import { accountAddEndpoint, accountTestEndpoint, accountUpdateEndpoint } from '../../lib/api';
@@ -241,12 +240,15 @@ export function EndpointForm({
       </div>
 
       <div className="acc-endpoint-actions">
-        <Button variant="ghost" onClick={runTest} disabled={busy || baseUrl.trim() === ''}>
-          {probe.kind === 'testing' && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
+        <Button
+          variant="ghost"
+          onClick={runTest}
+          busy={probe.kind === 'testing'}
+          disabled={busy || baseUrl.trim() === ''}
+        >
           Test
         </Button>
-        <Button variant="primary" onClick={save} disabled={endpointSaveDisabled(label, baseUrl, busy)}>
-          {saving && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
+        <Button variant="primary" onClick={save} busy={saving} disabled={endpointSaveDisabled(label, baseUrl, busy)}>
           Save
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>

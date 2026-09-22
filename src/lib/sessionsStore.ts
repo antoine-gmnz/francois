@@ -37,6 +37,14 @@ export interface SessionsSlice {
   // session cache (owned/written by sessions-sidebar, read by all)
   sessions: SessionMeta[];
   setSessions: (s: SessionMeta[]) => void;
+  /**
+   * loaders: flips once `session_list`'s first mount hydration settles
+   * (success or failure) — App reads this to tell "nothing loaded yet" apart
+   * from "loaded, zero sessions" so the SESSION empty state can show
+   * `LoaderPane` instead of the "select a session" prompt during boot.
+   */
+  sessionsHydrated: boolean;
+  setSessionsHydrated: (v: boolean) => void;
   upsertSession: (m: SessionMeta) => void;
   patchStatus: (id: SessionId, status: string) => void;
   /**
@@ -123,6 +131,8 @@ function settledSession(meta: SessionMeta): SessionMeta {
 export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> = (set, get) => ({
   sessions: [],
   setSessions: (sessions) => set({ sessions: sessions.map(settledSession) }),
+  sessionsHydrated: false,
+  setSessionsHydrated: (sessionsHydrated) => set({ sessionsHydrated }),
   upsertSession: (m) =>
     set((s) => {
       m = settledSession(m);

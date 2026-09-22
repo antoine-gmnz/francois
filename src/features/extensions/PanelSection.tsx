@@ -10,6 +10,7 @@ import { EXT_PAGE_SIZE, type ExtensionInfo, type PanelInfo, type TableRow } from
 import { extensionsPanel } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { EmptyPane } from '../../ui/EmptyPane';
+import { LoaderCaret } from '../../ui/Loader';
 import ExtSectionError from './ExtSectionError';
 import ExtTable from './ExtTable';
 import {
@@ -198,10 +199,10 @@ function Body({
     return <ExtSectionError error={state.error} minVersionLabel={extension.minVersionLabel} onRetry={onRetry} />;
   }
 
-  // FR-18: a skeleton in the section's OWN shape — a column of spinners reads
-  // as a broken app.
+  // FR-18: several sections can load at once, so a pane-owning Slabs would be
+  // wrong here — an inline caret naming the section instead.
   if (state.status === 'idle' || (state.status === 'loading' && isBlank(state, panel))) {
-    return <Skeleton primitive={panel.primitive} />;
+    return <LoaderCaret label={`loading ${sanitizeForDisplay(panel.label)}`} />;
   }
 
   // FR-49: a validated zero-row payload is a SUCCESS with its own calm copy.
@@ -254,23 +255,4 @@ function isBlank(state: PanelState, panel: PanelInfo): boolean {
   if (panel.primitive === 'table') return state.cursor.rows.length === 0;
   if (panel.primitive === 'key-value') return state.keyValue.length === 0;
   return state.tiles.length === 0;
-}
-
-function Skeleton({ primitive }: { primitive: PanelInfo['primitive'] }) {
-  if (primitive === 'stat-row') {
-    return (
-      <div className="ext-stats">
-        {[0, 1, 2].map((i) => (
-          <div className="ext-stat ext-skeleton" key={i} />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <div className="ext-skeleton-rows">
-      {[0, 1, 2, 3].map((i) => (
-        <div className="ext-skeleton ext-skeleton-row" key={i} />
-      ))}
-    </div>
-  );
 }

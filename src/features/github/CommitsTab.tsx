@@ -8,6 +8,7 @@ import { githubListBranches, githubListCommits } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
 import { Icon } from '../../ui/Icon';
+import { LoaderPane } from '../../ui/Loader';
 import { CommitDetail } from './CommitDetail';
 import { commitChecksIcon, commitOrigin, commitTimeLabel, filterCommits, groupCommitsByDay } from './commits';
 import { sessionForBranch } from './linkage';
@@ -157,7 +158,7 @@ export function CommitsTab({ cwd, repo, refreshKey }: CommitsTabProps): JSX.Elem
         </div>
 
         <div className="commits-rail__rows">
-          {loading && !commits && <div className="commits-rail__status">Loading…</div>}
+          {loading && !commits && <LoaderPane size={16} label="Loading commits…" />}
           {error && (
             <div className="commits-rail__status commits-rail__status--error">
               {error}{' '}

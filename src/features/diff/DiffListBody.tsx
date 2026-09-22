@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import type { AppError } from '../../../contract/common';
 import type { DiffFileSummary, DiffHunk, DiffLine, DiffSummary, FileDiff } from '../../../contract/diff-view';
 import { Icon } from '../../ui/Icon';
+import { LoaderPane, LoaderStitch } from '../../ui/Loader';
 import { DiffTree } from './DiffTree';
 import { computeIntralineSpans, type IntralineSpan } from './intraline';
 import { isReviewed } from './review-state';
@@ -31,6 +32,10 @@ export interface DiffListBodyProps {
   notRepo: boolean;
   summaryError: AppError | null;
   summary: DiffSummary | null;
+  /** loaders: true while `diff_get_summary` is in flight — the first hydrate
+   *  (summary still null) owns the pane with `LoaderPane`; a later refresh
+   *  (summary already shown) gets a `LoaderStitch` instead. */
+  summaryLoading: boolean;
   fileDiff: FileDiff | null;
   fileDiffError: AppError | null;
   fileDiffLoading: boolean;
@@ -55,6 +60,7 @@ export function DiffListBody({
   notRepo,
   summaryError,
   summary,
+  summaryLoading,
   fileDiff,
   fileDiffError,
   fileDiffLoading,
@@ -93,6 +99,10 @@ export function DiffListBody({
 
       {/* diff pane — the selected file's header (Figma 135:5238) over the body */}
       <div className="diff-pane">
+        {/* loaders: a refresh while the list is already on screen (stage,
+            commit, an external diff.changed) — a hairline over content that
+            stays usable, never the full-pane loader below. */}
+        {summaryLoading && summary !== null && <LoaderStitch edge="top" label="Refreshing changes" />}
         {selectedFile && !notRepo && !summaryError && (
           <FileHeader
             file={selectedFile}
@@ -105,7 +115,11 @@ export function DiffListBody({
             <EmptyState text="Not a git repository — initialize it with `git init` in the shell." />
           ) : summaryError ? (
             <EmptyState text={summaryError.message} error />
-          ) : summary && files.length === 0 ? (
+          ) : summary === null ? (
+            // loaders: the first hydrate — nothing to show yet, so the pane
+            // owns the area (Figma "33 · Loaders" LoaderPane).
+            <LoaderPane label="Reading changes…" />
+          ) : files.length === 0 ? (
             <EmptyState text="Working tree clean" />
           ) : (
             <DiffBody loading={fileDiffLoading} error={fileDiffError} diff={fileDiff} scrollRef={bodyScrollRef} />
@@ -216,7 +230,9 @@ function DiffBody({
   }, [diff, scrollRef]);
 
   if (error) return <Placeholder text={error.message} error />;
-  if (loading && !diff) return <Placeholder text="Loading…" />;
+  // loaders: switching to a file whose diff is not cached yet — nothing to
+  // show in the body until it lands.
+  if (loading && !diff) return <LoaderPane label="Reading changes…" />;
   if (!diff) return null;
   if (diff.binary) return <Placeholder text="Binary file" />;
   if (rows.length === 0) return <Placeholder text="No content changes" />;

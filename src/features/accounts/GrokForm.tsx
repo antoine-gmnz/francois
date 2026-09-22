@@ -6,7 +6,6 @@
 // and it happens from the row afterwards (FR-21).
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import type { AppError } from '../../../contract/common';
 import { accountAddGrok } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
@@ -79,8 +78,7 @@ export function GrokForm({ onCancel, onSaved }: Props) {
       </div>
 
       <div className="acc-endpoint-actions">
-        <Button variant="primary" onClick={save} disabled={grokSaveDisabled(label, saving)}>
-          {saving && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
+        <Button variant="primary" onClick={save} busy={saving} disabled={grokSaveDisabled(label, saving)}>
           Save
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>

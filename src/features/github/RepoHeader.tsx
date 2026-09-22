@@ -73,7 +73,7 @@ export function RepoHeader({ repo, tab, onSelectTab, pullCount, branchCount, fet
         </Tab>
       </TabGroup>
 
-      <IconButton title="Fetch" onClick={onFetch} className={fetching ? 'gh-header__fetch gh-header__fetch--spinning' : 'gh-header__fetch'}>
+      <IconButton title="Fetch" onClick={onFetch} disabled={fetching} aria-busy={fetching} className="gh-header__fetch">
         <Icon name="refresh" size={15} />
       </IconButton>
 

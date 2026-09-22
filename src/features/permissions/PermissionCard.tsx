@@ -21,6 +21,7 @@ import { permissionActions, writesRule } from '../../lib/permission-actions';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
+import { LoaderCaret } from '../../ui/Loader';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
 import { tabClassName } from '../../ui/Tab';
@@ -60,6 +61,10 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
   // FR-6: local by default — a trust decision made in one repo must not leak.
   const [tier, setTier] = useState<PermissionTier>('local');
   const [inFlight, setInFlight] = useState(false);
+  // loaders: WHICH choice is in flight, not just whether one is — so the busy
+  // caret (Figma "33 · Loaders") lands on the clicked button alone; the other
+  // choices are still disabled via `interactive` below.
+  const [pendingDecision, setPendingDecision] = useState<PermissionDecision | null>(null);
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState<PermissionDecision | null>(null);
 
@@ -95,6 +100,7 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
         !requestReplyAvailable(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId)
       )
         return;
+      setPendingDecision(decision);
       void submitDecision({
         decision,
         tier,
@@ -102,7 +108,10 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
           submitRequestReply(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId, () =>
             permissionsDecide(sessionId, block.blockId, d, t),
           ),
-        setInFlight,
+        setInFlight: (v) => {
+          setInFlight(v);
+          if (!v) setPendingDecision(null); // FR-21 failure path — the card stays interactive
+        },
         setError,
         isResolved: () => resolvedRef.current,
         schedule,
@@ -175,6 +184,7 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
             shortcut={String(i + 1)}
             title={a.label}
             disabled={!interactive}
+            busy={inFlight && pendingDecision === a.decision}
             onClick={() => decide(a.decision)}
             onMouseEnter={interactive ? () => setHovered(a.decision) : undefined}
             onMouseLeave={interactive ? () => setHovered(null) : undefined}
@@ -277,7 +287,14 @@ function PermissionOutcome({ block, sessionId }: { block: PermissionConversation
           </span>
         )}
         {rule !== undefined && undo !== 'done' && (
-          <button type="button" className="pdone__action pdone__action--strong" disabled={undo === 'busy'} onClick={() => void onUndo()}>
+          <button
+            type="button"
+            className="pdone__action pdone__action--strong"
+            disabled={undo === 'busy'}
+            aria-busy={undo === 'busy' || undefined}
+            onClick={() => void onUndo()}
+          >
+            {undo === 'busy' && <LoaderCaret />}
             Undo
           </button>
         )}

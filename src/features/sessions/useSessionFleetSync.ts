@@ -186,6 +186,9 @@ export function useSessionFleetSync(): SessionFleetSync {
   const applyHydration = (data: SessionMeta[]) => {
     setHydrationError(null);
     setSessions(data);
+    // loaders: the first settle (success OR error, see the `else` branches
+    // below) ends the "nothing loaded yet" phase App's boot loader watches.
+    useStore.getState().setSessionsHydrated(true);
     // split-by-4 FR-24: a persisted pane whose session no longer exists is
     // dropped and the record rewritten clean; if that empties the list the app
     // opens single-pane. An EMPTY pane is not stale — it is a layout the user
@@ -364,7 +367,10 @@ export function useSessionFleetSync(): SessionFleetSync {
     void sessionList().then((res) => {
       if (cancelled) return;
       if (res.ok) applyHydration(reconcile(res.data));
-      else setHydrationError(res.error);
+      else {
+        setHydrationError(res.error);
+        useStore.getState().setSessionsHydrated(true); // loaders: settled (failed) — stop waiting
+      }
     });
 
     return () => {

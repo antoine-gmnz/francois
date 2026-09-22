@@ -177,8 +177,8 @@ export default function McpServersPage({ projectName, sessionId, sessionName, fe
               title={approvalSummary(approvals)}
               description={decideError?.message ?? 'Claude Code asks before it starts these. They take effect on the session’s next turn.'}
             >
-              <Button variant="attention" disabled={deciding} onClick={() => void decide(approveAllDecision(approvals))}>
-                {deciding ? 'Saving…' : 'Approve all'}
+              <Button variant="attention" busy={deciding} onClick={() => void decide(approveAllDecision(approvals))}>
+                Approve all
               </Button>
             </SettingsCard>
           )}

@@ -42,8 +42,12 @@ export interface MeterChipView {
 /** What the bar shows for one snapshot. Pure — `now` is passed in, never read here. */
 export interface UsageBarView {
   chips: MeterChipView[];
-  /** Loading WITH data → the meter region dims to 0.45 (FR-25). No spinner, no motion. */
-  dimmed: boolean;
+  /** Loading WITH data → the old numbers stay put; the container gets a
+   *  `LoaderStitch` hairline instead of dimming (Figma "33 · Loaders"). */
+  refreshing: boolean;
+  /** The very first probe, before any meter has ever arrived → a `LoaderCaret`
+   *  reading "reading usage" takes the meters' place. */
+  loadingEmpty: boolean;
   /** No meters and no error → the `usage —` placeholder (§8). */
   empty: boolean;
   /** status === 'error'; `compact` when stale meters survive and must stay readable (FR-26). */
@@ -188,7 +192,8 @@ export function usageBarView(snapshot: UsageSnapshot, now: number, accountLabel?
   const parts = [snapshot.fetchedAt === null ? null : freshness, reset].filter(Boolean);
   return {
     chips,
-    dimmed: snapshot.status === 'loading' && chips.length > 0,
+    refreshing: snapshot.status === 'loading' && chips.length > 0,
+    loadingEmpty: snapshot.status === 'loading' && chips.length === 0,
     empty: !isError && chips.length === 0,
     error: isError ? { compact: chips.length > 0, message: snapshot.error?.message ?? 'usage unavailable' } : null,
     freshness,

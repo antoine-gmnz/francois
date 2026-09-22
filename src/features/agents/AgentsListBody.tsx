@@ -21,6 +21,7 @@ import {
   stepToolPrefix,
 } from './agent-trail';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
+import { LoaderOrbit, LoaderPane } from '../../ui/Loader';
 import { StatusDot } from '../../ui/StatusDot';
 
 const statusColor: Record<string, string> = {
@@ -68,7 +69,9 @@ export function AgentsListBody({
         <CapabilityNotice reason={capability.reason ?? ''} />
       ) : listError ? (
         <div className="agents-error-text">{listError.message}</div>
-      ) : loading ? null : list.length === 0 ? (
+      ) : loading ? (
+        <LoaderPane size={16} label="Loading agents…" />
+      ) : list.length === 0 ? (
         <div className="agents-empty">
           no agents yet · press <span className="agents-empty-key">a</span>
         </div>
@@ -128,7 +131,11 @@ function Card({
   return (
     <div onClick={onClick} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)} className={cardClass}>
       <div className="agent-inline-row">
-        <StatusDot color={sc} pulsing={agent.status === 'running'} />
+        {agent.status === 'running' ? (
+          <LoaderOrbit size={14} title={agent.name} />
+        ) : (
+          <StatusDot color={sc} />
+        )}
         <span className="agent-card__name truncate">{agent.name}</span>
         {showAsyncMarker(agent) && <span className="agent-async-badge agent-async-badge--shrink">{ASYNC_MARKER}</span>}
         {showKill ? (
