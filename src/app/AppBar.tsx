@@ -1,8 +1,15 @@
 // The app bar — redesign "Graphite & Signal", Figma "App bar" (126:158): the one
-// app-level strip. Left to right: the mark + wordmark, the Overview / Sessions
-// nav, the command search (it IS the palette's trigger), the pane-layout segments
-// (Sessions only), the notification-mute chip, the plan meters, the update pill,
-// the theme toggle, settings, and the account avatar.
+// app-level strip, laid out as a 3-column grid so the command search sits
+// genuinely centered regardless of what either side weighs (the grid is this
+// turn's stand-in for the mock's absolute centering — same result, no overlap
+// math). Left to right:
+//  · LEFT   — the mark + wordmark, then the Overview / Sessions nav;
+//  · CENTER — the command search (it IS the palette's trigger);
+//  · RIGHT  — the notification-mute chip, the plan-usage icon (opens a popover
+//             with the meters — too many Claude Code accounts made them too
+//             wide to show inline), the update control, a divider, the
+//             pane-layout segments (Sessions view only) + a second divider,
+//             the theme/settings tools, and the account avatar.
 //
 // Everything here is app-scoped; everything session-scoped lives in the session
 // header (SessionHeader.tsx) above the transcript. Nothing in this bar animates
@@ -74,43 +81,43 @@ export default function AppBar({ appVersion }: AppBarProps) {
 
   return (
     <header className="app-bar">
-      <div className="app-bar__brand">
-        <Logo size={20} />
-        <span className="app-bar__wordmark">Francois</span>
+      <div className="app-bar__left">
+        <div className="app-bar__brand">
+          <Logo size={20} />
+          <span className="app-bar__wordmark">Francois</span>
+        </div>
+
+        <nav className="app-bar__nav" aria-label="views">
+          <button
+            type="button"
+            className={nav === 'overview' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
+            title="cross-project dashboard · o"
+            onClick={() => go('overview')}
+          >
+            Overview
+            {waiting.length > 0 && (
+              <span
+                className="app-bar__badge"
+                title={`${waiting.length} waiting on you — jump to the longest-waiting`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  jumpToOldestWaiting();
+                }}
+              >
+                {waiting.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            className={nav === 'sessions' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
+            title="the selected session · 2"
+            onClick={() => go('session')}
+          >
+            Sessions
+          </button>
+        </nav>
       </div>
-
-      <nav className="app-bar__nav" aria-label="views">
-        <button
-          type="button"
-          className={nav === 'overview' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
-          title="cross-project dashboard · o"
-          onClick={() => go('overview')}
-        >
-          Overview
-          {waiting.length > 0 && (
-            <span
-              className="app-bar__badge"
-              title={`${waiting.length} waiting on you — jump to the longest-waiting`}
-              onClick={(e) => {
-                e.stopPropagation();
-                jumpToOldestWaiting();
-              }}
-            >
-              {waiting.length}
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          className={nav === 'sessions' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
-          title="the selected session · 2"
-          onClick={() => go('session')}
-        >
-          Sessions
-        </button>
-      </nav>
-
-      <span className="app-bar__spacer" />
 
       <button type="button" className="app-bar__search" onClick={() => togglePalette()} title="Command palette · ⌘K">
         <Icon name="search" size={14} />
@@ -118,24 +125,31 @@ export default function AppBar({ appVersion }: AppBarProps) {
         <Kbd keys="⌘K" />
       </button>
 
-      <span className="app-bar__spacer" />
+      <div className="app-bar__right">
+        <NotifyMutedChip />
+        <UsageMeters />
+        <UpdateChip appVersion={appVersion} />
 
-      {nav === 'sessions' && (layoutDisplay(tier) === 'segments' ? <LayoutToggle divider={false} /> : <LayoutToggle variant="menu" divider={false} />)}
+        <span className="app-bar__divider" />
 
-      <NotifyMutedChip />
-      <UsageMeters />
-      <UpdateChip appVersion={appVersion} />
+        {nav === 'sessions' && (
+          <>
+            {layoutDisplay(tier) === 'segments' ? <LayoutToggle divider={false} /> : <LayoutToggle variant="menu" divider={false} />}
+            <span className="app-bar__divider" />
+          </>
+        )}
 
-      <div className="app-bar__tools">
-        <IconButton title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}>
-          <Icon name={theme === 'dark' ? 'moon' : 'sun'} size={16} />
-        </IconButton>
-        <IconButton title="Settings" on={settingsOpen} onClick={toggleSettings}>
-          <Icon name="cog" size={16} />
-        </IconButton>
+        <div className="app-bar__tools">
+          <IconButton title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}>
+            <Icon name={theme === 'dark' ? 'moon' : 'sun'} size={16} />
+          </IconButton>
+          <IconButton title="Settings" on={settingsOpen} onClick={toggleSettings}>
+            <Icon name="cog" size={16} />
+          </IconButton>
+        </div>
+
+        <AccountAvatar />
       </div>
-
-      <AccountAvatar />
     </header>
   );
 }

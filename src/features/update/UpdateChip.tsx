@@ -8,6 +8,7 @@
 
 import { useStore } from '../../lib/store';
 import { Icon } from '../../ui/Icon';
+import { IconButton } from '../../ui/IconButton';
 import { updateChipView } from './update';
 import './update.css';
 
@@ -19,12 +20,13 @@ export function UpdateChip({ appVersion }: { appVersion: string }): JSX.Element 
   // Idle renders exactly as it did before this feature existed.
   if (!view.available) return <span className="upd-version">{view.label}</span>;
 
-  // redesign App bar "Update": a success-tinted pill, arrow-up glyph + the new
-  // version. The glyph replaces the label's own `↑ ` prefix.
+  // redesign App bar "Update": a 28px square icon button, arrow-up glyph in
+  // --state-success plus a top-right success dot — the tooltip carries the
+  // version text the old pill's label used to show.
   return (
-    <button type="button" className="upd-chip" title={view.title} onClick={() => setUpdateModalOpen(true)}>
-      <Icon name="arrow-up" size={12} />
-      {view.label.replace(/^↑\s*/, '')}
-    </button>
+    <IconButton title={view.title} className="upd-icon-btn" onClick={() => setUpdateModalOpen(true)}>
+      <Icon name="arrow-up" size={14} />
+      <span className="upd-dot" />
+    </IconButton>
   );
 }
