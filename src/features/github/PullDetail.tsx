@@ -10,7 +10,9 @@ import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
 import { openOnGithub, openSession, startSessionOnBranch } from './actions';
 import { sessionForBranch } from './linkage';
+import { MergeModal } from './MergeModal';
 import {
+  canMergeInApp,
   canUpdateBranch,
   checkRollupHeadline,
   mergeButtonLabel,
@@ -27,15 +29,18 @@ import './pulls.css';
 export interface PullDetailProps {
   cwd: string;
   number: number | null;
+  /** a merge landed — the list re-fetches so the row's state follows. */
+  onChanged?: () => void;
 }
 
-export function PullDetail({ cwd, number }: PullDetailProps): JSX.Element {
+export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Element {
   const sessions = useStore((s) => s.sessions);
   const setMainTab = useStore((s) => s.setMainTab);
   const [detail, setDetail] = useState<PullDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [merging, setMerging] = useState(false);
   const beginRequest = useLatestRequest();
 
   const load = async (): Promise<void> => {
@@ -283,7 +288,7 @@ export function PullDetail({ cwd, number }: PullDetailProps): JSX.Element {
             <Button
               variant="secondary"
               className={detail.mergeable !== 'clean' ? 'pull-action--faint' : undefined}
-              onClick={() => void openOnGithub(cwd, detail.url)}
+              onClick={() => (canMergeInApp(detail) ? setMerging(true) : void openOnGithub(cwd, detail.url))}
             >
               {mergeButtonLabel(detail.mergeable)}
             </Button>
@@ -299,10 +304,23 @@ export function PullDetail({ cwd, number }: PullDetailProps): JSX.Element {
             >
               Open a session on this branch
             </Button>
-            <p className="pull-side-card__foot">Merging is done on GitHub. François only opens, updates and fixes.</p>
+            <p className="pull-side-card__foot">
+              A clean PR merges here, after a confirm. Anything blocked opens on GitHub.
+            </p>
           </div>
         </div>
       </div>
+      {merging && (
+        <MergeModal
+          cwd={cwd}
+          pull={detail}
+          onClose={() => setMerging(false)}
+          onMerged={() => {
+            void load();
+            onChanged?.();
+          }}
+        />
+      )}
     </div>
   );
 }

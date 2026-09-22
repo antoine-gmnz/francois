@@ -12,7 +12,8 @@ design: Figma YEY4c6AiWq1bKYuaju9qdV — 29 `160:15836` (PRs), 30 `161:15989` (C
 
 A third top-level destination beside **Overview** and **Sessions**: one repo's pull requests,
 commits and branches/worktrees, each tied back to the session that produced it. Francois reads,
-opens, updates and fixes — it never merges, rewrites history, force-pushes, or deletes remote refs.
+opens, updates, fixes and — behind a confirm — merges a clean PR (FR-5a); it never rewrites history,
+force-pushes, or deletes a remote ref the user did not ask it to.
 
 ## 2. Scope
 
@@ -53,10 +54,21 @@ opens, updates and fixes — it never merges, rewrites history, force-pushes, or
   comment with avatar initials, author, `path:line`, relative time, body; ghost **Reply** → comment url).
   Right column 284px: **Where this came from** (linked session card → selects that session; hidden when
   none), **Pull request** key/values (Reviewers, Labels, Milestone, Head sha, Mergeable — `blocked`
-  danger), **Actions**: Merge (always opens the PR on GitHub; label `Merge · blocked by checks` + 45%
-  opacity when mergeable ≠ clean), **Update branch from main** (`github_update_pull_branch`, disabled
+  danger), **Actions**: Merge (an open PR with mergeable = clean opens the in-app confirm, FR-5a; anything
+  else opens the PR on GitHub; label `Merge · blocked by checks` + 45% opacity when mergeable ≠ clean), **Update branch from main** (`github_update_pull_branch`, disabled
   unless mergeable = behind|blocked), **Open a session on this branch** (spawns a session attached to the
   branch's worktree, or creates a worktree session on the branch), footnote.
+- FR-5a **Merge in-app** (`francois:github:mergePull` → `github_merge_pull`, `gh pr merge <n> --<method>`).
+  A confirm modal names `#n head → base` and the title, offers the repo's allowed methods as radios in
+  the order squash · merge · rebase (GitHub's labels; the first allowed one preselected; all three when
+  the repo settings can't be read), and an unchecked **Delete `<head>` on GitHub** box (hidden for a
+  fork's head). The confirm button reads the chosen method. A refusal (branch protection, required
+  reviews, a moved head) shows gh's error inline and leaves the modal open. On success the detail and
+  the list re-fetch; the modal closes, or stays to report the branch delete. The core never passes
+  `--delete-branch` (it would delete the local branch and switch the checkout); it deletes only the
+  remote head through the refs API, and refuses for a fork's head, the base, or the default branch. A
+  failed delete is reported beside the merge (`MergeOutcome.branchDeleteError`), never as a failed
+  merge. Local branches and worktrees stay for the Branches tab's prune.
 - FR-6 **Fix in a new session** spawns a session on the PR head branch whose first message names the
   failing checks and asks to fix them.
 
@@ -97,5 +109,6 @@ opens, updates and fixes — it never merges, rewrites history, force-pushes, or
 - FR-13 Demo mode (`VITE_FRANCOIS_DEMO=1`) serves the orbit fixtures from the frames.
 
 ## 4. Non-goals
-Merging, closing, commenting, reverting, force-pushing, remote branch deletion, the Checks tab body,
+Merging a PR that isn't open + clean (GitHub owns admin overrides), closing, commenting, reverting,
+force-pushing, remote branch deletion outside FR-5a, the Checks tab body,
 Cohorte run chips.

@@ -664,3 +664,53 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ── Merge confirm (FR-5a) ── */
+.merge-modal__target {
+  margin: 0;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.merge-modal__ref {
+  color: var(--text-primary);
+}
+.merge-modal__arrow {
+  color: var(--text-disabled);
+}
+.merge-modal__title {
+  margin: var(--space-4) 0 var(--space-12);
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.merge-modal__methods {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-bottom: var(--space-12);
+}
+.merge-modal__method,
+.merge-modal__delete {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font: var(--type-small);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.merge-modal__error {
+  margin: var(--space-12) 0 0;
+  font: var(--type-small);
+  color: var(--state-danger-text);
+  white-space: pre-wrap;
+}
+.merge-modal__note {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--state-danger-text);
+}
+.merge-modal__note--ok {
+  color: var(--state-success-text);
+}

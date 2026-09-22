@@ -187,6 +187,16 @@ pub struct PullDetail {
     pub milestone: Option<String>,
     pub head_sha: String,
     pub mergeable: String, // 'clean' | 'blocked' | 'conflicting' | 'behind' | 'unknown'
+    pub merge_methods: Vec<String>, // 'squash' | 'merge' | 'rebase', preference order
+    pub cross_repository: bool,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOutcome {
+    pub branch_deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_delete_error: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]

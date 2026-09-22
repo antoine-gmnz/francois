@@ -1,4 +1,5 @@
-//! `github_list_pulls` / `github_get_pull` / `github_update_pull_branch` — PR
+//! `github_list_pulls` / `github_get_pull` / `github_update_pull_branch` /
+//! `github_merge_pull` — PR
 //! data from `gh pr list`/`gh pr view`, mapped into the contract's
 //! `PullSummary`/`PullDetail`. JSON -> contract mapping stays in small pure
 //! functions, unit-tested against captured sample JSON.
@@ -6,16 +7,17 @@
 use super::gh::{gh_failed, gh_json, gh_routed, gh_status_cached, gh_unavailable};
 use super::{
     parse_rfc3339_ms, remote_owner_name_host, resolve_scope, CheckRollup, CheckRun, CheckState,
-    GhStatus, PullDetail, PullFile, PullState, PullSummary, ReviewComment, ReviewDecision,
+    GhStatus, MergeOutcome, PullDetail, PullFile, PullState, PullSummary, ReviewComment,
+    ReviewDecision,
 };
 use crate::diff::GitHost;
-use crate::ipc::AppError;
+use crate::ipc::{AppError, ErrorCode};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 const LIST_FIELDS: &str = "number,title,headRefName,baseRefName,state,isDraft,author,createdAt,updatedAt,mergedAt,mergedBy,statusCheckRollup,reviewDecision,latestReviews,url";
-const VIEW_FIELDS: &str = "number,title,headRefName,baseRefName,state,isDraft,author,createdAt,updatedAt,mergedAt,mergedBy,statusCheckRollup,reviewDecision,latestReviews,url,additions,deletions,files,reviewRequests,labels,milestone,headRefOid,mergeable,mergeStateStatus";
+const VIEW_FIELDS: &str = "number,title,headRefName,baseRefName,state,isDraft,author,createdAt,updatedAt,mergedAt,mergedBy,statusCheckRollup,reviewDecision,latestReviews,url,additions,deletions,files,reviewRequests,labels,milestone,headRefOid,mergeable,mergeStateStatus,isCrossRepository";
 
 // ---------- gh JSON shapes ----------
 
@@ -113,6 +115,8 @@ struct GhPr {
     mergeable: Option<String>,
     #[serde(rename = "mergeStateStatus")]
     merge_state_status: Option<String>,
+    #[serde(rename = "isCrossRepository", default)]
+    is_cross_repository: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -367,6 +371,8 @@ fn map_pull_detail(
             .map(|s| s.chars().take(7).collect())
             .unwrap_or_default(),
         mergeable: map_mergeable(pr.mergeable.as_deref(), pr.merge_state_status.as_deref()),
+        merge_methods: all_merge_methods(),
+        cross_repository: pr.is_cross_repository,
         summary,
     }
 }
@@ -453,7 +459,11 @@ pub(crate) fn do_get_pull(cwd: &str, number: u64) -> Result<PullDetail, AppError
         None => Vec::new(),
     };
 
-    Ok(map_pull_detail(&pr, viewer.as_deref(), inline_comments))
+    let mut detail = map_pull_detail(&pr, viewer.as_deref(), inline_comments);
+    detail.merge_methods = repo_merge_settings(&host, &root)
+        .map(|r| allowed_merge_methods(&r))
+        .unwrap_or_else(all_merge_methods);
+    Ok(detail)
 }
 
 pub(crate) fn do_update_pull_branch(cwd: &str, number: u64) -> Result<(), AppError> {
@@ -466,9 +476,277 @@ pub(crate) fn do_update_pull_branch(cwd: &str, number: u64) -> Result<(), AppErr
     Ok(())
 }
 
+// ---------- merge ----------
+
+const MERGE_METHODS: [&str; 3] = ["squash", "merge", "rebase"];
+
+fn all_merge_methods() -> Vec<String> {
+    MERGE_METHODS.iter().map(|m| m.to_string()).collect()
+}
+
+#[derive(Deserialize, Clone, Debug, Default)]
+struct GhRepoMergeSettings {
+    #[serde(rename = "squashMergeAllowed", default)]
+    squash: bool,
+    #[serde(rename = "mergeCommitAllowed", default)]
+    merge: bool,
+    #[serde(rename = "rebaseMergeAllowed", default)]
+    rebase: bool,
+    #[serde(rename = "defaultBranchRef")]
+    default_branch_ref: Option<GhRef>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+struct GhRef {
+    name: String,
+}
+
+fn repo_merge_settings(host: &GitHost, root: &str) -> Option<GhRepoMergeSettings> {
+    gh_json(
+        host,
+        root,
+        &[
+            "repo",
+            "view",
+            "--json",
+            "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,defaultBranchRef",
+        ],
+    )
+    .ok()
+}
+
+/// The repo's allowed methods in preference order. A repo reporting none (a
+/// token without admin read can see all three as false) falls back to all
+/// three — GitHub still refuses a disallowed one, and says why.
+fn allowed_merge_methods(r: &GhRepoMergeSettings) -> Vec<String> {
+    let allowed: Vec<String> = [
+        (r.squash, "squash"),
+        (r.merge, "merge"),
+        (r.rebase, "rebase"),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, m)| m.to_string())
+    .collect();
+    if allowed.is_empty() {
+        all_merge_methods()
+    } else {
+        allowed
+    }
+}
+
+fn merge_args(number: u64, method: &str) -> Result<Vec<String>, AppError> {
+    if !MERGE_METHODS.contains(&method) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            format!("unknown merge method '{method}'"),
+        ));
+    }
+    Ok(vec![
+        "pr".into(),
+        "merge".into(),
+        number.to_string(),
+        format!("--{method}"),
+    ])
+}
+
+/// Deleting the head is only safe for a same-repo branch that is neither the
+/// PR's base nor the repo's default branch.
+fn can_delete_head(head: &str, base: &str, default: Option<&str>, cross_repo: bool) -> bool {
+    !cross_repo && !head.is_empty() && head != base && Some(head) != default
+}
+
+/// Percent-encodes a branch name for a `git/refs/heads/<branch>` API path;
+/// `/` stays literal, as the refs API expects.
+fn encode_ref_path(branch: &str) -> String {
+    let mut out = String::with_capacity(branch.len());
+    for b in branch.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[derive(Deserialize, Clone, Debug)]
+struct GhMergeTarget {
+    #[serde(rename = "headRefName")]
+    head_ref_name: String,
+    #[serde(rename = "baseRefName")]
+    base_ref_name: String,
+    #[serde(rename = "isCrossRepository", default)]
+    is_cross_repository: bool,
+}
+
+fn kept(reason: String) -> MergeOutcome {
+    MergeOutcome {
+        branch_deleted: false,
+        branch_delete_error: Some(reason),
+    }
+}
+
+/// `gh pr merge` without `--delete-branch`: that flag also deletes the local
+/// branch and switches the checkout, which would reach into the user's
+/// worktrees. The remote head is deleted through the refs API instead, and a
+/// failed delete never reports the (already landed) merge as failed.
+pub(crate) fn do_merge_pull(
+    cwd: &str,
+    number: u64,
+    method: &str,
+    delete_branch: bool,
+) -> Result<MergeOutcome, AppError> {
+    let args = merge_args(number, method)?;
+    let (host, root, remote_host) = resolve_scope(cwd)?;
+    require_gh(&host, &root, remote_host.as_deref())?;
+    let target: GhMergeTarget = gh_json(
+        &host,
+        &root,
+        &[
+            "pr",
+            "view",
+            &number.to_string(),
+            "--json",
+            "headRefName,baseRefName,isCrossRepository",
+        ],
+    )?;
+
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = gh_routed(&host, &root, &arg_refs);
+    if out.code != 0 {
+        return Err(gh_failed(&out));
+    }
+
+    if !delete_branch {
+        return Ok(MergeOutcome {
+            branch_deleted: false,
+            branch_delete_error: None,
+        });
+    }
+    let default = repo_merge_settings(&host, &root)
+        .and_then(|r| r.default_branch_ref)
+        .map(|r| r.name);
+    if !can_delete_head(
+        &target.head_ref_name,
+        &target.base_ref_name,
+        default.as_deref(),
+        target.is_cross_repository,
+    ) {
+        return Ok(kept(format!(
+            "{} was kept: it is a fork's branch, the base, or the default branch",
+            target.head_ref_name
+        )));
+    }
+    let Some((owner, name, _)) = remote_owner_name_host(&host, &root) else {
+        return Ok(kept("could not resolve the GitHub remote".into()));
+    };
+    let path = format!(
+        "repos/{owner}/{name}/git/refs/heads/{}",
+        encode_ref_path(&target.head_ref_name)
+    );
+    let del = gh_routed(&host, &root, &["api", "-X", "DELETE", &path]);
+    if del.code != 0 {
+        return Ok(kept(gh_failed(&del).message));
+    }
+    Ok(MergeOutcome {
+        branch_deleted: true,
+        branch_delete_error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_args_map_each_method_to_its_flag() {
+        assert_eq!(
+            merge_args(7, "squash").unwrap(),
+            ["pr", "merge", "7", "--squash"]
+        );
+        assert_eq!(
+            merge_args(7, "merge").unwrap(),
+            ["pr", "merge", "7", "--merge"]
+        );
+        assert_eq!(
+            merge_args(7, "rebase").unwrap(),
+            ["pr", "merge", "7", "--rebase"]
+        );
+    }
+
+    #[test]
+    fn merge_args_reject_an_unknown_method_and_never_pass_delete_branch() {
+        assert!(merge_args(7, "admin").is_err());
+        assert!(merge_args(7, "delete-branch").is_err());
+        assert!(!merge_args(7, "squash")
+            .unwrap()
+            .iter()
+            .any(|a| a == "--delete-branch"));
+    }
+
+    #[test]
+    fn allowed_merge_methods_keep_preference_order_and_fall_back_to_all() {
+        let r: GhRepoMergeSettings = serde_json::from_str(
+            r#"{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true,"defaultBranchRef":{"name":"main"}}"#,
+        )
+        .unwrap();
+        assert_eq!(allowed_merge_methods(&r), ["merge", "rebase"]);
+        assert_eq!(r.default_branch_ref.unwrap().name, "main");
+        assert_eq!(
+            allowed_merge_methods(&GhRepoMergeSettings::default()),
+            ["squash", "merge", "rebase"]
+        );
+    }
+
+    #[test]
+    fn head_deletion_is_refused_for_forks_the_base_and_the_default_branch() {
+        assert!(can_delete_head("feat/x", "main", Some("main"), false));
+        assert!(!can_delete_head("feat/x", "main", Some("main"), true));
+        assert!(!can_delete_head("main", "main", Some("main"), false));
+        assert!(!can_delete_head("dev", "release", Some("dev"), false));
+        assert!(!can_delete_head("", "main", None, false));
+    }
+
+    #[test]
+    fn ref_paths_keep_slashes_and_encode_the_rest() {
+        assert_eq!(
+            encode_ref_path("feat/add-git_page.v2"),
+            "feat/add-git_page.v2"
+        );
+        assert_eq!(encode_ref_path("fix/#12 a"), "fix/%2312%20a");
+    }
+
+    #[test]
+    fn merge_outcome_serializes_camel_case_without_an_absent_error() {
+        let ok = MergeOutcome {
+            branch_deleted: true,
+            branch_delete_error: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&ok).unwrap(),
+            r#"{"branchDeleted":true}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&kept("x".into())).unwrap(),
+            r#"{"branchDeleted":false,"branchDeleteError":"x"}"#
+        );
+    }
+
+    #[test]
+    fn detail_carries_cross_repository_from_the_view_json() {
+        let pr: GhPr = serde_json::from_str(
+            r#"{"number":1,"title":"t","headRefName":"h","baseRefName":"main","state":"OPEN",
+                "author":null,"createdAt":"2024-03-01T10:00:00Z","updatedAt":"2024-03-01T10:00:00Z",
+                "mergedAt":null,"mergedBy":null,"reviewDecision":null,"url":"u",
+                "milestone":null,"headRefOid":null,"mergeable":null,"mergeStateStatus":null,
+                "isCrossRepository":true}"#,
+        )
+        .unwrap();
+        let d = map_pull_detail(&pr, None, Vec::new());
+        assert!(d.cross_repository);
+        assert_eq!(d.merge_methods, ["squash", "merge", "rebase"]);
+    }
 
     fn sample_pr(json: &str) -> GhPr {
         serde_json::from_str(json).expect("valid sample PR JSON")

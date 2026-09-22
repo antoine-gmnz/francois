@@ -198,6 +198,7 @@ fn main() {
             github::github_list_pulls,
             github::github_get_pull,
             github::github_update_pull_branch,
+            github::github_merge_pull,
             github::github_list_commits,
             github::github_get_commit,
             github::github_list_branches,

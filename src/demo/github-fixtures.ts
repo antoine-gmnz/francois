@@ -180,7 +180,7 @@ export const GITHUB_PULLS: PullSummary[] = [
   },
 ];
 
-const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary>> = {
+const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'mergeMethods' | 'crossRepository'>> = {
   128: {
     additions: 34,
     deletions: 9,
@@ -267,7 +267,10 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary>> = {
 };
 
 export const GITHUB_PULL_DETAILS: Record<number, PullDetail> = Object.fromEntries(
-  GITHUB_PULLS.map((p) => [p.number, { ...p, ...PULL_DETAIL_EXTRA[p.number] }]),
+  GITHUB_PULLS.map((p) => [
+    p.number,
+    { ...p, ...PULL_DETAIL_EXTRA[p.number], mergeMethods: ['squash', 'merge', 'rebase'], crossRepository: false },
+  ]),
 );
 
 /** One commit list per interesting ref; every other branch/ref falls back to

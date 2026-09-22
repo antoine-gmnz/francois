@@ -419,6 +419,16 @@ function route(cmd: string, a: Args): unknown {
     }
     case 'github_update_pull_branch':
       return ok(null);
+    case 'github_merge_pull': {
+      const n = Number(g?.number);
+      const detail = GITHUB_PULL_DETAILS[n];
+      if (!detail) return { ok: false, error: { code: 'NOT_FOUND', message: 'No such pull request.' } };
+      const merged = { state: 'merged' as const, mergedAt: Date.now(), mergedBy: 'you', updatedAt: Date.now() };
+      Object.assign(detail, merged);
+      const summary = GITHUB_PULLS.find((p) => p.number === n);
+      if (summary) Object.assign(summary, merged);
+      return ok({ branchDeleted: Boolean(g?.deleteBranch) });
+    }
     case 'github_list_commits': {
       const ref = String(g?.ref ?? GITHUB_REPO.defaultBranch);
       const commits = githubCommitsForRef(ref);

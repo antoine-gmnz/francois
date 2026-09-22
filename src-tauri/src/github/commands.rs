@@ -4,11 +4,11 @@
 
 use super::branches::{do_create_worktree, do_list_branches, do_prune, do_worktree_disk_usage};
 use super::commits::{do_get_commit, do_list_commits};
-use super::pulls::{do_get_pull, do_list_pulls, do_update_pull_branch};
+use super::pulls::{do_get_pull, do_list_pulls, do_merge_pull, do_update_pull_branch};
 use super::repo::{compute_repo_info, do_fetch};
 use super::{
     remote_host_of, resolve_scope, BranchInfo, BranchWorktree, CommitDetail, CommitPage,
-    GithubRepoInfo, PruneOutcome, PullDetail, PullSummary,
+    GithubRepoInfo, MergeOutcome, PruneOutcome, PullDetail, PullSummary,
 };
 use crate::ipc::{err, ok, AppError, ErrorCode, IpcResult};
 use serde::Deserialize;
@@ -32,6 +32,16 @@ pub struct GithubListPullsRequest {
 pub struct GithubGetPullRequest {
     pub cwd: String,
     pub number: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubMergePullRequest {
+    pub cwd: String,
+    pub number: u64,
+    pub method: String,
+    #[serde(default)]
+    pub delete_branch: bool,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +108,11 @@ pub fn github_update_pull_branch(req: GithubGetPullRequest) -> IpcResult<Option<
         Ok(()) => ok(None),
         Err(e) => e.into(),
     }
+}
+
+#[tauri::command(async)]
+pub fn github_merge_pull(req: GithubMergePullRequest) -> IpcResult<MergeOutcome> {
+    do_merge_pull(&req.cwd, req.number, &req.method, req.delete_branch).into()
 }
 
 #[tauri::command(async)]

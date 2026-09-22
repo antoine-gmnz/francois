@@ -151,7 +151,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
         </div>
       </div>
 
-      <PullDetail cwd={cwd} number={selected} key={selected ?? 'none'} />
+      <PullDetail cwd={cwd} number={selected} key={selected ?? 'none'} onChanged={() => void load()} />
     </div>
   );
 }

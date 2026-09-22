@@ -140,6 +140,11 @@ export interface PullDetail extends PullSummary {
   headSha: string; // 7-char short sha
   /** GitHub's mergeability, flattened. */
   mergeable: 'clean' | 'blocked' | 'conflicting' | 'behind' | 'unknown';
+  /** the repo's allowed merge methods, in preference order (squash · merge · rebase).
+   *  Falls back to all three when the repo settings can't be read. */
+  mergeMethods: MergeMethod[];
+  /** head lives in a fork — its branch can't be deleted from this repo. */
+  crossRepository: boolean;
 }
 
 export interface GithubGetPullRequest extends GithubScope {
@@ -151,6 +156,27 @@ export type GithubGetPullResponse = Result<PullDetail>;
 // `gh pr update-branch <number>` — merges the base into the head on GitHub.
 export type GithubUpdatePullBranchRequest = GithubGetPullRequest;
 export type GithubUpdatePullBranchResponse = Result<null>;
+
+// ---------- francois:github:mergePull → github_merge_pull ----------
+// `gh pr merge <number> --<method>` — the one irreversible action on the page,
+// behind an in-app confirm (FR-5a). Only the remote head branch is ever deleted,
+// and only on request, never for a fork's head or the base branch; local
+// branches and worktrees are left to the Branches tab's prune.
+
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+
+export interface GithubMergePullRequest extends GithubGetPullRequest {
+  method: MergeMethod;
+  /** delete the head branch on GitHub once the merge lands. */
+  deleteBranch: boolean;
+}
+
+export interface MergeOutcome {
+  branchDeleted: boolean;
+  /** set when the merge landed but the branch delete did not. */
+  branchDeleteError?: string;
+}
+export type GithubMergePullResponse = Result<MergeOutcome>;
 
 // ---------- francois:github:listCommits → github_list_commits ----------
 

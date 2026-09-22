@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { PullSummary } from '../../../contract/github-page';
 import {
+  canMergeInApp,
   canUpdateBranch,
+  defaultMergeMethod,
   checkRollupChip,
   checkRollupHeadline,
   filterMatchesPull,
   ghUnavailableMessage,
   mergeButtonLabel,
+  mergeMethodLabel,
+  mergeOutcomeNote,
   mergeableTone,
   pullOpenedBy,
   pullRelativeTime,
@@ -182,5 +186,31 @@ describe('ghUnavailableMessage', () => {
     expect(ghUnavailableMessage('missing')).toMatch(/Install the GitHub CLI/);
     expect(ghUnavailableMessage('unauthenticated')).toMatch(/gh auth login/);
     expect(ghUnavailableMessage('not-github')).toMatch(/remote isn't on GitHub/);
+  });
+});
+
+describe('in-app merge (FR-5a)', () => {
+  it('merges in-app only an open, clean PR', () => {
+    expect(canMergeInApp({ state: 'open', mergeable: 'clean' })).toBe(true);
+    expect(canMergeInApp({ state: 'open', mergeable: 'blocked' })).toBe(false);
+    expect(canMergeInApp({ state: 'open', mergeable: 'unknown' })).toBe(false);
+    expect(canMergeInApp({ state: 'draft', mergeable: 'clean' })).toBe(false);
+    expect(canMergeInApp({ state: 'merged', mergeable: 'clean' })).toBe(false);
+  });
+
+  it("uses GitHub's wording per method and preselects the first allowed one", () => {
+    expect(mergeMethodLabel('squash')).toBe('Squash and merge');
+    expect(mergeMethodLabel('merge')).toBe('Create a merge commit');
+    expect(mergeMethodLabel('rebase')).toBe('Rebase and merge');
+    expect(defaultMergeMethod(['merge', 'rebase'])).toBe('merge');
+    expect(defaultMergeMethod([])).toBe('squash');
+  });
+
+  it('reports the branch delete, a failed delete, or nothing', () => {
+    expect(mergeOutcomeNote({ branchDeleted: true }, 'feat/x', true)).toBe('Merged. feat/x was deleted on GitHub.');
+    expect(mergeOutcomeNote({ branchDeleted: false, branchDeleteError: 'protected' }, 'feat/x', true)).toBe(
+      'Merged, but feat/x was not deleted: protected',
+    );
+    expect(mergeOutcomeNote({ branchDeleted: false }, 'feat/x', false)).toBeNull();
   });
 });

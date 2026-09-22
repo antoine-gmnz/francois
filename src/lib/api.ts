@@ -19,6 +19,8 @@ import type {
     GithubListCommitsResponse,
     GithubListPullsRequest,
     GithubListPullsResponse,
+    GithubMergePullRequest,
+    GithubMergePullResponse,
     GithubOpenUrlRequest,
     GithubOpenUrlResponse,
     GithubPruneRequest,
@@ -613,6 +615,8 @@ export const githubGetPull = (req: GithubGetPullRequest) =>
   ipc<GithubGetPullResponse>('github_get_pull', { req });
 export const githubUpdatePullBranch = (req: GithubUpdatePullBranchRequest) =>
   ipc<GithubUpdatePullBranchResponse>('github_update_pull_branch', { req });
+export const githubMergePull = (req: GithubMergePullRequest) =>
+  ipc<GithubMergePullResponse>('github_merge_pull', { req });
 export const githubListCommits = (req: GithubListCommitsRequest) =>
   ipc<GithubListCommitsResponse>('github_list_commits', { req });
 export const githubGetCommit = (req: GithubGetCommitRequest) =>

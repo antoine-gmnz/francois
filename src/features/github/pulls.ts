@@ -2,7 +2,15 @@
 // logic only: row/detail derivations, filtering, relative time. Components
 // (PullsTab.tsx / PullDetail.tsx) own layout and wiring.
 
-import type { CheckRollup, GhStatus, PullDetail, PullState, PullSummary } from '../../../contract/github-page';
+import type {
+  CheckRollup,
+  GhStatus,
+  MergeMethod,
+  MergeOutcome,
+  PullDetail,
+  PullState,
+  PullSummary,
+} from '../../../contract/github-page';
 import type { IconName } from '../../ui/icons';
 
 // ---------- FR-4: row state icon ----------
@@ -133,9 +141,38 @@ export function canUpdateBranch(mergeable: PullDetail['mergeable']): boolean {
   return mergeable === 'behind' || mergeable === 'blocked';
 }
 
-/** FR-5: Merge always opens GitHub; its label warns when the PR isn't clean. */
+/** FR-5: the Merge label warns when the PR isn't clean. */
 export function mergeButtonLabel(mergeable: PullDetail['mergeable']): string {
   return mergeable === 'clean' ? 'Merge' : 'Merge · blocked by checks';
+}
+
+/** FR-5a: an open, clean PR merges in-app; anything else opens it on GitHub. */
+export function canMergeInApp(detail: Pick<PullDetail, 'state' | 'mergeable'>): boolean {
+  return detail.state === 'open' && detail.mergeable === 'clean';
+}
+
+/** FR-5a: GitHub's own wording for each method. */
+export function mergeMethodLabel(method: MergeMethod): string {
+  switch (method) {
+    case 'squash':
+      return 'Squash and merge';
+    case 'merge':
+      return 'Create a merge commit';
+    case 'rebase':
+      return 'Rebase and merge';
+  }
+}
+
+/** FR-5a: the method preselected in the confirm — the core already sends them in preference order. */
+export function defaultMergeMethod(methods: MergeMethod[]): MergeMethod {
+  return methods[0] ?? 'squash';
+}
+
+/** FR-5a: the line shown after a merge, or null when there is nothing to add. */
+export function mergeOutcomeNote(outcome: MergeOutcome, head: string, deleteRequested: boolean): string | null {
+  if (outcome.branchDeleted) return `Merged. ${head} was deleted on GitHub.`;
+  if (deleteRequested) return `Merged, but ${head} was not deleted: ${outcome.branchDeleteError ?? 'unknown error'}`;
+  return null;
 }
 
 /** Top 4 files shown; the rest folded into "N more files". */
