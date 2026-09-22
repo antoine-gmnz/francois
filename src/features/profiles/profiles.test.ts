@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest';
 import type { AppError } from '../../../contract/common';
 import type { PiSessionProfile, SessionProfile } from '../../../contract/session-profiles';
 import {
-  canSaveProfileName,
-  flagAdvisoryTokens,
-  isExtraArgsInvalidInput,
-  newSessionProfileOptions,
-  profileArgDeniedDetail,
-  profileChipTitle,
-  profileCountLabel,
-  profileRowSubtitle,
-  projectDefaultProfileResolution,
-  removeProfileConfirmText,
-  resolveProfile,
-  resolveProjectDefaultProfileId,
+    canSaveProfileName,
+    flagAdvisoryTokens,
+    isExtraArgsInvalidInput,
+    newSessionProfileOptions,
+    profileArgDeniedDetail,
+    profileChipTitle,
+    profileCountLabel,
+    profileRowSubtitle,
+    projectDefaultProfileResolution,
+    removeProfileConfirmText,
+    resolveProfile,
+    resolveProjectDefaultProfileId,
 } from './profiles';
 
 function profile(overrides: Partial<Extract<SessionProfile, { kind: 'legacy' }>> = {}): SessionProfile {
@@ -126,11 +126,11 @@ describe('profileRowSubtitle', () => {
   });
 
   it('pi: falls back to the tools summary when the mode is default', () => {
-    expect(profileRowSubtitle(piProfile({ tools: ['read', 'grep'] }))).toBe('read, grep');
+    expect(profileRowSubtitle(piProfile({ tools: ['read', 'grep'] }))).toBe('Unavailable · read, grep');
   });
 
   it('pi: names an empty tool allowlist explicitly, never as a dash', () => {
-    expect(profileRowSubtitle(piProfile())).toBe('no built-in tools');
+    expect(profileRowSubtitle(piProfile())).toBe('Unavailable · no tools');
   });
 });
 

@@ -124,31 +124,20 @@ pub(crate) fn safe_display(text: &str, bound: usize) -> bool {
 /// The runtime-boundary subset of `ErrorCode` core call sites raise directly.
 #[derive(Clone, Copy)]
 pub(crate) enum RuntimeErrorCode {
-    NotFound,
     InvalidInput,
-    Unavailable,
     Unsupported,
 }
 
 impl RuntimeErrorCode {
     fn code(self) -> ErrorCode {
         match self {
-            Self::NotFound => ErrorCode::SessionNotFound,
             Self::InvalidInput => ErrorCode::InvalidInput,
-            Self::Unavailable => ErrorCode::RuntimeUnavailable,
             Self::Unsupported => ErrorCode::RuntimeUnsupported,
         }
     }
 }
 
 impl RuntimeFailure {
-    /// The sanitized, already-validated display message — read back by the
-    /// session engine when a `failure` runtime event settles a session onto
-    /// `status::ERROR` (pi-runtime-boundary).
-    pub(crate) fn message(&self) -> &str {
-        &self.message
-    }
-
     pub fn validated(
         origin: &str,
         code: &str,
@@ -416,7 +405,7 @@ mod runtime_tests {
             None,
         )
         .unwrap();
-        assert_eq!(f.message(), "the child exited");
+        assert_eq!(f.message, "the child exited");
     }
 
     #[test]
@@ -424,4 +413,12 @@ mod runtime_tests {
         let v = serde_json::to_value(AppError::new(ErrorCode::Internal, "x")).unwrap();
         assert!(v.get("runtimeFailure").is_none());
     }
+}
+
+/// Shared retirement guard: no credential/config lookup occurs for a retired account.
+pub(crate) fn retired_pi_error() -> AppError {
+    AppError::new(
+        ErrorCode::RuntimeUnsupported,
+        "Pi is unavailable in this version. Saved history is read-only.",
+    )
 }

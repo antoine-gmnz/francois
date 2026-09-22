@@ -11,6 +11,8 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { SessionEvent, SessionId, SessionMeta } from '../../contract/common';
 import { onSessionEvent } from './api';
 import { useStore } from './store';
+import { observeRequestEvent } from './request-replies';
+import { sessionIsRetired } from './runtimeCapability';
 
 type Handler = (e: SessionEvent) => void;
 
@@ -81,6 +83,9 @@ function acceptsRuntimeEvent(e: Extract<SessionEvent, { type: 'runtime.event' }>
  * FR-20: a handler that throws is caught and never blocks the others.
  */
 function dispatch(e: SessionEvent): void {
+  const ownerId = eventSessionId(e);
+  const owner = ownerId ? useStore.getState().sessions.find((s) => s.id === ownerId) ?? liveMetadata.get(ownerId) : null;
+  if (sessionIsRetired(owner) && e.type !== 'session.meta' && e.type !== 'session.removed') return;
   if (e.type === 'session.meta') {
     liveMetadata.set(e.meta.id, e.meta);
     establishRuntimeGeneration(e.meta);
@@ -99,6 +104,7 @@ function dispatch(e: SessionEvent): void {
       ? { ...meta, effectiveCapabilities: e.event.capabilities }
       : { ...meta });
   }
+  observeRequestEvent(e, owner);
   const sid = eventSessionId(e);
   for (const [scope, handlers] of registry) {
     if (scope !== '*' && sid !== null && scope !== sid) continue;
@@ -117,19 +123,26 @@ function ensureListener(): Promise<UnlistenFn> {
     // Hydration also supplies authoritative metadata, including when it precedes
     // the first subscription. Keep this observer live with the Tauri listener.
     const syncGenerations = (sessions: SessionMeta[]) => {
-      for (const meta of sessions) establishRuntimeGeneration(meta);
+      for (const meta of sessions) {
+        establishRuntimeGeneration(meta);
+        observeRequestEvent({ type: 'session.meta', meta }, meta);
+      }
     };
     syncGenerations(useStore.getState().sessions);
     useStore.subscribe((state, previous) => {
       if (state.sessions === previous.sessions) return;
       const previousGenerations = new Map(previous.sessions.map((meta) => [meta.id, meta.runtimeGeneration]));
       for (const meta of state.sessions) {
+        observeRequestEvent({ type: 'session.meta', meta }, meta);
         if (!previousGenerations.has(meta.id) || previousGenerations.get(meta.id) !== meta.runtimeGeneration) {
           establishRuntimeGeneration(meta);
         }
         previousGenerations.delete(meta.id);
       }
-      for (const id of previousGenerations.keys()) runtimeCursor.delete(id);
+      for (const id of previousGenerations.keys()) {
+        runtimeCursor.delete(id);
+        observeRequestEvent({ type: 'session.removed', sessionId: id }, null);
+      }
     });
     listenerPromise = onSessionEvent(dispatch);
   }

@@ -63,6 +63,7 @@ function collect() {
       const rust = /\.rs$/.test(rel);
       files.push({
         path: rel,
+        source: rust ? source : undefined,
         lines: source.length === 0 ? 0 : source.split('\n').length,
         imports: /\.tsx?$/.test(rel) ? importsOf(source) : [],
         spawnSites: rust ? spawnSitesOf(source) : [],

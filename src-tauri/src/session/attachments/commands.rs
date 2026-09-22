@@ -92,6 +92,10 @@ pub fn session_attach_file(
     session_id: String,
     path: String,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
@@ -115,6 +119,10 @@ pub fn session_attach_clipboard_image(
     mime: String,
     data_base64: String,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err(ErrorCode::SessionNotFound, NO_SESSION);
     };
@@ -140,6 +148,10 @@ pub fn session_attach_clipboard_image(
 /// `.await` in the generated handler (same reason as the `diff` commands).
 #[tauri::command]
 pub async fn session_pick_attachments(app: AppHandle, session_id: String) -> IpcResult<Value> {
+    if let Err(e) = app.state::<Engine>().ensure_available(&session_id) {
+        return e.into();
+    }
+
     use tauri_plugin_dialog::DialogExt;
     let engine = app.state::<Engine>();
     let Some(cwd) = engine.cwd_of(&session_id) else {
@@ -223,6 +235,10 @@ pub fn session_release_attachment(
     session_id: String,
     attachment_id: String,
 ) -> IpcResult<Option<()>> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let Some(taken) = engine.with_session_mut(&session_id, |s| s.take_attachment(&attachment_id))
     else {
         return err(ErrorCode::SessionNotFound, NO_SESSION);
@@ -243,6 +259,10 @@ pub fn session_commit_attachments(
     session_id: String,
     text: String,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let Some(commit) = engine.with_session_mut(&session_id, |s| {
         s.validate_attachment_submission(&text)?;
         Ok::<_, (ErrorCode, &str)>(s.commit_attachments(&text))
@@ -267,6 +287,11 @@ pub fn session_clear_attachments(
     engine: State<'_, Engine>,
     scope: ClearScope,
 ) -> IpcResult<Value> {
+    if let ClearScope::Session { session_id } = &scope {
+        if let Err(e) = engine.ensure_available(session_id) {
+            return e.into();
+        }
+    }
     let targets = match &scope {
         ClearScope::Session { session_id } => match engine.cwd_of(session_id) {
             Some(cwd) => vec![(session_id.clone(), cwd)],

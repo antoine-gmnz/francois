@@ -55,7 +55,34 @@ pub fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String>) {
     };
     let records: Vec<AccountRecord> = list
         .iter()
-        .filter_map(|e| serde_json::from_value::<AccountRecord>(e.clone()).ok())
+        .filter_map(|e| {
+            serde_json::from_value::<AccountRecord>(e.clone())
+                .ok()
+                .or_else(|| {
+                    if e.get("kind").and_then(Value::as_str) != Some("pi") {
+                        return None;
+                    }
+                    Some(AccountRecord {
+                        id: e.get("id")?.as_str()?.into(),
+                        label: e
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Unavailable")
+                            .into(),
+                        config_dir: e
+                            .get("configDir")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .into(),
+                        created_at: e.get("createdAt").and_then(Value::as_u64).unwrap_or(0),
+                        email: None,
+                        organization: None,
+                        kind: AccountKind::Pi,
+                        endpoint: None,
+                        pi: None,
+                    })
+                })
+        })
         .filter(|r| valid_account_id(&r.id))
         .filter(account_record_invariant_holds)
         .collect();
@@ -73,6 +100,9 @@ pub fn parse_registry(bytes: &[u8]) -> (Vec<AccountRecord>, Option<String>) {
 /// left the sidecar field behind) is dropped rather than repaired into a
 /// half-account.
 fn account_record_invariant_holds(r: &AccountRecord) -> bool {
+    if r.kind == AccountKind::Pi {
+        return true;
+    }
     let endpoint_ok = matches!(r.kind, AccountKind::OpenAiCompatible) == r.endpoint.is_some();
     let pi_ok = matches!(r.kind, AccountKind::Pi) == r.pi.is_some();
     let ok = endpoint_ok && pi_ok;
@@ -113,10 +143,8 @@ pub fn persist(app: &AppHandle, inner: &AccountInner) -> Result<(), AppError> {
             "could not resolve the app data directory",
         )
     })?;
-    crate::permissions::write_json_atomic(
-        &path,
-        &registry_doc(&inner.records, &inner.default_account_id),
-    )
+    let doc = retained_registry_doc(inner);
+    crate::permissions::write_json_atomic(&path, &doc)
 }
 
 // ---------- FR-2/FR-4: the list ----------
@@ -233,6 +261,9 @@ pub fn apply_rename(inner: &mut AccountInner, id: &str, label: String) -> Result
         .iter_mut()
         .find(|r| r.id == id)
         .ok_or(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG))?;
+    if record.kind == AccountKind::Pi {
+        return Err(crate::ipc::retired_pi_error());
+    }
     record.label = label;
     Ok(())
 }
@@ -243,6 +274,7 @@ pub fn apply_set_default(inner: &mut AccountInner, id: &str) -> Result<(), AppEr
     if !exists(inner, id) {
         return Err(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG));
     }
+    ensure_account_available(inner, id)?;
     inner.default_account_id = id.to_string();
     Ok(())
 }
@@ -263,6 +295,7 @@ pub fn apply_remove(inner: &mut AccountInner, id: &str) -> Result<AccountRecord,
         .iter()
         .position(|r| r.id == id)
         .ok_or(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG))?;
+    ensure_account_available(inner, id)?;
     let removed = inner.records.remove(idx);
     inner.auth_failed_at.remove(id);
     if inner.default_account_id == id {
@@ -375,10 +408,23 @@ pub fn sanitize_config_dirs(records: &mut [AccountRecord], accounts_dir: &Path) 
 /// an empty registry (built-in `default` only) and is overwritten by the next
 /// successful write.
 pub fn load_accounts(app: &AppHandle) {
-    let (mut records, persisted_default) = accounts_json_path(app)
+    let bytes = accounts_json_path(app)
         .and_then(|p| std::fs::read(p).ok())
-        .map(|b| parse_registry(&b))
-        .unwrap_or_else(|| (Vec::new(), None));
+        .unwrap_or_default();
+    let (mut records, persisted_default) = parse_registry(&bytes);
+    let retired_records = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|doc| doc.get("accounts").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|row| row.get("kind").and_then(Value::as_str) == Some("pi"))
+        .filter_map(|row| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .map(|id| (id, row))
+        })
+        .collect();
     if let Some(dir) = accounts_dir(app) {
         sanitize_config_dirs(&mut records, &dir);
     }
@@ -387,7 +433,7 @@ pub fn load_accounts(app: &AppHandle) {
     // entry — a `skills/`, a `hooks/` — that appeared in `~/.claude` after the
     // account was made. Only for a dir that still exists, so a hand-deleted
     // account is never resurrected as a shell of symlinks.
-    for r in records.iter() {
+    for r in records.iter().filter(|r| r.kind != AccountKind::Pi) {
         let dir = Path::new(&r.config_dir);
         if dir.is_dir() {
             crate::account::mirror_global(dir);
@@ -404,6 +450,7 @@ pub fn load_accounts(app: &AppHandle) {
     };
     inner.default_account_id = resolve_default(&records, persisted_default.as_deref());
     inner.records = records;
+    inner.retired_records = retired_records;
     inner.default_email = email;
     inner.default_organization = organization;
 }
@@ -815,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pi_record_without_its_pi_field_is_dropped_on_load() {
+    fn a_retired_pi_record_without_its_pi_field_remains_visible() {
         // pi-provider-auth FR-1: `pi` present iff `kind == Pi` — same
         // discipline as multi-provider-endpoint's `endpoint`/`kind` invariant.
         let doc = json!({
@@ -828,7 +875,7 @@ mod tests {
         let (records, _) = parse_registry(doc.to_string().as_bytes());
         assert_eq!(
             records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-            vec!["a1"]
+            vec!["p1", "a1"]
         );
     }
 
@@ -851,5 +898,100 @@ mod tests {
         assert!(!valid_account_id("../../etc"));
         assert!(!valid_account_id("a/b"));
         assert!(!valid_account_id(""));
+    }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+    use crate::account::testutil::*;
+    #[test]
+    fn retired_pi_mutations_are_rejected_without_changing_rows() {
+        let mut inner = inner_fixture(&["retired"], "retired");
+        inner.records[0].kind = AccountKind::Pi;
+        let before = registry_doc(&inner.records, &inner.default_account_id);
+        assert_eq!(
+            apply_rename(&mut inner, "retired", "changed".into())
+                .unwrap_err()
+                .code,
+            ErrorCode::RuntimeUnsupported
+        );
+        assert_eq!(
+            apply_set_default(&mut inner, "retired").unwrap_err().code,
+            ErrorCode::RuntimeUnsupported
+        );
+        assert_eq!(
+            apply_remove(&mut inner, "retired").err().unwrap().code,
+            ErrorCode::RuntimeUnsupported
+        );
+        assert_eq!(
+            registry_doc(&inner.records, &inner.default_account_id),
+            before
+        );
+    }
+}
+
+fn retained_registry_doc(inner: &AccountInner) -> Value {
+    let mut doc = registry_doc(&inner.records, &inner.default_account_id);
+    if let Some(rows) = doc["accounts"].as_array_mut() {
+        for row in rows {
+            if let Some(raw) = row
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| inner.retired_records.get(id))
+            {
+                *row = raw.clone();
+            }
+        }
+    }
+    if let Some(rows) = doc["accounts"].as_array_mut() {
+        let ids: std::collections::HashSet<String> = rows
+            .iter()
+            .filter_map(|row| row.get("id").and_then(Value::as_str).map(String::from))
+            .collect();
+        rows.extend(
+            inner
+                .retired_records
+                .iter()
+                .filter(|(id, _)| !ids.contains(*id))
+                .map(|(_, raw)| raw.clone()),
+        );
+    }
+    doc
+}
+
+#[cfg(test)]
+mod retired_data_tests {
+    use super::*;
+    use crate::account::testutil::*;
+    use serde_json::json;
+    #[test]
+    fn retired_account_extensions_and_malformed_settings_survive_other_mutations() {
+        let raw = json!({"id":"retired","label":"Saved","kind":"pi","configDir":"/must/not/read","createdAt":1,"pi":{"runtime":42,"secretExtension":{"keep":true}},"future":[1,2]});
+        let input = json!({"version":1,"defaultAccountId":"retired","accounts":[raw.clone()]});
+        let (records, default_id) = parse_registry(&serde_json::to_vec(&input).unwrap());
+        assert_eq!(records.len(), 1);
+        let mut inner = inner_fixture(&[], "default");
+        inner.default_account_id = resolve_default(&records, default_id.as_deref());
+        inner.records = records;
+        inner.retired_records.insert("retired".into(), raw.clone());
+        inner.records.push(record_fixture("other", "Other"));
+        apply_rename(&mut inner, "other", "Renamed".into()).unwrap();
+        let doc = retained_registry_doc(&inner);
+        assert_eq!(doc["defaultAccountId"], "retired");
+        assert_eq!(doc["accounts"][0], raw);
+        assert_eq!(
+            ensure_account_available(&inner, &inner.default_account_id)
+                .unwrap_err()
+                .code,
+            ErrorCode::RuntimeUnsupported
+        );
+        assert!(ensure_account_available(&inner, "other").is_ok());
+        assert_eq!(
+            ensure_account_available(&inner, "missing")
+                .unwrap_err()
+                .code,
+            ErrorCode::AccountNotFound
+        );
     }
 }

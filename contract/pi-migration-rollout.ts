@@ -19,9 +19,9 @@ export type {
   PiBuiltinTool,
   PiProfileSettings,
   PiSessionProfile,
-  ProfileCopyToPiInput,
   ProfileCreateInput,
   ProfileUpdateInput,
   SessionProfile,
 } from './session-profiles';
 export { MAX_PI_INSTRUCTION_PATHS, MAX_PI_SKILL_PATHS, PI_BUILTIN_TOOLS } from './session-profiles';
+

@@ -89,7 +89,7 @@ impl ResponseMode {
 /// `sent` is the session's `response_mode_sent` — the mode the CURRENT thread
 /// has already been told about, `None` when it has been told nothing.
 /// `fresh_thread` is "this turn starts a new thread" (no resume anchor), which
-/// is also how a resume retry arrives here.
+/// includes a brand-new session.
 ///
 /// Pure, so the whole ladder is testable without a child process:
 ///   - a fresh thread carries the directive (nothing to disregard on it, so

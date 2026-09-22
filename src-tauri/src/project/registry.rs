@@ -666,6 +666,11 @@ pub fn reconcile_defaults_in(
 ) -> usize {
     let mut cleared = 0;
     for p in projects.iter_mut() {
+        // This saved model pair belongs to retired Pi defaults. Even missing
+        // account/profile references must survive until an explicit edit.
+        if p.defaults.runtime_model.is_some() {
+            continue;
+        }
         if let (Some(known), Some(id)) = (profile_ids, p.defaults.profile_id.as_deref()) {
             if !known.contains(id) {
                 p.defaults.profile_id = None;
@@ -709,7 +714,30 @@ pub fn reconcile_defaults(app: &AppHandle) {
 
     let mut doc = state.doc.lock().unwrap();
     let snapshot = doc.projects.clone();
-    if reconcile_defaults_in(&mut doc.projects, trusted_profiles, trusted_accounts) == 0 {
+    let cleared: usize = doc
+        .projects
+        .iter_mut()
+        .map(|project| {
+            let retired_account = project.defaults.account_id.as_deref().is_some_and(|id| {
+                crate::account::kind_of(app, id) == crate::account::AccountKind::Pi
+            });
+            let retired_profile = project
+                .defaults
+                .profile_id
+                .as_deref()
+                .is_some_and(|id| crate::profiles::is_retired_profile(app, id));
+            if retired_account || retired_profile {
+                0
+            } else {
+                reconcile_defaults_in(
+                    std::slice::from_mut(project),
+                    trusted_profiles,
+                    trusted_accounts,
+                )
+            }
+        })
+        .sum();
+    if cleared == 0 {
         return; // nothing stale — do not rewrite the file at every launch
     }
     if let Err(msg) = persist(app, &doc.projects, &doc.groups) {
@@ -1650,6 +1678,26 @@ mod decision_tests {
     }
 
     // ---------- boot-time reconcile ----------
+
+    #[test]
+    fn reconcile_preserves_retired_pi_defaults_with_missing_references() {
+        let mut projects = vec![with_profile("pi-project", Some("missing-profile"))];
+        projects[0].defaults.account_id = Some("missing-account".into());
+        projects[0].defaults.runtime_model = Some(ProjectRuntimeModelRef {
+            provider_id: "saved-provider".into(),
+            model_id: "saved-model".into(),
+        });
+        let before = projects.clone();
+        assert_eq!(
+            reconcile_defaults_in(
+                &mut projects,
+                Some(&ids(&["legacy-profile"])),
+                Some(&ids(&["default", "legacy-account"]))
+            ),
+            0
+        );
+        assert_eq!(projects, before);
+    }
 
     fn ids(list: &[&str]) -> HashSet<String> {
         list.iter().map(|s| (*s).to_string()).collect()

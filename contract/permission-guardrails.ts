@@ -14,10 +14,11 @@
 
 import type { BlockId, PermissionAsk, PermissionRule, PermissionTier, SessionId } from './common';
 
-export type { PermissionAsk, PermissionEffect, PermissionRule, PermissionTier } from './common';
+export type { PermissionAsk, PermissionDecision, PermissionEffect, PermissionRule, PermissionTier } from './common';
+import type { PermissionDecision } from './common';
 
 /** What the user clicked on an approval card (FR-6). */
-export type PermissionDecision = 'allowOnce' | 'denyOnce' | 'allowAlways' | 'denyAlways';
+// Declared in common.ts so native offered choices and commands share one vocabulary.
 
 /** Card lifecycle. Exactly one resolution per ask (FR-10). */
 export type PermissionState = 'pending' | 'allowed' | 'denied' | 'cancelled';

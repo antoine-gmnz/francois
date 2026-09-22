@@ -8,6 +8,9 @@
 // `francois:session:<verb>` → Tauri command `session_<verb>`; the event stream
 // `francois:session:event` → Tauri event `francois://session/event`. Every
 // command RESOLVES a `Result<T>` (never rejects across the bridge).
+// Pi retirement overrides older Pi-specific descriptions below: resolved Pi targets
+// are read-only and mutating/executing commands return RUNTIME_UNSUPPORTED.
+// Optional Pi-era request fields remain accepted for compatibility, never to launch Pi.
 
 import type {
   SessionId,
@@ -22,10 +25,7 @@ import type {
   ClaudeRuntime,
   ProfileId,
   ResponseMode,
-  DeliveryMode,
-  RuntimeMessageReceipt,
   RuntimeModelRef,
-  RuntimeQueueEntry,
   RuntimeResourcePolicy,
 } from './common';
 import type { WorktreeCreateOptions } from './session-worktree';
@@ -133,69 +133,7 @@ export interface SessionUnqueueOutput {
 }
 // invoke('session_unqueue', req: SessionUnqueueInput): Promise<Result<SessionUnqueueOutput>>
 // errors: SESSION_NOT_FOUND
-// pi-turn-controls FR-5: a message the Pi runtime already ACCEPTED ('queued') cannot be
-// removed individually — that answers RUNTIME_UNSUPPORTED (use session_clear_queue).
-// For a Pi session `blockId` carries the entry's `clientMessageId`, and the verb removes
-// any entry Pi does NOT own: a local unsent intent, or a recoverable terminal entry
-// ('cancelled' / 'delivery-unknown' / 'rejected'). This is how the strip's Discard — and
-// the cleanup after a Resend minted a new id — forgets a row. `removed: true` is followed
-// by one `queue.changed`; an unknown id is `removed: false`, never an error.
-
-// ---------- francois:session:submit (NEW, pi-turn-controls) ----------
-// The explicit-delivery send. Pi callers use this; session_send stays valid for the
-// existing runtimes. Both route through ONE per-session admissions owner in the core —
-// never two independent queues.
-
-export interface RuntimeMessageInput {
-  sessionId: SessionId;
-  /** uuid v4, client-minted. Retrying an id returns its CURRENT receipt without sending
-   *  again; the same id with different content is INVALID_INPUT (FR-4). */
-  clientMessageId: string;
-  text: string; // non-empty after trim; at most 1 MiB of UTF-8
-  delivery: DeliveryMode;
-  attachmentIds: string[]; // existing attachment ids; existing count/size caps apply
-}
-// invoke('session_submit', req: RuntimeMessageInput): Promise<Result<RuntimeMessageReceipt>>
-//   (flat payload, like every other command here — the fields ARE the command's args)
-//   Acceptance creates/updates a PENDING ledger entry (published as `queue.changed`);
-//   the transcript block is created only by the consumed `message.user` runtime event.
-//   errors: SESSION_NOT_FOUND · INVALID_INPUT (steer while idle, empty/oversized text,
-//     id reuse with different content, unsupported image input) · SESSION_BUSY (normal
-//     while busy, or stopping) · QUEUE_FULL (20 pending) · RUNTIME_UNSUPPORTED ·
-//     RUNTIME_POLICY_REQUIRED · RUNTIME_EXITED · RUNTIME_TIMEOUT · RUNTIME_PROTOCOL_ERROR ·
-//     PROVIDER_AUTH_FAILED · PROVIDER_UNAVAILABLE · INTERNAL
-
-// ---------- francois:session:clearQueue (NEW, pi-turn-controls) ----------
-
-export interface RuntimeQueueClearInput {
-  sessionId: SessionId;
-}
-export interface RuntimeQueueClearOutput {
-  /** Every entry the clear removed, state 'cancelled', text intact — the composer turns
-   *  them back into recoverable drafts. Consumed messages are never in this list. */
-  entries: RuntimeQueueEntry[];
-}
-// invoke('session_clear_queue', req: RuntimeQueueClearInput): Promise<Result<RuntimeQueueClearOutput>>
-//   errors: SESSION_NOT_FOUND · RUNTIME_UNSUPPORTED · RUNTIME_EXITED · RUNTIME_TIMEOUT ·
-//     RUNTIME_PROTOCOL_ERROR · INTERNAL
-
-export type { DeliveryMode, RuntimeMessageReceipt, RuntimeQueueEntry };
-
-// ---------- francois:session:acknowledgePolicy (NEW, pi-skills-capabilities FR-5) ----------
-// LEAD ADDITION at build time — specs/pi-skills-capabilities.md §5 requires the core to
-// refuse the first submit while `acknowledgedUnrestrictedTools` is false, but names no
-// verb that records the acknowledgment AFTER creation. Without one, a session created
-// unacknowledged (session_new_from copies settings into a NEW session, which needs its
-// own acknowledgment) could never send. This is the minimal verb that closes that.
-
-export interface RuntimePolicyAcknowledgeInput {
-  sessionId: SessionId;
-}
-// invoke('session_acknowledge_policy', req: RuntimePolicyAcknowledgeInput): Promise<Result<SessionMeta>>
-//   Sets `resourcePolicy.acknowledgedUnrestrictedTools = true`, persists it, and publishes
-//   one `session.meta`. Idempotent. It changes NOTHING else: `projectResources` and
-//   `extensions` stay pinned, and it never becomes an allow/deny tool rule.
-//   errors: SESSION_NOT_FOUND · RUNTIME_UNSUPPORTED (not a Pi session) · INTERNAL
+// Retired Pi targets return RUNTIME_UNSUPPORTED before mutation or process access.
 
 // ---------- francois:session:interrupt ----------
 
@@ -317,3 +255,4 @@ export const DEFAULT_MODEL_ID = 'sonnet';
 // ---------- event channel ----------
 // francois://session/event carries `SessionEvent` (from common.ts).
 export type { SessionEvent, Result };
+

@@ -40,6 +40,7 @@ import { ListRow } from '../../ui/ListRow';
 import { StatusDot } from '../../ui/StatusDot';
 import { formatGroupSubtitle, totalsSegments, type TotalsSegment } from './overview';
 import './overview.css';
+import { sessionIsRetired } from '../../lib/runtimeCapability';
 
 // toneVar on every STATUS_COLOR read: the contract map is the DARK palette, and
 // these tones sit beside literal tokens in the same record (lib/tone.ts).
@@ -348,7 +349,7 @@ function SessionRow({
             session with no reported occupancy reads as an em dash, never the
             legacy fields' fabricated 0 (runtime-metrics.ts `formatMetricTokens`). */}
         <span className="ov-session-ctx-value">
-          {s.agentRuntime === 'pi' ? formatMetricTokens(s.metrics?.contextTokens ?? null) : formatContextTokens(s.contextUsedTokens)}
+          {sessionIsRetired(s) ? formatMetricTokens(s.metrics?.contextTokens ?? null) : formatContextTokens(s.contextUsedTokens)}
         </span>
       </span>
       {/* The last two cells are fixed-width so the columns line up down the whole

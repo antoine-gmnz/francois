@@ -473,14 +473,6 @@
 /* pi-runtime-distribution: a fixed section under the rail/detail split, not
    inside `.acc-detail` — Pi is not a provider pane (it has no accounts of its
    own yet), so its health reads the same no matter which provider is selected. */
-.acc-pi-section {
-  flex-shrink: 0;
-  padding: var(--space-12) var(--space-18);
-  /* Flat treatment (turn 9a): no in-flow stroke — the section separates from
-     the vault body (bg-elevated) with a tonal step down instead of a border. */
-  background: var(--bg-deep);
-}
-
 /* ── left rail: which account ───────────────────────────────────────────── */
 .acc-rail {
   flex: 0 0 232px;
@@ -1145,62 +1137,11 @@
 /* pi-runtime-distribution: the resolved path / Node version lines under a
    card's note — same register as `.acc-cli-log`'s dim monospace, but no
    background block, since there is no transcript to set off. */
-.acc-cli-card-detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-  overflow-wrap: anywhere;
-  user-select: text;
-}
 /* `.acc-cli-docs` styled as a <button> rather than an <a> — reset the button
    chrome browsers add by default so it reads identically. */
-.acc-cli-copy {
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-}
-.acc-cli-copy:hover {
-  color: var(--text-2);
-}
-
 /* ── pi-provider-auth: the "+ Add Pi account" form's checkboxes ──────────
    Reuses `.acc-endpoint-form`'s row rhythm; a checkbox row is its own shape
    because a label/input pair reads left-to-right, not stacked. */
-.acc-pi-check-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-size: var(--font-size-12);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.acc-pi-check-note {
-  font-size: var(--font-size-10-5);
-  line-height: 1.5;
-  color: var(--text-faint);
-  margin-top: calc(-1 * var(--space-6));
-}
 /* FR-4's consent copy: the one warning this section carries, so it earns the
    attention tone rather than the neutral faint text every other note uses. */
-.acc-pi-check-note--warn {
-  color: var(--attn);
-}
-
 /* ── pi-provider-auth: a card's per-provider auth observations (FR-7) ───── */
-.acc-pi-observations {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-}
-.acc-pi-observations-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8);
-}

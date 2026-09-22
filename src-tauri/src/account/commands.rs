@@ -8,7 +8,7 @@
 use super::*;
 use crate::ipc::ErrorCode;
 
-use crate::ipc::{err, err_detail, ok, IpcResult};
+use crate::ipc::{err, ok, IpcResult};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
@@ -120,6 +120,11 @@ pub fn account_add(
     label: Option<String>,
     account_id: Option<String>,
 ) -> IpcResult<AccountLoginStarted> {
+    if let Some(id) = account_id.as_deref() {
+        if let Err(e) = crate::account::resolve_new_session_account(&app, Some(id)) {
+            return e.into();
+        }
+    }
     // FR-5: a supplied label must survive trimming.
     let label = match label.as_deref().map(validate_label) {
         Some(Err(msg)) => return err(ErrorCode::InvalidInput, msg),
@@ -266,6 +271,10 @@ pub fn account_rename(
     account_id: String,
     label: String,
 ) -> IpcResult<Vec<Account>> {
+    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+        return e.into();
+    }
+
     let label = match validate_label(&label) {
         Ok(l) => l,
         Err(msg) => return err(ErrorCode::InvalidInput, msg),
@@ -299,6 +308,10 @@ pub fn account_set_default(
     state: State<'_, AccountState>,
     account_id: String,
 ) -> IpcResult<Vec<Account>> {
+    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+        return e.into();
+    }
+
     let accounts = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
@@ -338,35 +351,11 @@ pub fn account_remove(
     state: State<'_, AccountState>,
     account_id: String,
 ) -> IpcResult<AccountRemoveData> {
-    let is_pi = {
-        let Ok(inner) = state.0.lock() else {
-            return err(ErrorCode::Internal, "account state is unavailable");
-        };
-        let is_pi = inner
-            .records
-            .iter()
-            .find(|r| r.id == account_id)
-            .map(|r| r.kind == AccountKind::Pi)
-            .unwrap_or(false);
-        if is_pi {
-            if let Err(e) = pi_remove_gate(&inner, &account_id) {
-                return e.into();
-            }
-        }
-        is_pi
-    };
-    if is_pi {
-        let blocked = sessions_pinned_to(&app, &account_id);
-        if !blocked.is_empty() {
-            return err_detail(
-                ErrorCode::AccountInUse,
-                "this account still has sessions using it — stop them before removing it",
-                serde_json::json!({ "blockedSessions": blocked }),
-            );
-        }
+    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+        return e.into();
     }
 
-    let (accounts, config_dir, removed_kind, previous) = {
+    let (accounts, config_dir, removed_kind) = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
@@ -382,7 +371,7 @@ pub fn account_remove(
             return e.into();
         }
         let config_dir = removed.config_dir.clone();
-        (build_list(&inner), config_dir, removed.kind, previous)
+        (build_list(&inner), config_dir, removed.kind)
     };
 
     // pi-provider-auth FR-6/FR-8: close the TOCTOU window between the
@@ -390,12 +379,6 @@ pub fn account_remove(
     // started using this Pi account in between must not have its row
     // disappear under it. Mirrors `account_trust_pi`'s
     // pre-check/write/post-write-recheck-and-rollback shape.
-    if removed_kind == AccountKind::Pi {
-        if let Some(refusal) = refuse_removal_if_in_use(&app, &state, &account_id, &previous) {
-            return refusal;
-        }
-    }
-
     // Only NOW is the removal final, so only now may an in-flight login for
     // this row be killed: a refused Pi removal above must leave it running,
     // and a PTY cannot be un-killed. Deferring it is safe because the registry
@@ -536,6 +519,10 @@ pub fn account_update_endpoint(
     clear_key: Option<bool>,
     model_ids: ModelIdsUpdate,
 ) -> IpcResult<Vec<Account>> {
+    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+        return e.into();
+    }
+
     let clear_key = clear_key.unwrap_or(false);
     if let Err(AppError {
         code, message: msg, ..
@@ -618,6 +605,15 @@ pub fn account_test_endpoint(
     api_key: Option<String>,
     account_id: Option<String>,
 ) -> IpcResult<EndpointProbe> {
+    if let Some(id) = account_id.as_deref() {
+        let Ok(inner) = state.0.lock() else {
+            return err(ErrorCode::Internal, "account state is unavailable");
+        };
+        if let Err(e) = ensure_account_available(&inner, id) {
+            return e.into();
+        }
+    }
+
     let base_url = match validate_base_url(&base_url) {
         Ok(u) => u,
         Err(e) => return e.into(),
@@ -844,6 +840,10 @@ pub fn account_add_codex(app: AppHandle, label: String) -> IpcResult<Vec<Account
 // `State<'_, _>` param, which an async command's 'static future can't carry.
 #[tauri::command(async)]
 pub fn account_codex_login(app: AppHandle, account_id: String) -> IpcResult<()> {
+    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+        return e.into();
+    }
+
     let state = app.state::<AccountState>();
     // FR-16 (multi-account): one interactive login at a time, shared with the
     // Claude path — two browser tabs racing for one credential store is the same
@@ -950,6 +950,10 @@ pub fn account_add_grok(app: AppHandle, label: String) -> IpcResult<Vec<Account>
 // FR-6: same rationale as account_codex_login above.
 #[tauri::command(async)]
 pub fn account_grok_login(app: AppHandle, account_id: String) -> IpcResult<()> {
+    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
+        return e.into();
+    }
+
     let state = app.state::<AccountState>();
     if grok_login_in_flight(&state) {
         return err(ErrorCode::InvalidInput, MSG_IN_FLIGHT);

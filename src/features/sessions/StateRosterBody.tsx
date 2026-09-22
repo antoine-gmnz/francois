@@ -1,3 +1,5 @@
+import { requestReplyPending, submitRequestReply } from '../../lib/request-replies';
+import { permissionActions, writesRule } from '../permissions/permission-card';
 // design 12b — "sorted by what wants you". The roster's state-grouped body:
 // four headings that are STATES, and three row shapes whose weight matches how
 // much the session is asking of you.
@@ -18,20 +20,20 @@
 // There is no grouping toggle: pane [1] groups by state, full stop.
 
 import { useState } from 'react';
-import type { SessionMeta } from '../../../contract/common';
+import type { PermissionDecision, SessionMeta } from '../../../contract/common';
 import { STATUS_COLOR, formatRelativeTime, statusPulses, type SessionDerived } from '../../../contract/fleet-board';
 import { permissionsDecide } from '../../lib/api';
+import type { RosterAsk } from '../../lib/rosterStore';
+import { useStore } from '../../lib/store';
 import { toneVar } from '../../lib/tone';
 import { StatusDot } from '../../ui/StatusDot';
 import { sessionAccountBadge } from '../accounts/accounts';
-import { projectMarker } from '../projects/projectMarker';
-import { useStore } from '../../lib/store';
-import type { RosterAsk } from '../../lib/rosterStore';
-import { askLine, formatLineCount, rosterContextReadout, rowTitle, runningContextFigure, workLine } from './roster-row';
-import { STATE_STATUS, type RosterStateNode, type SessionState } from './state-groups';
-import type { RosterGroupTier } from './group-tier';
 import '../accounts/accounts.css';
+import { projectMarker } from '../projects/projectMarker';
+import type { RosterGroupTier } from './group-tier';
+import { askLine, formatLineCount, rosterContextReadout, rowTitle, runningContextFigure, workLine } from './roster-row';
 import './sidebar.css';
+import { STATE_STATUS, type RosterStateNode, type SessionState } from './state-groups';
 
 /** What every row shape needs, whatever its state. */
 export interface StateRowContext {
@@ -285,12 +287,15 @@ function AskBody({ sessionId, parked }: { sessionId: string; parked: RosterAsk }
   const [inFlight, setInFlight] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const line = askLine(parked.ask);
+  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId));
+  const writable = requestReplyPending(meta, parked.blockId);
+  const actions = permissionActions(parked.ask.allowedDecisions).filter(a => !writesRule(a.decision));
 
-  const decide = (decision: 'allowOnce' | 'denyOnce') => {
-    if (inFlight) return;
+  const decide = (decision: PermissionDecision) => {
+    if (inFlight || !writable || !actions.some(a => a.decision === decision)) return;
     setInFlight(true);
     setFailed(null);
-    void permissionsDecide(sessionId, parked.blockId, decision, 'local').then((res) => {
+    void submitRequestReply(useStore.getState().sessions.find(s => s.id === sessionId), parked.blockId, () => permissionsDecide(sessionId, parked.blockId, decision, 'local')).then((res) => {
       setInFlight(false);
       // The card clears itself on `permission.resolved`; a failure has to say so
       // in place, since the row is the only thing on screen that asked.
@@ -305,22 +310,17 @@ function AskBody({ sessionId, parked }: { sessionId: string; parked: RosterAsk }
       </div>
       {failed && <div className="roster-row__failed truncate">{failed}</div>}
       <div className="roster-row__actions" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="roster-row__btn roster-row__btn--allow"
-          disabled={inFlight}
-          onClick={() => decide('allowOnce')}
-        >
-          Allow
-        </button>
-        <button
-          type="button"
-          className="roster-row__btn"
-          disabled={inFlight}
-          onClick={() => decide('denyOnce')}
-        >
-          Deny
-        </button>
+        {actions.map(action => (
+          <button
+            key={action.decision}
+            type="button"
+            className={action.allow ? 'roster-row__btn roster-row__btn--allow' : 'roster-row__btn'}
+            disabled={inFlight || !writable}
+            onClick={() => decide(action.decision)}
+          >
+            {action.short}
+          </button>
+        ))}
       </div>
     </>
   );

@@ -1,32 +1,35 @@
+import { questionAnswerKey } from '../../lib/question-answers';
+import { requestReplyAvailable, requestReplyPending, submitRequestReply } from '../../lib/request-replies';
+import { useStore } from '../../lib/store';
 // session-questions — question card renderer for the SESSION transcript
 // (spec §8 design brief, redrawn to design turn 13c "keep the table, fix the
 // table"). All submit/selection logic is pure in ./question-card
 // (unit-tested); this file is DOM assembly + card-local UI state (picks,
 // free-text drafts, hover, in-flight flag). Styling lives in ./questions.css.
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { QuestionOption, SessionQuestion } from '../../../contract/common';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
-import { InlineMarkdown } from '../conversation/MarkdownView';
 import { sessionAnswerQuestion } from '../../lib/api';
+import { InlineMarkdown } from '../conversation/MarkdownView';
 import {
-  acceptRecommended,
-  allComplete,
-  answeredCount,
-  answeredSelection,
-  buildAnswers,
-  commitFreeText,
-  currentSection,
-  displayLabel,
-  hasMultiSelect,
-  initSelections,
-  isRecommended,
-  pickOption,
-  recommendedCount,
-  sectionOrdinal,
-  shouldAutoSubmit,
-  submitAnswers,
-  type SectionSelection,
+    acceptRecommended,
+    allComplete,
+    answeredCount,
+    answeredSelection,
+    buildAnswers,
+    commitFreeText,
+    currentSection,
+    displayLabel,
+    hasMultiSelect,
+    initSelections,
+    isRecommended,
+    pickOption,
+    recommendedCount,
+    sectionOrdinal,
+    shouldAutoSubmit,
+    submitAnswers,
+    type SectionSelection,
 } from './question-card';
 import './questions.css';
 
@@ -46,17 +49,30 @@ export default function QuestionCard({
   // FR-21 race check: the failure path must not re-enable a card an event
   // already resolved. Ref, so the async submit sees the CURRENT block state.
   const resolvedRef = useRef(block.state !== 'pending');
-  resolvedRef.current = block.state !== 'pending';
+  resolvedRef.current = block.state !== 'pending' || !requestReplyPending(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId);
 
-  const interactive = block.state === 'pending' && !inFlight;
+  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId));
+  const writable = requestReplyPending(meta, block.blockId);
+  const hasSecrets = block.questions.some(q => q.isSecret);
+  useEffect(() => {
+    if (hasSecrets && (!writable || block.state !== 'pending')) {
+      setDrafts({});
+      setSel(initSelections(block.questions));
+    }
+  }, [hasSecrets, writable, block.state, block.questions]);
+  const interactive = writable && block.state === 'pending' && !inFlight;
 
   const submit = (answers: Record<string, string>) =>
-    submitAnswers({
+    interactive && requestReplyAvailable(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId) && submitAnswers({
       answers,
-      answer: (ans) => sessionAnswerQuestion(sessionId, block.blockId, ans),
+      answer: (ans) => submitRequestReply(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId, () => sessionAnswerQuestion(sessionId, block.blockId, ans)),
       setInFlight,
       isResolved: () => resolvedRef.current,
-      log: (m) => console.error(m),
+      log: (m) => console.error(hasSecrets ? 'Could not submit question answer.' : m),
+      onSubmitted: () => {
+        setDrafts({});
+        if (hasSecrets) setSel(initSelections(block.questions));
+      },
     });
 
   // FR-18: apply a selection change; on a pure single-select card the change
@@ -130,7 +146,7 @@ export default function QuestionCard({
       <div className="qcard__body">
         {block.questions.map((q, i) => (
           <Section
-            key={i}
+            key={q.id ?? i}
             q={q}
             idx={i}
             block={block}
@@ -226,9 +242,9 @@ function Section({
   const answered = block.state === 'answered';
   // FR-19: pending renders from card-local picks; a resolved card reconstructs
   // its chosen rows from the persisted answer string (survives hydration).
-  const recorded = answered ? answeredSelection(q, block.answers?.[q.question]) : null;
+  const recorded = answered ? answeredSelection(q, block.answers?.[questionAnswerKey(q)]) : null;
   const chosen = recorded ? recorded.chosen : sel.selected;
-  const freeText = recorded ? recorded.freeText : sel.freeText.trim() !== '' ? sel.freeText : null;
+  const freeText = recorded ? recorded.freeText : sel.freeText.trim() !== '' ? q.isSecret ? '[redacted]' : sel.freeText : null;
 
   // FR-17: preview of the hovered-or-selected option beneath the section.
   let preview: string | null = null;
@@ -267,12 +283,15 @@ function Section({
         ))}
 
         {/* other… free-text row (§8.4; echoes the free-text answer when chosen — FR-19) */}
-        {otherOpen && interactive ? (
+        {(q.options.length === 0 || q.isOther !== false || freeText !== null) && ((otherOpen || q.options.length === 0) && interactive ? (
           <div className="qopt qopt--other qopt--wide">
             <span className="qopt__label">
               <span className="qopt__glyph">{q.multiSelect ? '☐' : '○'}</span>
               <input
                 className="qopt__input"
+                type={q.isSecret ? 'password' : 'text'}
+                aria-label={q.header || q.question}
+                autoComplete="off"
                 value={draft}
                 autoFocus
                 onChange={(e) => onDraft(e.target.value)}
@@ -295,7 +314,7 @@ function Section({
           >
             <span className="qopt__label">
               <span className="qopt__glyph">{q.multiSelect ? '☑' : '●'}</span>
-              {freeText}
+              {q.isSecret ? '[redacted]' : freeText}
             </span>
           </div>
         ) : (
@@ -305,10 +324,10 @@ function Section({
           >
             <span className="qopt__label">
               <span className="qopt__glyph">{q.multiSelect ? '☐' : '○'}</span>
-              Something else…
+              {q.options.length === 0 ? 'Enter an answer…' : 'Something else…'}
             </span>
           </div>
-        )}
+        ))}
       </div>
 
       {preview !== null && <div className="scz qsec__prev">{preview}</div>}
@@ -353,7 +372,8 @@ function Option({
   return (
     <div
       className={cls}
-      onClick={onClick}
+      onClick={interactive ? onClick : undefined}
+      aria-disabled={!interactive}
       onMouseEnter={interactive ? () => onHover(o.label) : undefined}
       onMouseLeave={interactive ? () => onHover(null) : undefined}
     >

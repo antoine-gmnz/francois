@@ -1,7 +1,7 @@
 import { useCallback, type ReactNode } from 'react';
 import type { SessionMeta } from '../../contract/common';
 import AgentView from '../features/agents/AgentView';
-import { workflowIdFromTab } from '../features/agents/agent-tab';
+import { workflowIdFromTab } from '../lib/agent-tab';
 import DiffView from '../features/diff/DiffView';
 import type { ExtensionId } from '../../contract/extensions';
 import ExtensionView from '../features/extensions/ExtensionView';

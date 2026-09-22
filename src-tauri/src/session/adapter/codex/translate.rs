@@ -8,7 +8,7 @@
 //! needs no `AppHandle`, so every test of this adapter lives here.
 
 use super::wire::{CodexEvent, ItemKind};
-use crate::session::*;
+use crate::ids::now_ms;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;

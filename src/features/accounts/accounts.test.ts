@@ -8,87 +8,83 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, SessionMeta } from '../../../contract/common';
 import type { Account, AccountEvent, EndpointConfig } from '../../../contract/multi-account';
-import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 
 const { invokeMock, listenMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), listenMock: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
-import {
-  accountAdd,
-  accountAddCodex,
-  accountAddEndpoint,
-  accountAddGrok,
-  accountAddPi,
-  accountCodexLogin,
-  accountGrokLogin,
-  accountList,
-  accountLoginCancel,
-  accountLoginResize,
-  accountLoginWrite,
-  accountPiRefresh,
-  accountPiSetup,
-  accountRemove,
-  accountRename,
-  accountSetDefault,
-  accountTestEndpoint,
-  accountTrustPi,
-  accountUpdateEndpoint,
-  onAccountEvent,
-} from '../../lib/api';
-import { useStore } from '../../lib/store';
 import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
 import {
-  LOGIN_CANCEL_HINT,
-  LOGIN_TITLE,
-  accountBadgeText,
-  accountIsEndpoint,
-  accountSessionCounts,
-  accountDisplayLabel,
-  accountFieldOptions,
-  accountIsCodex,
-  accountIsGrok,
-  accountUsageProbeable,
-  codexAddPayload,
-  codexLoginActionLabel,
-  codexNeedsFirstLogin,
-  codexSaveDisabled,
-  grokAddPayload,
-  grokLoginActionLabel,
-  grokNeedsFirstLogin,
-  grokSaveDisabled,
-  accountMetersView,
-  accountNeedsLogin,
-  accountSecondaryEmail,
-  clampCursor,
-  defaultAccount,
-  endpointAddPayload,
-  endpointBaseUrlHasError,
-  endpointErrorLine,
-  endpointKeyPlaceholder,
-  endpointProbeSuccessLine,
-  endpointSaveDisabled,
-  endpointTestPayload,
-  endpointUpdatePayload,
-  findAccount,
-  formatModelIds,
-  loginErrorMessage,
-  middleTruncate,
-  modelIdsForAdd,
-  modelIdsForUpdate,
-  moveCursor,
-  newlyAddedAccountId,
-  parseModelIdsList,
-  removeConfirmView,
-  resolveNewSessionAccountId,
-  sessionAccountBadge,
-  startAccountFeed,
-  startLoginFeed,
-  statusChipLabel,
-  statusChipMaxChars,
-  usageAccountId,
+    accountAdd,
+    accountAddCodex,
+    accountAddEndpoint,
+    accountAddGrok,
+    accountCodexLogin,
+    accountGrokLogin,
+    accountList,
+    accountLoginCancel,
+    accountLoginResize,
+    accountLoginWrite,
+    accountRemove,
+    accountRename,
+    accountSetDefault,
+    accountTestEndpoint,
+    accountUpdateEndpoint,
+    onAccountEvent
+} from '../../lib/api';
+import { useStore } from '../../lib/store';
+import {
+    LOGIN_CANCEL_HINT,
+    LOGIN_TITLE,
+    accountBadgeText,
+    accountDisplayLabel,
+    accountFieldOptions,
+    accountIsCodex,
+    accountIsEndpoint,
+    accountIsGrok,
+    accountMetersView,
+    accountNeedsLogin,
+    accountSecondaryEmail,
+    accountSessionCounts,
+    accountUsageProbeable,
+    clampCursor,
+    codexAddPayload,
+    codexLoginActionLabel,
+    codexNeedsFirstLogin,
+    codexSaveDisabled,
+    defaultAccount,
+    endpointAddPayload,
+    endpointBaseUrlHasError,
+    endpointErrorLine,
+    endpointKeyPlaceholder,
+    endpointProbeSuccessLine,
+    endpointSaveDisabled,
+    endpointTestPayload,
+    endpointUpdatePayload,
+    findAccount,
+    formatModelIds,
+    grokAddPayload,
+    grokLoginActionLabel,
+    grokNeedsFirstLogin,
+    grokSaveDisabled,
+    loginErrorMessage,
+    middleTruncate,
+    modelIdsForAdd,
+    modelIdsForUpdate,
+    moveCursor,
+    newlyAddedAccountId,
+    parseModelIdsList,
+    removeConfirmView,
+    resolveNewSessionAccountId,
+    sessionAccountBadge,
+    startAccountFeed,
+    startLoginFeed,
+    statusChipLabel,
+    statusChipMaxChars,
+    usageAccountId,
 } from './accounts';
 
 // ---------------------------------------------------------------- fixtures
@@ -146,7 +142,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockReset();
-  useStore.setState({ accounts: [], accountsOpen: false, accountsAutoAdd: false, accountsAutoPiSetupId: null, usageByAccount: {} });
+  useStore.setState({ accounts: [], accountsOpen: false, accountsAutoAdd: false, usageByAccount: {} });
 });
 
 afterEach(() => {
@@ -178,17 +174,6 @@ describe('accounts store slice (§6)', () => {
     expect(useStore.getState().accountsAutoAdd).toBe(true);
     useStore.getState().setAccountsAutoAdd(false);
     expect(useStore.getState().accountsOpen).toBe(true);
-  });
-
-  // pi-models-metrics FR-1: "Open setup" from a Pi model field opens the
-  // Accounts modal straight into that account's setup takeover.
-  it('setAccountsAutoPiSetupId is independent of the other flags, one-shot by convention', () => {
-    expect(useStore.getState().accountsAutoPiSetupId).toBeNull();
-    useStore.getState().setAccountsAutoPiSetupId('acc-1');
-    expect(useStore.getState().accountsAutoPiSetupId).toBe('acc-1');
-    expect(useStore.getState().accountsOpen).toBe(false);
-    useStore.getState().setAccountsAutoPiSetupId(null);
-    expect(useStore.getState().accountsAutoPiSetupId).toBeNull();
   });
 });
 
@@ -1157,37 +1142,5 @@ describe('pi accounts (shared derivations)', () => {
 
   it('never probes plan limits — a Pi runtime is not yet connected', () => {
     expect(accountUsageProbeable(pi())).toBe(false);
-  });
-
-  it('sends account_add_pi, account_trust_pi, account_pi_setup and account_pi_refresh on the right channels', async () => {
-    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
-    await accountAddPi({
-      kind: 'pi',
-      label: 'Work Pi',
-      configDir: '/home/u/.pi/agent',
-      runtime: 'native',
-      inheritEnvironmentCredentials: false,
-      trustConfiguration: false,
-    });
-    expect(invokeMock).toHaveBeenCalledWith('account_add_pi', {
-      kind: 'pi',
-      label: 'Work Pi',
-      configDir: '/home/u/.pi/agent',
-      runtime: 'native',
-      inheritEnvironmentCredentials: false,
-      trustConfiguration: false,
-    });
-
-    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
-    await accountTrustPi({ accountId: 'pi1', trustConfiguration: true });
-    expect(invokeMock).toHaveBeenCalledWith('account_trust_pi', { accountId: 'pi1', trustConfiguration: true });
-
-    invokeMock.mockResolvedValueOnce({ ok: true, data: { loginId: 'l1', cols: 80, rows: 24 } });
-    await accountPiSetup({ accountId: 'pi1' });
-    expect(invokeMock).toHaveBeenCalledWith('account_pi_setup', { accountId: 'pi1' });
-
-    invokeMock.mockResolvedValueOnce({ ok: true, data: [] });
-    await accountPiRefresh({ accountId: 'pi1' });
-    expect(invokeMock).toHaveBeenCalledWith('account_pi_refresh', { accountId: 'pi1' });
   });
 });

@@ -2,7 +2,6 @@
 
 use super::*;
 
-use crate::ipc::AppError;
 use crate::permissions::{PermissionAsk, PermissionRule};
 use serde::Serialize;
 use serde_json::Value;
@@ -13,10 +12,7 @@ use tauri::{AppHandle, Emitter};
 /// carry — see that module's own doc for why it is a sibling rather than a
 /// child. Re-exported here (not glob-exported) because every other file in
 /// this crate already reaches these names through `events::*`.
-pub use runtime_events::{
-    RuntimeAttachmentRef, RuntimeEventPayload, RuntimeMetrics, RuntimeModelDescriptor,
-    RuntimeToolCall,
-};
+pub use runtime_events::{RuntimeEventPayload, RuntimeMetrics};
 
 /// pi-session-durability: whether a runtime-owned session can continue its
 /// native conversation. Mirrors contract/common.ts `RuntimeRecovery` exactly —
@@ -25,6 +21,8 @@ pub use runtime_events::{
 /// `RuntimeFailure`'s own display text is (bounded, control/bidi-free).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+// Retained wire vocabulary for saved Pi metadata.
+#[allow(dead_code)]
 pub enum RuntimeRecoveryState {
     Ready,
     Disconnected,
@@ -54,31 +52,6 @@ impl RuntimeRecovery {
             state: RuntimeRecoveryState::Disconnected,
             last_verified_at: None,
             message: None,
-        }
-    }
-
-    /// FR-3: a successful validate-then-connect — `at` stamps `lastVerifiedAt`.
-    pub(crate) fn ready(at: u64) -> Self {
-        Self {
-            state: RuntimeRecoveryState::Ready,
-            last_verified_at: Some(at),
-            message: None,
-        }
-    }
-
-    /// FR-3/FR-7: one of the four hard-fail states, each with the single cause
-    /// the banner renders. Callers pass an already-sanitized message (the Pi
-    /// adapter's own `process::sanitize_diagnostic` — bounded, control/bidi
-    /// free) so a Pi-supplied path or reason can never break layout.
-    pub(crate) fn failed(state: RuntimeRecoveryState, message: impl Into<String>) -> Self {
-        debug_assert!(!matches!(
-            state,
-            RuntimeRecoveryState::Ready | RuntimeRecoveryState::Disconnected
-        ));
-        Self {
-            state,
-            last_verified_at: None,
-            message: Some(message.into()),
         }
     }
 }
@@ -180,6 +153,8 @@ pub enum SessionEvent {
         #[serde(rename = "blockId")]
         block_id: String,
         questions: Vec<SessionQuestion>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        blocking: Option<bool>,
     },
     #[serde(rename = "question.resolved")]
     QuestionResolved {
@@ -386,6 +361,9 @@ mod tests {
     #[test]
     fn question_event_members_serialize_to_contract_shape() {
         let questions = vec![SessionQuestion {
+            id: None,
+            is_other: None,
+            is_secret: None,
             question: "Q".into(),
             header: "H".into(),
             options: vec![QuestionOption {
@@ -397,6 +375,7 @@ mod tests {
             multi_select: true,
         }];
         let asked = serde_json::to_value(SessionEvent::QuestionAsked {
+            blocking: None,
             session_id: "s1".into(),
             block_id: "q1".into(),
             questions,
@@ -550,17 +529,6 @@ mod tests {
         assert_eq!(v["step"]["label"], "ended with the turn");
     }
 
-    #[test]
-    fn run_state_maps_onto_the_closed_session_status_vocabulary() {
-        // pi-runtime-boundary: `stopping` has no wire status of its own and
-        // reads as still-busy `running`; `failed` is the terminal `error`.
-        assert_eq!(RuntimeRunState::Starting.session_status(), status::STARTING);
-        assert_eq!(RuntimeRunState::Running.session_status(), status::RUNNING);
-        assert_eq!(RuntimeRunState::Stopping.session_status(), status::RUNNING);
-        assert_eq!(RuntimeRunState::Idle.session_status(), status::IDLE);
-        assert_eq!(RuntimeRunState::Failed.session_status(), status::ERROR);
-    }
-
     /// pi-session-durability: `RuntimeRecovery` mirrors contract/common.ts
     /// exactly — kebab-case state, `lastVerifiedAt`/`message` omitted (never
     /// null) when absent.
@@ -569,7 +537,12 @@ mod tests {
         let disconnected = serde_json::to_value(RuntimeRecovery::disconnected()).unwrap();
         assert_eq!(disconnected, json!({ "state": "disconnected" }));
 
-        let ready = serde_json::to_value(RuntimeRecovery::ready(1_000)).unwrap();
+        let ready = serde_json::to_value(RuntimeRecovery {
+            state: RuntimeRecoveryState::Ready,
+            last_verified_at: Some(1_000),
+            message: None,
+        })
+        .unwrap();
         assert_eq!(ready, json!({ "state": "ready", "lastVerifiedAt": 1_000 }));
 
         for (state, wire) in [
@@ -578,7 +551,12 @@ mod tests {
             (RuntimeRecoveryState::Incompatible, "incompatible"),
             (RuntimeRecoveryState::AccountMissing, "account-missing"),
         ] {
-            let failed = serde_json::to_value(RuntimeRecovery::failed(state, "cause")).unwrap();
+            let failed = serde_json::to_value(RuntimeRecovery {
+                state,
+                last_verified_at: None,
+                message: Some("cause".into()),
+            })
+            .unwrap();
             assert_eq!(failed, json!({ "state": wire, "message": "cause" }));
         }
     }
@@ -610,137 +588,6 @@ pub enum RuntimeRunState {
     Idle,
     Stopping,
     Failed,
-}
-impl RuntimeRunState {
-    /// The `Session.status` a `run.state` event settles the session onto
-    /// (pi-runtime-boundary): `Stopping` still counts as busy (cancellation in
-    /// flight, no dedicated wire status for it) and `Failed` is the terminal
-    /// `status::ERROR` — the caller pairs it with clearing/setting
-    /// `error_message`, never this function alone.
-    pub(crate) fn session_status(self) -> &'static str {
-        match self {
-            Self::Starting => status::STARTING,
-            Self::Running | Self::Stopping => status::RUNNING,
-            Self::Idle => status::IDLE,
-            Self::Failed => status::ERROR,
-        }
-    }
-}
-#[allow(dead_code)]
-pub(crate) struct RuntimeEventSequence {
-    session_id: String,
-    generation: String,
-    sequence: u64,
-}
-impl RuntimeEventSequence {
-    pub(crate) fn generation(&self) -> &str {
-        &self.generation
-    }
-    pub(crate) fn new(session_id: String) -> Result<Self, AppError> {
-        if !crate::ipc::valid_correlation(&session_id) {
-            return Err(AppError::runtime(
-                crate::ipc::RuntimeErrorCode::InvalidInput,
-                "invalid session id",
-            ));
-        }
-        Ok(Self {
-            session_id,
-            generation: uuid(),
-            sequence: 0,
-        })
-    }
-    pub(crate) fn next(
-        &mut self,
-        at: u64,
-        run_id: Option<String>,
-        request_id: Option<String>,
-        event: RuntimeEventPayload,
-    ) -> Result<SessionEvent, AppError> {
-        const MAX_SAFE: u64 = 9_007_199_254_740_991;
-        if at > MAX_SAFE
-            || self.sequence >= MAX_SAFE
-            || run_id
-                .iter()
-                .chain(request_id.iter())
-                .any(|id| !crate::ipc::valid_correlation(id))
-        {
-            return Err(AppError::runtime(
-                crate::ipc::RuntimeErrorCode::InvalidInput,
-                "invalid runtime event envelope",
-            ));
-        }
-        if let RuntimeEventPayload::Capabilities { capabilities } = &event {
-            adapter::validate_capabilities(capabilities)?;
-        }
-        self.sequence += 1;
-        Ok(SessionEvent::RuntimeEvent {
-            session_id: self.session_id.clone(),
-            generation: self.generation.clone(),
-            sequence: self.sequence,
-            run_id,
-            request_id,
-            at,
-            event,
-        })
-    }
-}
-#[cfg(test)]
-mod ordering_tests {
-    use super::*;
-    #[test]
-    fn ordered_uuid_generation_and_validation() {
-        assert!(RuntimeEventSequence::new("bad".into()).is_err());
-        let mut seq = RuntimeEventSequence::new(uuid()).unwrap();
-        let a = serde_json::to_value(
-            seq.next(
-                1,
-                None,
-                Some(uuid()),
-                RuntimeEventPayload::RunState {
-                    state: RuntimeRunState::Starting,
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let b = serde_json::to_value(
-            seq.next(
-                2,
-                None,
-                None,
-                RuntimeEventPayload::RunState {
-                    state: RuntimeRunState::Idle,
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(a["generation"], b["generation"]);
-        assert!(crate::ipc::valid_correlation(
-            a["generation"].as_str().unwrap()
-        ));
-        assert_eq!(b["sequence"], 2);
-        assert!(seq
-            .next(
-                3,
-                None,
-                Some("unsafe".into()),
-                RuntimeEventPayload::RunState {
-                    state: RuntimeRunState::Failed
-                }
-            )
-            .is_err());
-        assert!(seq
-            .next(
-                u64::MAX,
-                None,
-                None,
-                RuntimeEventPayload::RunState {
-                    state: RuntimeRunState::Idle
-                }
-            )
-            .is_err());
-    }
 }
 
 fn serialize_uuid<S: serde::Serializer>(id: &str, serializer: S) -> Result<S::Ok, S::Error> {

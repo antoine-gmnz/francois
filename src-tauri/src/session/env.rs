@@ -26,6 +26,14 @@ pub trait SessionEnv: Send + Sync {
     fn emit_agent(&self, ev: AgentEvent);
     fn emit_workflow_detail(&self, ev: WorkflowDetailEvent);
     fn persist(&self);
+    /// Legacy observation environments never publish native capability snapshots.
+    fn publish_meta(&self, _session_id: &str) {}
+    fn commit_anchor(&self, _session_id: &str, _anchor: &str) -> Result<(), AppError> {
+        Err(AppError::new(
+            ErrorCode::SettingsWriteFailed,
+            "Native session storage is unavailable.",
+        ))
+    }
     fn append_transcript(&self, session_id: &str, block: &BufBlock);
     /// command-inspect FR-1: append one settled step's `StepDetail` to its
     /// session's sidecar — unconditional, like `append_transcript`, which is
@@ -47,6 +55,14 @@ pub trait SessionEnv: Send + Sync {
 }
 
 impl SessionEnv for AppHandle {
+    fn publish_meta(&self, session_id: &str) {
+        if let Some(meta) = self.engine().with_session(session_id, |s| s.meta(self)) {
+            self.emit_session(SessionEvent::Meta { meta });
+        }
+    }
+    fn commit_anchor(&self, session_id: &str, anchor: &str) -> Result<(), AppError> {
+        persistence::persist_anchor(self, self.state::<Engine>().inner(), session_id, anchor)
+    }
     fn engine(&self) -> &Engine {
         self.state::<Engine>().inner()
     }
@@ -94,6 +110,10 @@ pub mod testenv {
         pub agent_events: Mutex<Vec<AgentEvent>>,
         pub workflow_events: Mutex<Vec<WorkflowDetailEvent>>,
         pub persist_calls: Mutex<u32>,
+        pub persist_failure: Mutex<Option<AppError>>,
+        /// When set, anchors commit through the real atomic `sessions.json`
+        /// writer at this path (process-session-continuity restart tests).
+        pub anchor_file: Mutex<Option<std::path::PathBuf>>,
         pub transcript_appends: Mutex<Vec<(String, String)>>, // (sessionId, blockId)
         pub diff_notes: Mutex<Vec<(String, String)>>,         // (sessionId, cwd)
         /// command-inspect: (sessionId, StepDetail) for every capture — lets a
@@ -103,6 +123,36 @@ pub mod testenv {
     }
 
     impl SessionEnv for TestEnv {
+        fn publish_meta(&self, session_id: &str) {
+            if let Some(meta) = self.engine.with_session(session_id, |s| {
+                let kind = match s.agent_runtime {
+                    AgentRuntime::Codex => crate::account::AccountKind::CodexCli,
+                    AgentRuntime::Grok => crate::account::AccountKind::GrokCli,
+                    AgentRuntime::Francois => crate::account::AccountKind::OpenAiCompatible,
+                    AgentRuntime::Pi => crate::account::AccountKind::Pi,
+                    AgentRuntime::ClaudeCode => crate::account::AccountKind::ClaudeCodeOauth,
+                };
+                s.meta(&testutil::fake_accounts().with(&s.account_id, kind))
+            }) {
+                self.emit_session(SessionEvent::Meta { meta });
+            }
+        }
+        fn commit_anchor(&self, session_id: &str, anchor: &str) -> Result<(), AppError> {
+            if let Some(error) = self.persist_failure.lock().unwrap().clone() {
+                return Err(error);
+            }
+            if let Some(path) = self.anchor_file.lock().unwrap().clone() {
+                return persistence::persist_anchor_at(&self.engine, session_id, anchor, &path);
+            }
+            self.engine.with_session_mut(session_id, |session| {
+                if session.claude_session_id.as_deref() != Some(anchor) {
+                    session.response_mode_sent = None;
+                }
+                session.claude_session_id = Some(anchor.into());
+            });
+            self.persist();
+            Ok(())
+        }
         fn engine(&self) -> &Engine {
             &self.engine
         }

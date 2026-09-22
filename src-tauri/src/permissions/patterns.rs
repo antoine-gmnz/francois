@@ -274,6 +274,7 @@ pub fn split_pattern(pattern: &str) -> Option<(&str, &str)> {
 pub fn build_ask(tool: &str, input: &Value, cwd: &str) -> PermissionAsk {
     let pattern = generate_pattern(tool, input, cwd);
     PermissionAsk {
+        allowed_decisions: None,
         tool_name: tool.to_string(),
         summary: summarize_input(tool, input),
         input_json: input_json(input),

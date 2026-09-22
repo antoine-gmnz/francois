@@ -15,6 +15,7 @@
 //! `Unknown` — visible to the caller, never fatal.
 
 use serde::Deserialize;
+#[cfg(test)]
 use serde_json::Value;
 
 /// FR-15: token accounting off `turn.completed`.
@@ -50,6 +51,9 @@ pub(super) struct Item {
     pub(super) kind: ItemKind,
 }
 
+// Legacy `codex exec --json` vocabulary: only the (test-only) line parser
+// constructs it now that turns run over the native App Server.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum ItemKind {
     AgentMessage {
@@ -82,6 +86,9 @@ pub(super) enum ItemKind {
     Unknown,
 }
 
+// Legacy `codex exec --json` vocabulary: only the (test-only) line parser
+// constructs it now that turns run over the native App Server.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum CodexEvent {
     /// The resume anchor for every later turn (FR-8).
@@ -111,9 +118,11 @@ pub(super) enum CodexEvent {
     Unknown,
 }
 
+#[cfg(test)]
 const UNKNOWN_ERROR: &str = "codex reported an error with no message";
 
 /// FR-12: parse one stdout line. Never fails — see the module doc.
+#[cfg(test)]
 pub(super) fn parse_line(line: &str) -> CodexEvent {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -172,6 +181,7 @@ pub(super) fn parse_line(line: &str) -> CodexEvent {
     }
 }
 
+#[cfg(test)]
 fn parse_item(v: &Value) -> Option<Item> {
     let id = v.get("id").and_then(|i| i.as_str())?.to_string();
     let kind = match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
@@ -218,6 +228,7 @@ fn parse_item(v: &Value) -> Option<Item> {
     Some(Item { id, kind })
 }
 
+#[cfg(test)]
 fn str_field(v: &Value, key: &str) -> String {
     v.get(key)
         .and_then(|s| s.as_str())

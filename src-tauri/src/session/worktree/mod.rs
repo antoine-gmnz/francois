@@ -808,6 +808,9 @@ fn removal_block_reason(status: &WorktreeStatusData) -> String {
 /// Split from the `#[tauri::command]` wrapper for the same testability reason
 /// as `worktree_status_impl`.
 pub fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResult<Option<()>> {
+    if let Err(e) = engine.ensure_available(session_id) {
+        return e.into();
+    }
     let (path, source_repo_root, base_ref, created_branch, distro) = {
         let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let Some(s) = map.get(session_id) else {

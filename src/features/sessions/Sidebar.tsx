@@ -1,37 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
-import { filterSessionsByProject } from '../../../contract/projects';
-import type { EditorId } from '../../../contract/open-in-vscode';
-import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
-import { AdoptCloudButton } from '../cloud-sessions/AdoptCloudButton';
-import { prunePaletteSession } from '../palette/paletteData';
-import { showToast } from '../palette/palette';
-import { visibleSessions } from '../projects/projects';
-import { MAX_PANES, paneCount, paneIndicesOf } from '../../lib/layoutStore';
-import { abbreviate } from '../../lib/path';
-import { focusedSessionId } from '../../lib/layoutStore';
-import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isBusyStatus } from '../../../contract/fleet-board';
+import type { EditorId } from '../../../contract/open-in-vscode';
+import { filterSessionsByProject } from '../../../contract/projects';
+import { sessionOpenInEditor, sessionRemove, sessionWorktreeRemove, sessionWorktreeStatus } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
+import { focusedSessionId, MAX_PANES, paneCount, paneIndicesOf } from '../../lib/layoutStore';
+import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore';
+import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
+import { AdoptCloudButton } from '../cloud-sessions/AdoptCloudButton';
+import { showToast } from '../palette/palette';
+import { prunePaletteSession } from '../palette/paletteData';
+import { visibleSessions } from '../projects/projects';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
 import { loadCollapsedTiers, persistCollapsedTiers, withGroupTiers } from './group-tier';
 import { groupKeyFor } from './roster-groups';
-import {
-  flattenStateGroups,
-  groupSessionsByState,
-  loadCollapsedStates,
-  persistCollapsedStates,
-} from './state-groups';
 import { paneBadgeLabel } from './roster-row';
 import { RosterGate } from './RosterGate';
 import { SessionContextMenu, type MenuState } from './SessionContextMenu';
+import './sidebar.css';
+import {
+    flattenStateGroups,
+    groupSessionsByState,
+    loadCollapsedStates,
+    persistCollapsedStates,
+} from './state-groups';
 import { StateRosterBody } from './StateRosterBody';
 import { useRowCursorClamp } from './useRowCursorClamp';
 import { useSessionFleetSync } from './useSessionFleetSync';
 import { useSidebarKeyboard } from './useSidebarKeyboard';
-import './sidebar.css';
+import { sessionIsRetired } from '../../lib/runtimeCapability';
 
 const ICON = { size: 13, strokeWidth: 1.75 } as const;
 
@@ -225,6 +225,7 @@ export default function Sidebar({ home }: { home: string }) {
   // session-worktree FR-17: kicks off the dirty/unpushed probe when the confirm
   // step opens for a session that has a worktree.
   const startWorktreeCheck = (sessionId: string) => {
+    if (sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sessionId))) return;
     setMenu((m) => (m ? { ...m, worktreeChecking: true } : m));
     void sessionWorktreeStatus(sessionId).then((res) => {
       setMenu((m) => {
@@ -244,6 +245,7 @@ export default function Sidebar({ home }: { home: string }) {
   // failed directory removal surfaces as a toast, never blocks removing the
   // session from Francois.
   const doRemove = async (sessionId: string, removeWorktree: boolean) => {
+    if (sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sessionId))) return;
     if (removeWorktree) {
       const wtRes = await sessionWorktreeRemove(sessionId);
       if (!wtRes.ok) showToast(wtRes.error.message, 'error');
@@ -403,6 +405,7 @@ export default function Sidebar({ home }: { home: string }) {
       {menu && (
         <SessionContextMenu
           menu={menu}
+          readOnly={sessionIsRetired(sessions.find((session) => session.id === menu.sessionId))}
           sessionName={sessions.find((session) => session.id === menu.sessionId)?.name ?? '?'}
           sessionPath={abbreviate(sessions.find((session) => session.id === menu.sessionId)?.cwd ?? '', home)}
           worktree={sessions.find((session) => session.id === menu.sessionId)?.worktree ?? null}
@@ -424,6 +427,7 @@ export default function Sidebar({ home }: { home: string }) {
           }
           onStartConfirm={() => {
             const target = sessions.find((session) => session.id === menu.sessionId);
+            if (sessionIsRetired(target)) return;
             setMenu({ ...menu, confirming: true });
             // session-worktree FR-17: probe dirty/unpushed only once the confirm
             // step is actually open, and only for a session that has a worktree.

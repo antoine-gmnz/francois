@@ -1,11 +1,11 @@
-import type { RefObject } from 'react';
 import { Check, CircleAlert, Columns2, Copy, ExternalLink, Settings, Trash2, TriangleAlert } from 'lucide-react';
+import type { RefObject } from 'react';
 import type { AppError, SessionId, SessionWorktree } from '../../../contract/common';
 import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
 import { editorMenuLabel } from '../../../contract/open-in-vscode';
 import type { WorktreeStatusData } from '../../../contract/session-worktree';
-import { worktreeRemovalBlockReason } from './worktree';
 import './sidebar.css';
+import { worktreeRemovalBlockReason } from './worktree';
 
 export interface MenuState {
   sessionId: string;
@@ -33,6 +33,7 @@ export interface MenuState {
 
 export interface SessionContextMenuProps {
   menu: MenuState;
+  readOnly?: boolean;
   sessionName: string;
   /** The target session's cwd, already home-abbreviated for display. */
   sessionPath: string;
@@ -72,6 +73,7 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 export function SessionContextMenu({
   menu,
+  readOnly = false,
   sessionName,
   sessionPath,
   worktree,
@@ -120,7 +122,7 @@ export function SessionContextMenu({
           </span>
           <span>{menu.error.message}</span>
         </div>
-      ) : !menu.confirming ? (
+      ) : (!menu.confirming || readOnly) ? (
         // session-rename FR-12: the non-destructive actions read first; the
         // destructive one stays last, behind a rule. Neither the confirm nor the
         // error state offers them — those are the remove flow, unchanged.
@@ -163,12 +165,12 @@ export function SessionContextMenu({
             <span className="context-menu__label">{menu.copied ? 'Path copied' : 'Copy path'}</span>
           </button>
           <div className="context-menu__sep" />
-          <button type="button" className="context-menu__item context-menu__item--danger" onClick={onStartConfirm}>
+          {!readOnly && <button type="button" className="context-menu__item context-menu__item--danger" onClick={onStartConfirm}>
             <span className="context-menu__glyph">
               <Trash2 {...ICON} />
             </span>
             <span className="context-menu__label">Remove session</span>
-          </button>
+          </button>}
         </div>
       ) : (
         <div className="context-menu__body context-menu__body--confirm">

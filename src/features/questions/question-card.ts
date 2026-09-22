@@ -1,3 +1,4 @@
+import { questionAnswerKey } from '../../lib/question-answers';
 // session-questions — pure question-card logic (FR-12/17/18/19/20/21), extracted
 // from QuestionCard.tsx so selection accumulation, submit enablement, the ', '
 // multi-select join, free-text pass-through and the FR-21 failure path are
@@ -52,7 +53,7 @@ export function commitFreeText(
   text: string,
 ): SectionSelection[] {
   const q = questions[sectionIdx];
-  if (!q || text.trim() === '') return sel;
+  if (!q || text.trim() === '' || (q.options.length > 0 && q.isOther === false)) return sel;
   return sel.map((s, i) => {
     if (i !== sectionIdx) return s;
     return q.multiSelect ? { ...s, freeText: text } : { selected: [], freeText: text };
@@ -166,16 +167,16 @@ export function shouldAutoSubmit(questions: SessionQuestion[], sel: SectionSelec
  * labels in option order joined with ', ', committed free text last.
  */
 export function buildAnswers(questions: SessionQuestion[], sel: SectionSelection[]): Record<string, string> {
-  const answers: Record<string, string> = {};
+  const answers: Record<string, string> = Object.create(null);
   questions.forEach((q, i) => {
     const s = sel[i] ?? { selected: [], freeText: '' };
     if (!q.multiSelect) {
-      answers[q.question] = s.selected[0] ?? s.freeText;
+      answers[questionAnswerKey(q)] = s.selected[0] ?? s.freeText;
       return;
     }
     const parts = q.options.map((o) => o.label).filter((l) => s.selected.includes(l));
     if (s.freeText.trim() !== '') parts.push(s.freeText);
-    answers[q.question] = parts.join(', ');
+    answers[questionAnswerKey(q)] = parts.join(', ');
   });
   return answers;
 }
@@ -191,6 +192,7 @@ export function answeredSelection(
   answer: string | undefined,
 ): { chosen: string[]; freeText: string | null } {
   if (answer === undefined) return { chosen: [], freeText: null };
+  if (question.isSecret) return { chosen: [], freeText: '[redacted]' };
   const labels = question.options.map((o) => o.label);
   if (!question.multiSelect) {
     return labels.includes(answer) ? { chosen: [answer], freeText: null } : { chosen: [], freeText: answer };
@@ -214,6 +216,7 @@ export interface SubmitAnswersArgs {
   isResolved: () => boolean;
   /** console.error injection point. */
   log: (message: string) => void;
+  onSubmitted?: () => void;
 }
 
 /**
@@ -232,6 +235,7 @@ export async function submitAnswers(a: SubmitAnswersArgs): Promise<void> {
   } catch (e) {
     failure = e instanceof Error ? e.message : String(e);
   }
+  if (failure === null) a.onSubmitted?.();
   if (failure !== null) {
     a.log(`answerQuestion failed: ${failure}`);
     if (!a.isResolved()) a.setInFlight(false);
@@ -242,7 +246,7 @@ export async function submitAnswers(a: SubmitAnswersArgs): Promise<void> {
 
 /** True while any pending question card exists in the visible transcript. */
 export function hasPendingQuestionBlock(blocks: ConversationBlock[]): boolean {
-  return blocks.some((b) => b.kind === 'question' && b.state === 'pending');
+  return blocks.some((b) => b.kind === 'question' && b.state === 'pending' && b.blocking !== false);
 }
 
 /**

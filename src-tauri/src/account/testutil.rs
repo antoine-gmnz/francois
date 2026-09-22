@@ -22,9 +22,7 @@ pub(crate) fn record_fixture(id: &str, label: &str) -> AccountRecord {
 /// so fingerprint/trust tests can write configuration files into it.
 pub(crate) fn pi_record_fixture(id: &str, label: &str, trusted: bool) -> AccountRecord {
     let dir = tmp_account_dir(&format!("pi-{id}"));
-    let fingerprint = trusted
-        .then(|| super::compute_fingerprint(&dir.to_string_lossy()).into_baseline())
-        .flatten();
+    let fingerprint = None;
     AccountRecord {
         id: id.into(),
         label: label.into(),
@@ -70,6 +68,7 @@ pub(crate) fn endpoint_record_fixture(id: &str, label: &str, base_url: &str) -> 
 pub(crate) fn inner_fixture(ids: &[&str], default_id: &str) -> AccountInner {
     const LABELS: [&str; 3] = ["work", "perso", "client"];
     AccountInner {
+        retired_records: HashMap::new(),
         records: ids
             .iter()
             .enumerate()
@@ -80,44 +79,6 @@ pub(crate) fn inner_fixture(ids: &[&str], default_id: &str) -> AccountInner {
         default_email: None,
         default_organization: None,
         login: None,
-        pi_setups: HashMap::new(),
-    }
-}
-
-/// pi-provider-auth FR-3: a live-shaped `LoginHandle` for the `pi_setups` map
-/// — a real PTY pair (never read, never written) and a no-op killer, so the
-/// FR-4/FR-8 in-use gates can be exercised without spawning anything.
-pub(crate) fn pi_setup_handle_fixture(account_id: &str) -> LoginHandle {
-    #[derive(Debug)]
-    struct NoopKiller;
-    impl portable_pty::ChildKiller for NoopKiller {
-        fn kill(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
-            Box::new(NoopKiller)
-        }
-    }
-    let master = portable_pty::native_pty_system()
-        .openpty(portable_pty::PtySize {
-            rows: 1,
-            cols: 1,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap()
-        .master;
-    LoginHandle {
-        login_id: format!("login-{account_id}"),
-        account_id: account_id.into(),
-        label: None,
-        config_dir: "/pi/home".into(),
-        existing: true,
-        writer: Box::new(std::io::sink()),
-        master,
-        killer: Box::new(NoopKiller),
-        settled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        kind: AccountKind::Pi,
     }
 }
 

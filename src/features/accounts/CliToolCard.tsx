@@ -20,27 +20,19 @@
 // different phrasings — the same discipline providers.ts applies to the
 // "coming soon" sentences.
 
-import { AlertTriangle, Check, Copy, Download, ExternalLink, Loader } from 'lucide-react';
+import { Check, Download, ExternalLink, Loader } from 'lucide-react';
 import type { CliToolStatus } from '../../../contract/multi-account';
+import './accounts.css';
 import {
-  cliToolHeadline,
-  cliToolRationale,
-  installButtonLabel,
-  installCommand,
-  installErrorText,
-  outputTail,
-  piSetupErrorText,
-  piSetupHeadline,
-  piSetupNote,
-  runtimeCheckedAtLabel,
-  runtimeDetailLines,
-  runtimeRetryLabel,
-  runtimeShowsInstallCommand,
-  type CliInstallState,
-  type RuntimeProbeState,
+    cliToolHeadline,
+    cliToolRationale,
+    installButtonLabel,
+    installCommand,
+    installErrorText,
+    outputTail,
+    type CliInstallState
 } from './cliTools';
 import type { ProviderSpec } from './providers';
-import './accounts.css';
 
 /**
  * The one-line form for the section head, shown only once the CLI IS installed —
@@ -115,91 +107,6 @@ export function CliToolCard({ spec, tool, state, busy, onInstall }: CliToolCardP
         {state.phase === 'failed' && state.error && (
           <div className="acc-cli-error">{installErrorText(state.error)}</div>
         )}
-      </div>
-    </div>
-  );
-}
-
-export interface PiSetupCardProps {
-  probe: RuntimeProbeState;
-  onRetry: () => void;
-}
-
-/**
- * pi-runtime-distribution §3/§8: "Accounts → Pi setup". Reuses the vendor CLI
- * card's shape (icon, title, note, command row) rather than a new card type —
- * the difference is a health PROBE, not an npm install, so it has no output
- * transcript and its own icon-per-state instead of one static Download glyph.
- */
-export function PiSetupCard({ probe, onRetry }: PiSetupCardProps): JSX.Element {
-  const { status } = probe;
-  const probing = probe.phase === 'probing' || probe.phase === 'idle';
-  const probeFailedWithNoStatus = probe.phase === 'failed' && !status;
-  const detailLines = status ? runtimeDetailLines(status) : [];
-  // Design brief "Data shown" lists checkedAt; only worth a line once a status
-  // has actually loaded (probing/first-load-failure have nothing to date).
-  const checkedAtLabel = probe.phase === 'loaded' && status ? runtimeCheckedAtLabel(status) : null;
-  const errorText = piSetupErrorText(probe);
-  const showsCommand = status ? runtimeShowsInstallCommand(status) : false;
-
-  const icon = probing ? (
-    <Loader size={14} className="acc-endpoint-spin" />
-  ) : probeFailedWithNoStatus ? (
-    <AlertTriangle size={14} />
-  ) : status?.state === 'ready' ? (
-    <Check size={14} />
-  ) : status?.state === 'missing' ? (
-    <Download size={14} />
-  ) : (
-    <AlertTriangle size={14} />
-  );
-
-  return (
-    <div className="acc-cli-card">
-      <div className="acc-cli-card-icon" aria-hidden="true">
-        {icon}
-      </div>
-      <div className="acc-cli-card-body">
-        <div className="acc-cli-card-title">{piSetupHeadline(probe)}</div>
-        <div className="acc-cli-card-note">{piSetupNote(probe)}</div>
-        {(detailLines.length > 0 || checkedAtLabel) && (
-          <div className="acc-cli-card-detail">
-            {detailLines.map((line) => (
-              <div key={line}>{line}</div>
-            ))}
-            {checkedAtLabel && <div>{checkedAtLabel}</div>}
-          </div>
-        )}
-
-        <div className="acc-cli-card-run">
-          {status && showsCommand && (
-            <>
-              <code className="acc-cli-cmd">{status.installCommand}</code>
-              <button
-                type="button"
-                className="acc-cli-docs acc-cli-copy"
-                onClick={() =>
-                  void navigator.clipboard
-                    ?.writeText(status.installCommand)
-                    .catch(() => {
-                      /* clipboard denied — the command is on screen to copy by hand */
-                    })
-                }
-                title="Copy the certified install command"
-              >
-                <Copy size={11} aria-hidden="true" />
-                Copy
-              </button>
-            </>
-          )}
-          <span className="acc-cli-card-actions">
-            <button type="button" className="acc-cli-install" disabled={probing} onClick={onRetry}>
-              {runtimeRetryLabel(probe.phase)}
-            </button>
-          </span>
-        </div>
-
-        {errorText && <div className="acc-cli-error">{errorText}</div>}
       </div>
     </div>
   );

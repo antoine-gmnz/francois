@@ -29,47 +29,27 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { AppError } from '../../../contract/common';
-import type { LegacySessionProfile, PiBuiltinTool, SessionProfile } from '../../../contract/session-profiles';
-import { MAX_PI_INSTRUCTION_PATHS, MAX_PI_SKILL_PATHS, PI_BUILTIN_TOOLS } from '../../../contract/session-profiles';
-import { profilesCopyToPi, profilesCreate, profilesRemove, profilesUpdate, projectList } from '../../lib/api';
-import { useStore } from '../../lib/store';
+import type { LegacySessionProfile, SessionProfile } from '../../../contract/session-profiles';
+import { profilesCreate, profilesRemove, profilesUpdate, projectList } from '../../lib/api';
 import { useDismiss } from '../../lib/hooks/useDismiss';
+import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
-import { ChipGroup } from '../../ui/ChipGroup';
-import { Chip } from '../../ui/Chip';
-import { Action } from '../../ui/Action';
 import { ListRow } from '../../ui/ListRow';
 import { RemoveControl } from '../../ui/RemoveControl';
-import {
-  REPLACE_MODE_NOTE,
-  canSaveProfileName,
-  flagAdvisoryTokens,
-  isExtraArgsInvalidInput,
-  loadProfiles,
-  profileArgDeniedDetail,
-  profileCountLabel,
-  profileRowSubtitle,
-  removeProfileConfirmText,
-} from './profiles';
-import {
-  EMPTY_PI_DRAFT,
-  EMPTY_TOOLS_NOTE,
-  PROJECT_RESOURCES_NOTE,
-  TOOL_LIST_NOTE,
-  canSavePiDraft,
-  invalidPaths,
-  omittedExtraArgsLine,
-  parsePathList,
-  piCopyDraftFromLegacy,
-  piDraftFromSettings,
-  piSettingsFromDraft,
-  piSystemPromptRequired,
-  toggleTool,
-  toolsSummary,
-  type PiDraft,
-} from './pi-profile';
 import '../projects/projects.css';
+import {
+    REPLACE_MODE_NOTE,
+    canSaveProfileName,
+    flagAdvisoryTokens,
+    isExtraArgsInvalidInput,
+    loadProfiles,
+    profileArgDeniedDetail,
+    profileCountLabel,
+    profileRowSubtitle,
+    removeProfileConfirmText,
+} from './profiles';
 import './profiles.css';
+import { profileIsRetired } from '../../lib/runtimeCapability';
 
 interface Draft {
   name: string;
@@ -87,34 +67,12 @@ function draftFromProfile(p: LegacySessionProfile): Draft {
   };
 }
 
-const PROFILE_KIND_OPTIONS = [
-  { value: 'legacy' as const, label: 'Legacy (Claude)' },
-  { value: 'pi' as const, label: 'Pi' },
-];
-
-const PROMPT_MODE_OPTIONS = [
-  { value: 'default' as const, label: 'Default' },
-  { value: 'append' as const, label: 'Append' },
-  { value: 'replace' as const, label: 'Replace' },
-];
-
-const PROJECT_RESOURCES_OPTIONS = [
-  { value: 'ignore' as const, label: 'Ignore' },
-  { value: 'allow' as const, label: 'Allow' },
-];
-
 export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX.Element {
   const profiles = useStore((s) => s.profiles);
   const setProfiles = useStore((s) => s.setProfiles);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null); // null = the list has no selection; 'new' = the blank editor
-  const [newKind, setNewKind] = useState<'legacy' | 'pi'>('legacy'); // FR-2: the CREATE-time choice, fixed once saved
+  const [selectedId, setSelectedId] = useState<string | null>(null); // FR-2: the CREATE-time choice, fixed once saved
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [piDraft, setPiDraft] = useState<PiDraft>(EMPTY_PI_DRAFT);
-  // FR-4: set while reviewing a "Create Pi copy" of the legacy profile named
-  // here — a NEW Pi draft, decoupled from `selectedId`'s own editor, so the
-  // source profile is never touched until (if) the review is saved.
-  const [copySource, setCopySource] = useState<LegacySessionProfile | null>(null);
   const [lastSaved, setLastSaved] = useState<SessionProfile | null>(null); // for the extra-args advisory (FR-10)
   const [error, setError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
@@ -135,23 +93,18 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
       const first = list[0];
       if (chosenRef.current || !first) return;
       setSelectedId(first.id);
-      if (first.kind === 'pi') setPiDraft(piDraftFromSettings(first.name, first.settings));
-      else setDraft(draftFromProfile(first));
+if (first.kind === 'legacy') setDraft(draftFromProfile(first));
       setLastSaved(first);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selected = selectedId && selectedId !== 'new' ? (profiles.find((p) => p.id === selectedId) ?? null) : null;
-  const reviewingCopy = copySource !== null;
-  const activeKind: 'legacy' | 'pi' | null = reviewingCopy ? 'pi' : selectedId === 'new' ? newKind : (selected?.kind ?? null);
 
   const selectProfile = (p: SessionProfile) => {
     chosenRef.current = true;
     setSelectedId(p.id);
-    setCopySource(null);
-    if (p.kind === 'pi') setPiDraft(piDraftFromSettings(p.name, p.settings));
-    else setDraft(draftFromProfile(p));
+if (p.kind === 'legacy') setDraft(draftFromProfile(p));
     setLastSaved(p);
     setError(null);
     setRemoveConfirm(null);
@@ -160,76 +113,28 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
   const startNew = () => {
     chosenRef.current = true;
     setSelectedId('new');
-    setNewKind('legacy');
-    setCopySource(null);
     setDraft(EMPTY_DRAFT);
-    setPiDraft(EMPTY_PI_DRAFT);
     setLastSaved(null);
     setError(null);
     setRemoveConfirm(null);
   };
 
-  // FR-4: opens the review step for a Create Pi copy of `source`, seeded from
-  // its name and user-authored prompt only — the source stays selected and
-  // untouched underneath.
-  const startCreatePiCopy = (source: LegacySessionProfile) => {
-    setCopySource(source);
-    setPiDraft(piCopyDraftFromLegacy(source));
-    setError(null);
-  };
-
-  const cancelCopy = () => {
-    setCopySource(null);
-    setError(null);
-  };
-
   const dismissRef = useRef<HTMLDivElement>(null);
   useDismiss(dismissRef, { onEscape: onClose });
 
-  const confirmingRemove = !reviewingCopy && selected !== null && removeConfirm === selected.id;
+  const confirmingRemove = selected !== null && removeConfirm === selected.id;
   const advisory = flagAdvisoryTokens(lastSaved && lastSaved.kind === 'legacy' ? lastSaved.extraArgs : undefined);
   const denial = error ? profileArgDeniedDetail(error) : null;
   // §7 edge case: an unterminated quote / over-cap extra args also anchors
   // beside the field, same as a denied flag — never the generic banner.
   const extraArgsInvalidMessage = error && isExtraArgsInvalidInput(error) ? error.message : null;
 
-  const canSave = activeKind === 'pi' ? canSavePiDraft(piDraft) : activeKind === 'legacy' ? canSaveProfileName(draft.name) : false;
+  const canSave = !profileIsRetired(selected) && canSaveProfileName(draft.name);
 
   const save = async () => {
     if (!canSave || saving) return;
     setSaving(true);
     setError(null);
-
-    if (reviewingCopy && copySource) {
-      const res = await profilesCopyToPi({ id: copySource.id, name: piDraft.name.trim(), settings: piSettingsFromDraft(piDraft) });
-      setSaving(false);
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      setCopySource(null);
-      setSelectedId(res.data.id);
-      setPiDraft(piDraftFromSettings(res.data.name, res.data.settings));
-      setLastSaved(res.data);
-      await loadProfiles(setProfiles);
-      return;
-    }
-
-    if (activeKind === 'pi') {
-      const payload = { kind: 'pi' as const, name: piDraft.name.trim(), settings: piSettingsFromDraft(piDraft) };
-      const res =
-        selectedId && selectedId !== 'new' ? await profilesUpdate({ id: selectedId, ...payload }) : await profilesCreate(payload);
-      setSaving(false);
-      if (!res.ok) {
-        setError(res.error);
-        return;
-      }
-      setLastSaved(res.data);
-      setSelectedId(res.data.id);
-      if (res.data.kind === 'pi') setPiDraft(piDraftFromSettings(res.data.name, res.data.settings));
-      await loadProfiles(setProfiles);
-      return;
-    }
 
     const payload = {
       name: draft.name.trim(),
@@ -252,6 +157,7 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
   };
 
   const remove = async (id: string) => {
+    if (profileIsRetired(profiles.find((p) => p.id === id))) return;
     setRemoveConfirm(null);
     const res = await profilesRemove({ id });
     if (!res.ok) {
@@ -261,7 +167,6 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
     if (selectedId === id) {
       setSelectedId(null);
       setDraft(EMPTY_DRAFT);
-      setPiDraft(EMPTY_PI_DRAFT);
       setLastSaved(null);
     }
     await loadProfiles(setProfiles);
@@ -324,31 +229,15 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
               so the footer aligns with the fields it acts on instead of running
               under the list. */}
           <div className="pf-editor-col">
-            {selectedId === null ? (
+            {profileIsRetired(selected) ? <div className="pj-config"><div className="pj-footer-note">{selected.name} · Unavailable</div><pre>{JSON.stringify(selected.settings, null, 2)}</pre></div> : selectedId === null ? (
               <div className="pj-config pf-config-empty">
                 <div className="pj-empty">select a profile, or start a new one</div>
               </div>
             ) : (
               <div className="scz pj-config" style={saving ? { opacity: 0.6, pointerEvents: 'none' } : undefined}>
-                {reviewingCopy && copySource && (
-                  <div className="pj-footer-note pf-copy-banner">
-                    <span>
-                      Create Pi copy of <strong>{copySource.name}</strong> — “{copySource.name}” is kept unchanged
-                    </span>
-                    {omittedExtraArgsLine(copySource) && (
-                      <span>omitted (not translated): {omittedExtraArgsLine(copySource)}</span>
-                    )}
-                  </div>
-                )}
 
-                {selectedId === 'new' && !reviewingCopy && (
-                  <div className="pj-group">
-                    <span className="pj-group-label">KIND</span>
-                    <div className="pf-chip-row">
-                      <ChipGroup options={PROFILE_KIND_OPTIONS} value={newKind} onChange={setNewKind} />
-                    </div>
-                  </div>
-                )}
+
+
 
                 {/* One field per group, each full width under its own section
                     header — the header IS the label, so this modal uses no
@@ -358,19 +247,14 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
                   <span className="pj-group-label">NAME</span>
                   <input
                     className="pj-input pf-field"
-                    value={activeKind === 'pi' ? piDraft.name : draft.name}
-                    onChange={(e) =>
-                      activeKind === 'pi'
-                        ? setPiDraft((d) => ({ ...d, name: e.target.value }))
-                        : setDraft((d) => ({ ...d, name: e.target.value }))
+                    value={ draft.name}
+                    onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))
                     }
                     placeholder="agent-architect"
                   />
                 </div>
 
-                {activeKind === 'pi' ? (
-                  <PiSettingsFields draft={piDraft} setDraft={setPiDraft} />
-                ) : (
+                { (
                   <>
                     <div className="pj-group">
                       <span className="pj-group-label">SYSTEM PROMPT</span>
@@ -413,11 +297,6 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
                     {/* FR-4: a saved legacy profile may spin off a reviewed Pi
                         copy without changing itself. Not offered for a brand-new,
                         unsaved draft — there's nothing to copy yet. */}
-                    {selected && selected.kind === 'legacy' && (
-                      <Action color="var(--text-muted)" hoverColor="var(--text)" onClick={() => startCreatePiCopy(selected)}>
-                        Create Pi copy…
-                      </Action>
-                    )}
                   </>
                 )}
 
@@ -440,18 +319,9 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
 
                 Reviewing a Create Pi copy replaces Remove with a plain Cancel —
                 there is nothing to remove yet, only a pending draft to discard. */}
-            {selectedId !== null && (
+            {selectedId !== null && !profileIsRetired(selected) && (
               <div className="pf-footer">
-                {reviewingCopy ? (
-                  <>
-                    <Button variant="primary" onClick={() => void save()} disabled={!canSave || saving}>
-                      {saving ? 'saving…' : 'Save Pi copy'}
-                    </Button>
-                    <Button variant="ghost" onClick={cancelCopy}>
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
+                { (
                   <>
                     {!confirmingRemove && (
                       <Button variant="primary" onClick={() => void save()} disabled={!canSave || saving}>
@@ -475,111 +345,6 @@ export default function ProfilesModal({ onClose }: { onClose: () => void }): JSX
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * pi-migration-rollout §5/§7 — the typed Pi settings editor. Shared by the
- * three places that render one: an existing Pi profile, a brand-new Pi draft
- * (KIND = Pi), and a Create Pi copy review — all three are just a `PiDraft`
- * plus its setter, so this component doesn't know or care which.
- */
-function PiSettingsFields({ draft, setDraft }: { draft: PiDraft; setDraft: (update: (d: PiDraft) => PiDraft) => void }) {
-  const instructionPaths = parsePathList(draft.instructionPathsText);
-  const skillPaths = parsePathList(draft.skillPathsText);
-  const badInstructionPaths = invalidPaths(instructionPaths);
-  const badSkillPaths = invalidPaths(skillPaths);
-
-  return (
-    <>
-      <div className="pj-group">
-        <span className="pj-group-label">PROMPT MODE</span>
-        <div className="pf-chip-row">
-          <ChipGroup
-            options={PROMPT_MODE_OPTIONS}
-            value={draft.systemPromptMode}
-            onChange={(systemPromptMode) => setDraft((d) => ({ ...d, systemPromptMode }))}
-          />
-        </div>
-        {draft.systemPromptMode === 'default' && (
-          <div className="pj-footer-note">Pi uses its own default prompt — no override is sent.</div>
-        )}
-      </div>
-
-      {piSystemPromptRequired(draft.systemPromptMode) && (
-        <div className="pj-group">
-          <span className="pj-group-label">SYSTEM PROMPT</span>
-          <textarea
-            className="pj-input pj-textarea pf-field pf-prompt"
-            value={draft.systemPrompt}
-            onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))}
-            rows={6}
-            placeholder={draft.systemPromptMode === 'replace' ? "replaces Pi's own system prompt" : "appended to Pi's own system prompt"}
-          />
-        </div>
-      )}
-
-      <div className="pj-group">
-        <span className="pj-group-label">INSTRUCTION FILES</span>
-        <textarea
-          className="pj-input pj-textarea pf-field pf-paths"
-          value={draft.instructionPathsText}
-          onChange={(e) => setDraft((d) => ({ ...d, instructionPathsText: e.target.value }))}
-          rows={3}
-          placeholder={'one absolute path per line'}
-        />
-        <div className="pj-footer-note">
-          up to {MAX_PI_INSTRUCTION_PATHS} absolute paths, read once at launch ({instructionPaths.length}/{MAX_PI_INSTRUCTION_PATHS})
-        </div>
-        {badInstructionPaths.length > 0 && <div className="pj-inline-error">not absolute: {badInstructionPaths.join(', ')}</div>}
-      </div>
-
-      <div className="pj-group">
-        <span className="pj-group-label">SKILLS</span>
-        <textarea
-          className="pj-input pj-textarea pf-field pf-paths"
-          value={draft.skillPathsText}
-          onChange={(e) => setDraft((d) => ({ ...d, skillPathsText: e.target.value }))}
-          rows={3}
-          placeholder={'one absolute path per line'}
-        />
-        <div className="pj-footer-note">
-          up to {MAX_PI_SKILL_PATHS} absolute paths, validated before spawn ({skillPaths.length}/{MAX_PI_SKILL_PATHS})
-        </div>
-        {badSkillPaths.length > 0 && <div className="pj-inline-error">not absolute: {badSkillPaths.join(', ')}</div>}
-      </div>
-
-      <div className="pj-group">
-        <span className="pj-group-label">TOOLS</span>
-        <div className="pf-chip-row">
-          {PI_BUILTIN_TOOLS.map((tool: PiBuiltinTool) => (
-            <Chip
-              key={tool}
-              selected={draft.tools.includes(tool)}
-              onClick={() => setDraft((d) => ({ ...d, tools: toggleTool(d.tools, tool) }))}
-            >
-              {tool}
-            </Chip>
-          ))}
-        </div>
-        <div className="pj-footer-note">
-          <span>{TOOL_LIST_NOTE}</span>
-          <span>{draft.tools.length === 0 ? EMPTY_TOOLS_NOTE : `allowed: ${toolsSummary(draft.tools)}`}</span>
-        </div>
-      </div>
-
-      <div className="pj-group">
-        <span className="pj-group-label">PROJECT RESOURCES</span>
-        <div className="pf-chip-row">
-          <ChipGroup
-            options={PROJECT_RESOURCES_OPTIONS}
-            value={draft.projectResources}
-            onChange={(projectResources) => setDraft((d) => ({ ...d, projectResources }))}
-          />
-        </div>
-        <div className="pj-footer-note">{PROJECT_RESOURCES_NOTE}</div>
-      </div>
-    </>
   );
 }
 
@@ -609,7 +374,7 @@ function ProfileRow({
         </span>
         {/* pi-migration-rollout FR-2: the kind is the identity you can never edit
             back into — surfaced beside the name, not buried in the subtitle. */}
-        {profile.kind === 'pi' && <span className="pf-kind-tag">PI</span>}
+        {profileIsRetired(profile) && <span className="pf-kind-tag">Unavailable</span>}
       </div>
       {/* The role at a glance. No `replace` badge here: carrying a system prompt
           is the POINT of a profile, so nearly every row would wear one and it

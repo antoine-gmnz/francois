@@ -5,14 +5,14 @@
 
 import { useEffect, useRef } from 'react';
 import type { AccountId, ClaudeRuntime, ModelInfo, PermissionMode, ResponseMode, RuntimeModelRef } from '../../../contract/common';
-import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
 import type { SessionProfile } from '../../../contract/session-profiles';
-import { resolveNewSessionAccountId } from '../accounts/accounts';
-import { applyProjectDefaults, baseFormValues } from '../projects/projects';
-import { projectDefaultProfileResolution } from '../profiles/profiles';
+import { isWslUncPath } from '../../../contract/wsl-filesystem';
 import { IS_WINDOWS } from '../../lib/platform';
+import { resolveNewSessionAccountId } from '../accounts/accounts';
+import { projectDefaultProfileResolution } from '../profiles/profiles';
+import { applyProjectDefaults, baseFormValues } from '../projects/projects';
 import { basename } from './new-session-form';
 
 export interface UseProjectDefaultsParams {
@@ -95,7 +95,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     // default naming a REMOVED account falls back to the isDefault one rather
     // than sending an id session_create would refuse with ACCOUNT_NOT_FOUND.
     const wantedAccount = project?.defaults.accountId;
-    const resolvedAccount = resolveNewSessionAccountId(accounts, wantedAccount);
+    const resolvedAccount = project?.defaults.runtimeModel && wantedAccount ? wantedAccount : resolveNewSessionAccountId(accounts, wantedAccount);
     if (accountAppliedRef.current !== projectId) {
       accountAppliedRef.current = projectId;
       setAccountId(resolvedAccount);
@@ -138,7 +138,8 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     // profile carries no model/effort/permission mode any more, so resolving one
     // never overrides the plain project defaults set above.
     const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
-    if (resolution) setProfileId(resolution.profileId);
+    if (!pendingProfileId && project?.defaults.runtimeModel && project.defaults.profileId) setProfileId(project.defaults.profileId);
+    else if (resolution) setProfileId(resolution.profileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, project, models, modelsLoading, accountId, defaultModelId]);
 
@@ -149,7 +150,8 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     if (profilesSeenRef.current || profiles.length === 0) return;
     profilesSeenRef.current = true;
     const resolution = projectDefaultProfileResolution(profiles, project?.defaults.profileId, pendingProfileId);
-    if (resolution) setProfileId(resolution.profileId);
+    if (!pendingProfileId && project?.defaults.runtimeModel && project.defaults.profileId) setProfileId(project.defaults.profileId);
+    else if (resolution) setProfileId(resolution.profileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profiles]);
 
@@ -164,7 +166,7 @@ export function useProjectDefaults(params: UseProjectDefaultsParams): void {
     if (accountsSeenRef.current || accounts.length === 0) return;
     accountsSeenRef.current = true;
     const wanted = project?.defaults.accountId;
-    setAccountId(resolveNewSessionAccountId(accounts, wanted));
+    setAccountId(project?.defaults.runtimeModel && wanted ? wanted : resolveNewSessionAccountId(accounts, wanted));
     setAccountFromProject(wanted !== undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts]);

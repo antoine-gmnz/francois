@@ -5,24 +5,22 @@ import { modelCatalogStep } from './model-catalog';
 // delegates to its owning feature's own action/channel exactly as the spec pins.
 
 import type { PaletteCommand } from '../../../contract/command-palette';
-import { sessionCapability } from '../../lib/runtimeCapability';
-import type { RuntimeCapability, Result } from '../../../contract/common';
-import { isBusyStatus } from '../../../contract/fleet-board';
+import type { Result, RuntimeCapability } from '../../../contract/common';
+import type { PanelTab } from '../../app/appShell';
+import { agentsKill, sessionClearAttachments, sessionCompact, skillsRun } from '../../lib/api';
+import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
+import { useNotificationsStore } from '../../lib/notificationsStore';
+import { sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
+import { useStore } from '../../lib/store';
+import { clearReport, resolveClearProjectId } from '../conversation/attachments';
+import { requestWorktreePreset } from '../sessions/worktree';
+import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
+import { skillRowKey } from '../skills/skills-loaded';
+import { buildSkillsRunRequest } from '../skills/skills-run';
+import { checkUpdateManually } from '../update/update';
+import { requestUsageRefresh } from '../usage/usage';
 import { registerPaletteCommand as registerCommand, requestBodyFocusOnClose, showToast } from './palette';
 import { getPaletteDiffCount, getPaletteRunningAgents, getPaletteSkills } from './paletteData';
-import { agentsKill, sessionClearAttachments, sessionClearQueue, sessionCompact, sessionInterrupt, skillsRun } from '../../lib/api';
-import { useNotificationsStore } from '../../lib/notificationsStore';
-import { useStore } from '../../lib/store';
-import type { PanelTab } from '../../app/appShell';
-import { requestUsageRefresh } from '../usage/usage';
-import { checkUpdateManually } from '../update/update';
-import { requestWorktreePreset } from '../sessions/worktree';
-import { clearReport, resolveClearProjectId } from '../conversation/attachments';
-import { clearableCount, getQueueEntries } from '../../lib/pi-queue';
-import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
-import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
-import { skillRowKey } from '../skills/skills-loaded';
-import { buildSkillsRunRequest, piSkillDelivery } from '../skills/skills-run';
 
 const commandCapabilities: Record<string, RuntimeCapability> = {
   'switch-model': 'modelSwitching', 'compact-context': 'compaction',
@@ -208,13 +206,9 @@ export function registerBuiltinCommands(): void {
           // own Run — a fresh clientMessageId + the session's idle/busy delivery,
           // ignored by every runtime but Pi (skills-run.ts's piSkillDelivery) —
           // and, per pr-142 §6, the picked entry's own `invocation`.
-          const status = useStore.getState().sessions.find((s) => s.id === sid)?.status ?? 'idle';
           delegate(
             skillsRun(
-              buildSkillsRunRequest(sid, skill, undefined, {
-                clientMessageId: crypto.randomUUID(),
-                delivery: piSkillDelivery(status),
-              }),
+              buildSkillsRunRequest(sid, skill, undefined),
             ) as Promise<Result<unknown>>,
           );
         },
@@ -274,48 +268,11 @@ export function registerBuiltinCommands(): void {
     enabled: (ctx) => {
       if (ctx.activeSessionId === null) return false;
       const s = useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId);
-      return !(s && s.agentRuntime === 'pi' && isBusyStatus(s.status));
+      return !sessionIsRetired(s);
     },
     run: (ctx) => {
       const sid = ctx.activeSessionId;
       if (sid) delegate(sessionCompact(sid) as Promise<Result<unknown>>);
-    },
-  });
-
-  // 6b — Stop (pi-turn-controls FR-6/FR-7): interrupt closes admission,
-  // drains Pi's own queue and waits for confirmation before resolving.
-  // Pi-only — every other runtime already has its own Stop (topbar + ⌃C).
-  registerPaletteCommand({
-    id: 'pi-stop-turn',
-    glyph: '■',
-    name: 'Stop',
-    hint: () => 'cancel the current turn',
-    enabled: (ctx) => {
-      const s = useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId);
-      return !!s && s.agentRuntime === 'pi' && isBusyStatus(s.status);
-    },
-    run: (ctx) => {
-      if (ctx.activeSessionId) delegate(sessionInterrupt(ctx.activeSessionId) as Promise<Result<unknown>>);
-    },
-  });
-
-  // 6c — Clear queued messages (pi-turn-controls FR-5): the only way to drop
-  // a message Pi has already accepted into its own queue — a still-local one
-  // can be removed individually from the composer strip instead.
-  registerPaletteCommand({
-    id: 'pi-clear-queue',
-    glyph: '⌫',
-    name: 'Clear queued messages',
-    hint: () => {
-      const sid = useStore.getState().activeSessionId;
-      return `${sid ? clearableCount(getQueueEntries(sid)) : 0} pending`;
-    },
-    enabled: (ctx) => {
-      const s = useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId);
-      return !!s && s.agentRuntime === 'pi' && clearableCount(getQueueEntries(s.id)) > 0;
-    },
-    run: (ctx) => {
-      if (ctx.activeSessionId) delegate(sessionClearQueue(ctx.activeSessionId) as Promise<Result<unknown>>);
     },
   });
 
@@ -453,12 +410,13 @@ export function registerBuiltinCommands(): void {
     glyph: '＋',
     name: 'New session with profile…',
     hint: () => 'pick a profile',
-    enabled: () => useStore.getState().profiles.length > 0,
+    enabled: () => useStore.getState().profiles.some((p) => p.kind === 'legacy'),
     run: () => ({
       placeholder: 'pick a profile',
-      items: useStore.getState().profiles.map((p) => ({ id: p.id, label: p.name })),
+      items: useStore.getState().profiles.filter((p) => p.kind === 'legacy').map((p) => ({ id: p.id, label: p.name })),
       onPick: (profileId) => {
         const st = useStore.getState();
+        if (!st.profiles.some((p) => p.id === profileId && p.kind === 'legacy')) return;
         st.setPendingNewSessionProfileId(profileId);
         st.setNewSessionOpen(true);
       },

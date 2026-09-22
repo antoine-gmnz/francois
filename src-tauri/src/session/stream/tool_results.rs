@@ -2,138 +2,89 @@
 //! finished tool call (or subagent dispatch result) back onto its transcript
 //! block and, for a `Task` dispatch, the agent record.
 
-use super::{BlockKind, ToolRec};
-use crate::session::*;
+use super::{BlockKind, StreamEnvironment, ToolRec};
+use crate::session::application::RuntimeEvent;
+use crate::session::{build_step_detail, now_ms, tool_meta};
 
 use serde_json::Value;
 use std::collections::HashMap;
 
 pub fn handle_tool_results(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     v: &Value,
     tools: &mut HashMap<String, ToolRec>,
     open_block: &mut Option<(String, BlockKind)>,
 ) {
-    let content = v
+    let Some(content) = v
         .get("message")
         .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_array());
-    let Some(content) = content else { return };
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    let settings = env.settings(session_id);
     for item in content {
-        if item.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+        if item.get("type").and_then(Value::as_str) != Some("tool_result") {
             continue;
         }
         let tuid = item
             .get("tool_use_id")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string();
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let is_error = item
             .get("is_error")
-            .and_then(|val| val.as_bool())
+            .and_then(Value::as_bool)
             .unwrap_or(false);
         let result_text = extract_result_text(item.get("content"));
-        let Some(rec) = tools.get(&tuid) else {
+        let Some(rec) = tools.get(tuid) else {
             continue;
         };
-        let block_id = rec.block_id.clone();
         let meta = if is_error {
-            "error".to_string()
+            "error".into()
         } else {
             tool_meta(&rec.tool, &rec.input, &result_text)
         };
-
-        // command-inspect FR-1/FR-2/FR-9: capture BEFORE the block settles, so
-        // `hasDetail` is right on the very first line ever persisted for this
-        // block (FR-10). claude-code states neither exitCode nor separated
-        // stderr (FR-4/FR-6), so both are `None` here.
-        let has_detail = match env
-            .engine()
-            .with_session(session_id, |s| (s.cwd.clone(), s.runtime.clone()))
-        {
-            Some((cwd, runtime)) => {
-                let detail = build_step_detail(
-                    &rec.block_id,
-                    &rec.tool,
-                    &cwd,
-                    &runtime,
-                    rec.started_at,
-                    now_ms(),
-                    is_error,
-                    None,
-                    &rec.input,
-                    &result_text,
-                    None,
-                );
-                env.append_step_detail(session_id, &detail);
-                true
-            }
-            None => false,
-        };
-
-        // The dispatch's own tool_result. async-agents FR-4/FR-5: a SYNCHRONOUS
-        // dispatch completes here; a BACKGROUND dispatch's result is only a spawn
-        // acknowledgement and must not stop the agent's clock (session-engine FR-39
-        // is superseded — it treated every ack as completion).
+        let detail = build_step_detail(
+            &rec.block_id,
+            &rec.tool,
+            &settings.cwd,
+            &settings.runtime,
+            rec.started_at,
+            now_ms(),
+            is_error,
+            None,
+            &rec.input,
+            &result_text,
+            None,
+        );
         if rec.is_task {
-            if let Some(aid) = rec.input.get("__agentId").and_then(|val| val.as_str()) {
-                let ems = {
-                    let mut map = env
-                        .engine()
-                        .sessions
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner());
-                    match map.get_mut(session_id) {
-                        Some(s) => apply_dispatch_result(s, aid, &result_text, is_error, now_ms()),
-                        None => Vec::new(),
-                    }
-                };
-                emit_agent_emissions(env, session_id, ems);
+            if let Some(agent_id) = rec.input.get("__agentId").and_then(Value::as_str) {
+                env.publish(RuntimeEvent::SubagentResult {
+                    agent_id: agent_id.into(),
+                    text: result_text.clone(),
+                    is_error,
+                    at: now_ms(),
+                });
             }
         }
-
-        // workflow-panel FR-6: the `Workflow` tool returns as soon as the run is
-        // queued, so a successful result is a spawn ACK carrying the `wf_…` id —
-        // only an error result ends the run here.
         if rec.is_workflow {
-            if let Some(run_uuid) = rec.input.get("__workflowId").and_then(|val| val.as_str()) {
-                on_workflow_dispatch_result(env, session_id, run_uuid, &result_text, is_error);
+            if let Some(run_id) = rec.input.get("__workflowId").and_then(Value::as_str) {
+                env.publish(RuntimeEvent::WorkflowResult {
+                    run_id: run_id.into(),
+                    text: result_text.clone(),
+                    is_error,
+                });
             }
         }
-
-        let done_block = {
-            let mut map = env
-                .engine()
-                .sessions
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            match map.get_mut(session_id) {
-                // transcript-scale CRITICAL fix: use the clone `buf_tool_done`
-                // returns (captured before its internal trim runs) instead of
-                // re-`find`ing by id — a re-find can miss a block that settling
-                // itself just evicted.
-                Some(s) => s.buf_tool_done(&block_id, meta.clone(), has_detail),
-                None => None,
-            }
-        };
-        if let Some(buf_block) = &done_block {
-            env.append_transcript(session_id, buf_block); // durable-sessions FR-2
-        }
-        if matches!(open_block, Some((bid, _)) if *bid == block_id) {
+        if matches!(open_block, Some((id, _)) if id == &rec.block_id) {
             *open_block = None;
         }
-        // FR-16: a file-mutating tool finished → recompute the diff summary now.
-        if rec.tool == "Edit" || rec.tool == "Write" {
-            if let Some(cwd) = env.engine().cwd_of(session_id) {
-                env.note_file_diff(session_id, &cwd);
-            }
-        }
-        env.emit_session(SessionEvent::ToolDone {
-            session_id: session_id.into(),
-            block_id,
+        env.publish(RuntimeEvent::ToolCompleted {
+            block_id: rec.block_id.clone(),
             meta,
-            has_detail: has_detail.then_some(true),
+            detail: Some(detail),
+            affects_workspace: matches!(rec.tool.as_str(), "Edit" | "Write"),
         });
     }
 }
@@ -154,6 +105,7 @@ pub fn extract_result_text(content: Option<&Value>) -> String {
 mod tests {
     use super::*;
     use crate::session::testutil::*;
+    use crate::session::{classify_block, SessionEvent, StepBody};
     use serde_json::json;
 
     #[test]

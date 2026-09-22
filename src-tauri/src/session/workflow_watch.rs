@@ -17,7 +17,6 @@ use super::*;
 
 use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
-use serde_json::Value;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -175,10 +174,12 @@ pub(crate) fn stop_all_workflow_watches(engine: &Engine) {
 /// (FR-21): everything here is additive, and a miss leaves the ask exactly as it
 /// behaves today — a SESSION card, resolved by the existing commands under the
 /// existing exactly-once claim.
-pub fn attribute_workflow_ask(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attribute_workflow_ask_fields(
     env: &dyn SessionEnv,
     session_id: &str,
-    v: &Value,
+    parent_tool_use_id: Option<&str>,
+    agent_id: Option<&str>,
     block_id: &str,
     kind: &str,
     tool_name: Option<&str>,
@@ -187,7 +188,9 @@ pub fn attribute_workflow_ask(
     let seen = seen_agents(engine);
     let found = {
         let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
-        map.get(session_id).and_then(|s| attribute_ask(s, v, &seen))
+        map.get(session_id).and_then(|s| {
+            super::workflow_details::attribute_ask_fields(s, parent_tool_use_id, agent_id, &seen)
+        })
     };
     let Some(a) = found else {
         return; // rung 4: not a workflow ask, and this feature ignores it

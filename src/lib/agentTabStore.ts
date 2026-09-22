@@ -25,7 +25,7 @@ import {
   workflowIdFromTab,
   type AgentTabMap,
   type AgentTabRef,
-} from '../features/agents/agent-tab';
+} from './agent-tab';
 import { clampToPaneTab, layoutRegime, paneCount, paneIndicesOf, persistSplitState, type PaneTab } from './layoutStore';
 import { INITIAL_ACTIVE_PROJECT } from './projectsStore';
 import type { AppState } from './store';

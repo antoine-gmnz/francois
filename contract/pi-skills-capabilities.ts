@@ -27,21 +27,5 @@ export type {
 } from './common';
 export type { SkillsListRequest, SkillsRunRequest, SkillsInstallRequest, SkillsEvent } from './skills-panel';
 
-/** FR-5: the one sentence every Pi surface uses — New Session, run chip, first send. */
-export const PI_UNRESTRICTED_TOOLS_NOTICE =
-  'Pi tools run with your user permissions; François does not approve each tool call.';
+// Pi is retired: every capability is unavailable regardless of saved snapshots.
 
-/**
- * FR-3: the baseline a Pi session can never exceed by name or manifest claim. The core's
- * capability table is the authority; this list exists so the frontend's tests can assert
- * that no UI surface treats one of these as reachable for a Pi session.
- */
-export const PI_BASELINE_UNAVAILABLE = [
-  'skillsInstall',
-  'mcp',
-  'subagents',
-  'workflows',
-  'permissions',
-  'remoteControl',
-  'usageBar',
-] as const;

@@ -47,6 +47,13 @@ export const PERMISSION_ACTIONS: PermissionAction[] = [
   { decision: 'denyAlways', short: 'Never', label: 'always deny', variant: 'never', allow: false },
 ];
 
+/** Absent is legacy; a supplied list is the authoritative offered subset. */
+export function permissionActions(allowed?: PermissionDecision[]): PermissionAction[] {
+  if (allowed === undefined) return PERMISSION_ACTIONS;
+  const choices: PermissionAction[] = [...PERMISSION_ACTIONS, { decision: 'cancel', short: 'Cancel turn', label: 'Cancel turn', variant: 'deny', allow: false }];
+  return choices.filter(action => allowed.includes(action.decision));
+}
+
 /**
  * True for the two decisions that write a rule — the only ones `tier` affects.
  * Drives the card's tier control: hovering a `*Once` action dims it, so the user

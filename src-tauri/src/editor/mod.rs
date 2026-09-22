@@ -248,6 +248,9 @@ pub fn session_open_in_editor(
     session_id: String,
     editor_id: EditorId,
 ) -> IpcResult<Option<()>> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
     let Some(cwd) = engine.cwd_of(&session_id) else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };

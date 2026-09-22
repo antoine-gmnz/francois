@@ -7,7 +7,7 @@
 //! push it well past the ceiling. A SIBLING of `events`, not a child of it —
 //! `super::*` here still resolves to the whole `session` module, exactly as
 //! it does in `events.rs` itself — so every cross-reference below
-//! (`super::admission::RuntimeQueueEntry`, `adapter::RuntimeModelRef`, …)
+//! (`super::retired_pi::RuntimeQueueEntry`, `adapter::RuntimeModelRef`, …)
 //! reads identically to how it read before the split. `events` re-exports
 //! the names other files already reach through `events::*`
 //! (`RuntimeEventPayload`, `RuntimeToolCall`, `RuntimeAttachmentRef`,
@@ -198,7 +198,7 @@ pub enum RuntimeEventPayload {
     /// snapshot (an empty array clears the composer's queue strip).
     #[serde(rename = "queue.changed")]
     QueueChanged {
-        entries: Vec<super::admission::RuntimeQueueEntry>,
+        entries: Vec<super::retired_pi::RuntimeQueueEntry>,
     },
     /// pi-turn-controls FR-8: `automatic: true` is progress inside the
     /// CURRENT run, never a turn completion of its own.

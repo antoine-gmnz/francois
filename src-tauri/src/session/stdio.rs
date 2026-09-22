@@ -2,9 +2,12 @@
 
 //! turn execution: spawning the CLI and reading its NDJSON stream.
 
-use super::*;
+use crate::session::{
+    decide_control_request, now_ms, uuid, ControlDecision, PendingPermission, PendingQuestion,
+};
 
-use crate::permissions::PermissionRule;
+use crate::session::application::RuntimeEvent;
+use crate::session::stream::StreamEnvironment;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::ChildStdin;
@@ -159,145 +162,92 @@ pub fn write_control_line(stdin: &Arc<Mutex<Option<ChildStdin>>>, payload: &Valu
 /// AskUserQuestion as a pending entry + question block + question.asked event, or
 /// answer everything else on the spot.
 pub fn handle_control_request(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     v: &Value,
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_perms: &Arc<Mutex<HashMap<String, PendingPermission>>>,
 ) {
-    let (allow_git, cwd) = env
-        .engine()
-        .with_session(session_id, |s| (s.allow_git, s.cwd.clone()))
-        .unwrap_or_default();
-    match decide_control_request(v, allow_git) {
+    let settings = env.settings(session_id);
+    match decide_control_request(v, settings.allow_git) {
         ControlDecision::Permission {
             request_id,
             tool_name,
             input,
         } => {
-            // permission-guardrails FR-2: park the ask — mint a block, record the
-            // pending entry, persist it pending, and let the card decide.
-            let ask = crate::permissions::build_ask(&tool_name, &input, &cwd);
-            let ask_value = serde_json::to_value(&ask).unwrap_or_else(|_| serde_json::json!({}));
+            let ask = crate::permissions::build_ask(&tool_name, &input, &settings.cwd);
             let block_id = uuid();
-            // FR-7: the pattern rides the PENDING entry, so an `*Always`
-            // decision can only ever write the rule of an ask that is still
-            // parked (the entry is gone the moment the ask is claimed).
-            let pattern = ask.pattern.clone();
             pending_perms.lock().unwrap().insert(
                 block_id.clone(),
                 PendingPermission {
                     request_id,
                     input,
-                    pattern,
+                    pattern: ask.pattern.clone(),
                 },
             );
-            let block = env
-                .engine()
-                .with_session_mut(session_id, |s| {
-                    s.buf_permission(&block_id, ask_value);
-                    s.block_buffer.last().cloned()
-                })
-                .flatten();
-            if let Some(b) = &block {
-                env.append_transcript(session_id, b); // FR-2: persisted while pending
-            }
-            env.emit_session(SessionEvent::PermissionAsked {
-                session_id: session_id.into(),
+            env.publish(RuntimeEvent::PermissionAsked {
                 block_id: block_id.clone(),
                 ask,
             });
-            // The turn is now parked → `awaiting_approval`, so every surface that
-            // is not the SESSION tab (sidebar card, overview, notifications) can
-            // see that this session is stalled on the user. AFTER the card event,
-            // for the same ordering reason the workflow attribution below is.
-            refresh_parked_status(env, session_id);
-            // workflow-details FR-20/FR-21: the ask is parked and its SESSION card
-            // is already out — only THEN is it offered to the workflow ladder, so
-            // the `workflow.detail` FR-23 emits can never name a blockId whose card
-            // the frontend has not received yet. Attribution is additive: a match
-            // adds a correlation entry and nothing else, so a mis-attribution can
-            // mislabel a card but never lose one.
-            attribute_workflow_ask(
-                env,
-                session_id,
-                v,
-                &block_id,
-                "permission",
-                Some(tool_name.as_str()),
-            );
+            publish_workflow_ask(env, v, block_id, "permission", Some(tool_name));
         }
         ControlDecision::Respond(payload) => {
-            let _ = write_control_line(stdin, &payload); // FR-7/8/9: no event, no card
+            let _ = write_control_line(stdin, &payload);
         }
         ControlDecision::Ask {
             request_id,
             input,
             questions,
         } => {
-            let question_block_id = uuid();
-            pending.lock().unwrap().insert(
-                question_block_id.clone(),
-                PendingQuestion { request_id, input },
-            );
-            let questions_value =
-                serde_json::to_value(&questions).unwrap_or_else(|_| Value::Array(Vec::new()));
-            let block = env
-                .engine()
-                .with_session_mut(session_id, |s| {
-                    s.buf_question(&question_block_id, questions_value);
-                    s.block_buffer.last().cloned()
-                })
-                .flatten();
-            if let Some(b) = &block {
-                env.append_transcript(session_id, b); // FR-6: persisted while pending
-            }
-            env.emit_session(SessionEvent::QuestionAsked {
-                session_id: session_id.into(),
-                block_id: question_block_id.clone(),
+            let block_id = uuid();
+            pending
+                .lock()
+                .unwrap()
+                .insert(block_id.clone(), PendingQuestion { request_id, input });
+            env.publish(RuntimeEvent::QuestionAsked {
+                block_id: block_id.clone(),
                 questions,
+                blocking: None,
             });
-            // Parked on a question → `awaiting_input` (see the permission branch).
-            refresh_parked_status(env, session_id);
-            // workflow-details FR-20: same ladder, same card-first ordering. A
-            // question carries no tool name — the row label is the question's own.
-            attribute_workflow_ask(env, session_id, v, &question_block_id, "question", None);
+            publish_workflow_ask(env, v, block_id, "question", None);
         }
     }
 }
 
-/// session-questions FR-11/FR-13: flip a question block to its resolved state,
-/// persist it, and emit exactly one question.resolved. Callers must have CLAIMED
-/// the pending entry first (removed it from the turn's map) — that removal is
-/// what makes resolution exactly-once.
-pub(crate) fn resolve_question(
-    env: &dyn SessionEnv,
-    session_id: &str,
-    block_id: &str,
-    state: &str,
-    answers: Option<&Value>,
+fn publish_workflow_ask(
+    env: &dyn StreamEnvironment,
+    value: &Value,
+    block_id: String,
+    kind: &str,
+    tool_name: Option<String>,
 ) {
-    let block = env
-        .engine()
-        .with_session_mut(session_id, |s| {
-            s.buf_question_resolve(block_id, state, answers)
+    let field = |keys: &[&str]| {
+        [
+            value.get("request"),
+            Some(value),
+            value.get("request").and_then(|r| r.get("input")),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|object| {
+            keys.iter()
+                .find_map(|key| object.get(*key).and_then(Value::as_str).map(String::from))
         })
-        .flatten();
-    if let Some(b) = &block {
-        env.append_transcript(session_id, b);
-    }
-    // workflow-details FR-22/FR-26: every resolution path funnels through here
-    // (the answer command, `control_cancel_request`, the turn-end drain and
-    // `kill_all`), so dropping the attribution here covers all of them at once.
-    remove_workflow_ask(env, session_id, block_id);
-    env.emit_session(SessionEvent::QuestionResolved {
-        session_id: session_id.into(),
-        block_id: block_id.into(),
-        state: state.into(),
-        answers: answers.cloned(),
+    };
+    env.publish(RuntimeEvent::WorkflowAsk {
+        block_id,
+        kind: kind.into(),
+        tool_name,
+        parent_tool_use_id: field(&["parent_tool_use_id", "parentToolUseId"]),
+        agent_id: field(&["agent_id", "agentId"]),
     });
 }
+
+// session-questions FR-11/FR-13: flip a question block to its resolved state,
+// persist it, and emit exactly one question.resolved. Callers must have CLAIMED
+// the pending entry first (removed it from the turn's map) — that removal is
+// what makes resolution exactly-once.
 
 /// permission-guardrails FR-8/FR-10: CLAIM a parked ask. The `HashMap::remove`
 /// under the map's own mutex IS the exactly-once guarantee — whoever removes the
@@ -308,40 +258,16 @@ pub fn claim_pending<T>(pending: &Arc<Mutex<HashMap<String, T>>>, block_id: &str
     pending.lock().unwrap().remove(block_id)
 }
 
-/// permission-guardrails FR-8/FR-10: flip a permission block to its resolved
-/// state, persist it, and emit exactly one permission.resolved. Callers must have
-/// CLAIMED the pending entry first (removed it from the turn's map) — that
-/// removal is what makes resolution exactly-once.
-pub(crate) fn resolve_permission(
-    env: &dyn SessionEnv,
-    session_id: &str,
-    block_id: &str,
-    state: &str,
-    rule: Option<&PermissionRule>,
-) {
-    let rule_value = rule.and_then(|r| serde_json::to_value(r).ok());
-    let block = env
-        .engine()
-        .with_session_mut(session_id, |s| {
-            s.buf_permission_resolve(block_id, state, rule_value.as_ref())
-        })
-        .flatten();
-    if let Some(b) = &block {
-        env.append_transcript(session_id, b);
-    }
-    remove_workflow_ask(env, session_id, block_id); // FR-22/FR-26, as above
-    env.emit_session(SessionEvent::PermissionResolved {
-        session_id: session_id.into(),
-        block_id: block_id.into(),
-        state: state.into(),
-        rule: rule.cloned(),
-    });
-}
+// permission-guardrails FR-8/FR-10: flip a permission block to its resolved
+// state, persist it, and emit exactly one permission.resolved. Callers must have
+// CLAIMED the pending entry first (removed it from the turn's map) — that
+// removal is what makes resolution exactly-once.
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::testutil::*;
+    use crate::session::*;
     use serde_json::json;
 
     #[test]

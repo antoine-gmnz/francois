@@ -350,6 +350,7 @@ fn resolve_owner_target(
 ) -> Result<OwnerTarget, AppError> {
     match owner {
         ShellOwner::Session { session_id } => {
+            engine.ensure_available(session_id)?;
             let cwd = engine.cwd_of(session_id).ok_or(AppError::new(
                 ErrorCode::SessionNotFound,
                 "no such session".to_string(),
@@ -542,6 +543,11 @@ pub fn shell_restart(
     let Some(info) = reg.get_info(&shell_id) else {
         return err(ErrorCode::ShellNotFound, "no such shell");
     };
+    if let ShellOwner::Session { session_id } = &info.owner {
+        if let Err(e) = engine.ensure_available(session_id) {
+            return e.into();
+        }
+    }
     let Some((cols, rows)) = reg.size(&shell_id) else {
         return err(ErrorCode::ShellNotFound, "no such shell");
     };

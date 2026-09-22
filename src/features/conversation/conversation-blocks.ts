@@ -1,3 +1,4 @@
+import { redactAnswers } from '../../lib/question-answers';
 // Transcript block apply rules for the SESSION tab (conversation-view FR-10 +
 // interactive-commands FR-20/21). Pure logic — extracted from ConversationView
 // so the keyed idempotent upserts are unit-testable without the DOM.
@@ -172,7 +173,7 @@ export type TranscriptAction =
   | { t: 'notice'; blockId: string; tone: 'info' | 'warning' | 'error'; text: string }
   | { t: 'commandStarted'; blockId: string; command: string } // interactive-commands FR-20
   | { t: 'commandOutput'; blockId: string; card: CommandCard } // interactive-commands FR-20
-  | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[] } // session-questions FR-16
+  | { t: 'questionAsked'; blockId: string; questions: SessionQuestion[]; blocking?: boolean } // session-questions FR-16
   | { t: 'questionResolved'; blockId: string; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-16
   | { t: 'permissionAsked'; blockId: string; ask: PermissionAsk } // permission-guardrails FR-24
   | { t: 'permissionResolved'; blockId: string; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-24
@@ -259,6 +260,12 @@ export function mergeDelta(have: string, chunk: string, offset: number): string 
   return fresh === '' ? have : have + fresh;
 }
 
+function safeQuestionBlock(block: ConversationBlock): ConversationBlock {
+  return block.kind === 'question' && block.answers
+    ? { ...block, answers: redactAnswers(block.questions, block.answers) }
+    : block;
+}
+
 export function transcriptReducer(state: TranscriptState, a: TranscriptAction): TranscriptState {
   const idx = (id: string) => state.blocks.findIndex((b) => b.blockId === id);
   const replace = (i: number, b: ConversationBlock) => {
@@ -270,7 +277,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
     case 'seed':
       // transcript-scale FR-15: hydration/session-switch/`session.cleared` all
       // reset the window to RENDER_WINDOW.
-      return { blocks: a.blocks, windowSize: RENDER_WINDOW };
+      return { blocks: a.blocks.map(safeQuestionBlock), windowSize: RENDER_WINDOW };
     case 'optimisticUser': {
       if (idx(a.blockId) !== -1) return state;
       const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
@@ -463,6 +470,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
           blockId: a.blockId,
           isStreaming: true, // FR-15: true iff pending
           questions: a.questions,
+          ...(a.blocking !== undefined ? { blocking: a.blocking } : {}),
           state: 'pending',
         };
         return { blocks: [...state.blocks, b], windowSize: state.windowSize };
@@ -470,7 +478,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       const b = state.blocks[i];
       if (b.kind !== 'question') return state;
       if (b.questions.length === 0 && a.questions.length > 0) {
-        return replace(i, { ...b, questions: a.questions });
+        return replace(i, safeQuestionBlock({ ...b, questions: a.questions, ...(a.blocking !== undefined ? { blocking: a.blocking } : {}) }));
       }
       return state;
     }
@@ -497,8 +505,9 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
         blockId: b.blockId,
         isStreaming: false,
         questions: b.questions,
+        ...(b.blocking !== undefined ? { blocking: b.blocking } : {}),
         state: a.state,
-        ...(a.answers !== undefined ? { answers: a.answers } : {}),
+        ...(a.answers !== undefined ? { answers: redactAnswers(b.questions, a.answers) } : {}),
       };
       return replace(i, next);
     }
@@ -567,7 +576,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return { blocks: state.blocks, windowSize: state.windowSize + RENDER_WINDOW };
     case 'prepend': {
       const existing = new Set(state.blocks.map((b) => b.blockId));
-      const fresh = a.blocks.filter((b) => !existing.has(b.blockId));
+      const fresh = a.blocks.filter((b) => !existing.has(b.blockId)).map(safeQuestionBlock);
       if (fresh.length === 0) return state; // FR-13: never duplicate a block already held
       return { blocks: [...fresh, ...state.blocks], windowSize: state.windowSize + fresh.length };
     }
@@ -710,7 +719,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
   'command.output': (dispatch, _setters, e) => dispatch({ t: 'commandOutput', blockId: e.blockId, card: e.card }),
   // session-questions FR-6/16: insert the pending question card
-  'question.asked': (dispatch, _setters, e) => dispatch({ t: 'questionAsked', blockId: e.blockId, questions: e.questions }),
+  'question.asked': (dispatch, _setters, e) => dispatch({ t: 'questionAsked', blockId: e.blockId, questions: e.questions, ...(e.blocking !== undefined ? { blocking: e.blocking } : {}) }),
   // session-questions FR-11/13/16: flip to answered/cancelled in place
   'question.resolved': (dispatch, _setters, e) =>
     dispatch({ t: 'questionResolved', blockId: e.blockId, state: e.state, answers: e.answers }),

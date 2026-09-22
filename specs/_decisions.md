@@ -95,6 +95,10 @@
 - 2026-09-16 · data · Persist a vendor-catalog display value on the entity; point-of-use derivation is only for sources that stay authoritative — because a label must outlive its account · display-openai-model-name
 - 2026-09-16 · naming · A humanizer tuned to one vendor's id grammar is gated on the id being that vendor's; every other id renders verbatim — because out of domain it invents a name (gpt-4o → "Gpt") instead of failing visibly · display-openai-model-name
 
+- 2026-09-21 · runtimes · Native Claude/Codex own execution; adapters translate session controls — no new Francois tool loop · process-runtime-decisions
+- 2026-09-21 · data · Retired Pi records remain raw and read-only; never reinterpret their identity or defaults · pi-retirement-data-compatibility
+- 2026-09-21 · requests · Pending requests belong to live session state; transcript replay never grants reply authority · process-runtime-boundaries
+
 ## Superseded
 
 - 2026-08-12 · data · A session's provider is DERIVED from its account's kind at creation and never chosen or re-derived — because two sources of truth for which wire a session speaks is how a session ends up pointed at a key it does not have · multi-provider-seam · superseded 2026-08-24 by core-architecture-fixes

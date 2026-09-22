@@ -1,5 +1,5 @@
-import { ModelCatalogStatus } from '../../ui/ModelCatalogStatus';
 import type { ModelCatalogState } from '../../lib/hooks/useModelCatalog';
+import { ModelCatalogStatus } from '../../ui/ModelCatalogStatus';
 // projects — ProjectsModal's SESSION DEFAULTS group: five uniform selects,
 // disabled while the root is missing (FR-38). Split out of ProjectsModal's
 // `{selected && (...)}` block per REFACTOR.md §6c.
@@ -42,8 +42,8 @@ export function DefaultsSection({
           <span className="pj-row-label">model (pi)</span>
           {/* pr-142 §C1: the run chip never writes project defaults — a
               session's own "Set as project default" (settings sheet) does. */}
-          <span className="pj-input" title={`set from a session's "Set as project default" — this editor cannot change it yet`}>
-            {piModelLabel}
+          <span className="pj-input" title="Saved Pi model · Unavailable">
+            {piModelLabel} · Unavailable
           </span>
         </div>
       )}
@@ -65,7 +65,7 @@ export function DefaultsSection({
             >
               {stale && <option disabled value={value}>{`${value} · Not in the current catalogue`}</option>}
               {field.options.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value} value={o.value} disabled={o.disabled}>
                   {o.label}
                 </option>
               ))}

@@ -17,6 +17,7 @@ import { abbreviate } from '../../lib/path';
 import { pathLeaf } from './roster-groups';
 import { UNKNOWN_METRIC } from './runtime-metrics';
 import { worktreeChipLabel } from './worktree';
+import { sessionIsRetired } from '../../lib/runtimeCapability';
 
 export interface AskLine {
   /** Prose, ends without punctuation: 'Wants to run'. */
@@ -143,7 +144,7 @@ export interface RosterContextReadout {
  * already applied to a legacy session with no window to measure against.
  */
 export function rosterContextReadout(session: SessionMeta): RosterContextReadout | null {
-  if (session.agentRuntime === 'pi') {
+  if (sessionIsRetired(session)) {
     const metrics = session.metrics;
     if (!metrics || metrics.contextTokens === null || metrics.contextWindow === null || metrics.contextWindow <= 0) return null;
     return {
@@ -168,7 +169,7 @@ export function rosterContextReadout(session: SessionMeta): RosterContextReadout
  * than a fabricated 0 (FR-7).
  */
 export function runningContextFigure(session: SessionMeta): string {
-  if (session.agentRuntime === 'pi') {
+  if (sessionIsRetired(session)) {
     const metrics = session.metrics;
     if (!metrics || metrics.contextTokens === null) return UNKNOWN_METRIC;
     return metrics.contextWindow !== null && metrics.contextWindow > 0

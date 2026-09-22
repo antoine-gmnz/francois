@@ -1,40 +1,29 @@
-//! the per-turn NDJSON reader and its stream-event handlers, split by
-//! concern: `lines` (top-level NDJSON line dispatch + turn teardown),
-//! `blocks` (`content_block_*` stream events), `tool_results` (`tool_result`
-//! reconciliation), `coalesce` (the `assistant.delta` emission window).
-//! `mod.rs` owns the shared per-turn bookkeeping types
-//! (`ToolRec`, `BlockKind`), `parse_stream` (multi-provider-seam FR-5/FR-6:
-//! the whole per-line parse loop over a `BufRead` source and a `SessionEnv` —
-//! no `Child`, no `AppHandle`, which is what makes a golden replay of a
-//! captured stream possible in a unit test), and `run_reader`, the module's
-//! process-owning entry point (called from `session/adapter/claude_code.rs`):
-//! it hands `parse_stream` the child's stdout, then reaps the child and
-//! decides completion/resume-retry with the real `AppHandle` it still needs
-//! for that recursion.
-//!
-//! Re-exported at `pub(crate)` so `session::stream::<name>` keeps resolving
-//! unchanged — `session/mod.rs`'s own `pub(crate) use stream::*;` is what
-//! lets `agents.rs` reach `extract_result_text` as a bare name.
-
 mod blocks;
+#[cfg(test)]
 mod coalesce;
+mod environment;
 mod lines;
 mod tool_results;
 
 pub(crate) use blocks::*;
+#[cfg(test)]
 pub(crate) use coalesce::*;
+pub(crate) use environment::*;
 pub(crate) use lines::*;
 pub(crate) use tool_results::*;
 
-use super::*;
+use crate::session::{
+    close_or_hold_channel, handle_control_request, is_resume_fail, now_ms, parse_command,
+    route_line, user_line_text, ContextTracker, LineRoute, PendingPermission, PendingQuestion,
+};
 
+use crate::ipc::AppError;
+use crate::session::application::{RuntimeEvent, SubagentObservation, TurnContext};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::BufRead;
-use std::process::{Child, ChildStdin};
+use std::process::ChildStdin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
 
 /// Per-turn state while parsing the NDJSON stream.
 pub struct ToolRec {
@@ -62,10 +51,10 @@ pub enum BlockKind {
 }
 
 /// multi-provider-seam FR-5/FR-18: everything `run_reader` needs back from
-/// `parse_stream` to decide completion, resume-retry, and the dangling-block
+/// `parse_stream` to decide completion, resume rejection, and the dangling-block
 /// close — the pieces of the old single-function reader that genuinely
 /// depend on the live `Child` (reaping it) or a recursive `begin_turn` (which
-/// needs a real, owned `AppHandle`) and so could not move into `parse_stream`.
+/// needs a real, owned `application handle`) and so could not move into `parse_stream`.
 pub struct ParseOutcome {
     pub(crate) got_result: bool,
     pub(crate) got_init: bool,
@@ -81,19 +70,19 @@ pub struct ParseOutcome {
 /// FR-5: the whole per-line NDJSON parse loop, over a `BufRead` source
 /// instead of a live `Child` — the adapter owns the process and hands this
 /// its stdout (via `run_reader`, below). FR-6: emits through `env` instead of
-/// calling `AppHandle::emit` directly, so a test can capture the exact
+/// calling `application handle::emit` directly, so a test can capture the exact
 /// `SessionEvent` sequence a captured fixture produces (FR-17/FR-18) without
-/// constructing an `AppHandle` (this crate wires up no such test harness).
+/// constructing an `application handle` (this crate wires up no such test harness).
 ///
 /// Handles every top-level NDJSON line kind through `session.status ==
-/// awaiting_*` parking; does NOT reap the child, decide resume-retry, or close
+/// awaiting_*` parking; does NOT reap the child, decide resume rejection, or close
 /// a still-open block — `run_reader` does those with the pieces only it has
-/// (the live `Child`, a recursive `begin_turn` that needs an owned `AppHandle`).
+/// (the live `Child`, a recursive `begin_turn` that needs an owned `application handle`).
 #[allow(clippy::too_many_arguments)]
-pub fn parse_stream(
-    env: &dyn SessionEnv,
+fn parse_frames(
+    env: &dyn StreamEnvironment,
     session_id: &str,
-    reader: impl BufRead,
+    mut read_frame: impl FnMut() -> Result<Option<String>, AppError>,
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
@@ -125,17 +114,20 @@ pub fn parse_stream(
     let last_line_at = Arc::new(AtomicU64::new(now_ms()));
     let mut closer_armed = false;
 
-    let cwd = env
-        .engine()
-        .sessions
-        .lock()
-        .unwrap()
-        .get(session_id)
-        .map(|s| s.cwd.clone())
-        .unwrap_or_default();
-
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    let cwd = env.settings(session_id).cwd;
+    loop {
+        if let Some(error) = env.failure() {
+            result_error = Some(error.message);
+            break;
+        }
+        let line = match read_frame() {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(error) => {
+                result_error = Some(error.message.clone());
+                break;
+            }
+        };
         last_line_at.store(now_ms(), Ordering::Relaxed); // feeds the post-result quiet window
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
@@ -149,24 +141,14 @@ pub fn parse_stream(
         // parent_tool_use_id — it must still reach its normal handler.
         match route_line(&v) {
             LineRoute::Attributed(ptuid) => {
-                attribute_inner_line(env, session_id, &ptuid, &v, &cwd);
+                publish_attributed(env, &ptuid, &v);
                 continue;
             }
             LineRoute::Notice => {
-                // async-agents FR-13: a harness-injected task-notification closes
-                // its background agent and never reaches the transcript.
-                // workflow-panel FR-8: three rungs, most specific first. The
-                // workflow ladder's NAMED rungs (run id / name) go before the
-                // agent ladder, whose own last rung would otherwise let a lone
-                // background agent swallow a workflow's completion notice; the
-                // workflow ladder's sole-candidate rung goes after it, for the
-                // symmetric reason.
-                if handle_workflow_notification(env, session_id, &v, false)
-                    || handle_task_notification(env, session_id, &v)
-                    || handle_workflow_notification(env, session_id, &v, true)
-                {
-                    continue;
-                }
+                env.publish(RuntimeEvent::CompletionNotice {
+                    text: user_line_text(&v),
+                });
+                continue;
             }
             LineRoute::Parent => {}
         }
@@ -181,7 +163,7 @@ pub fn parse_stream(
                     // The stream is live: `starting` → `running`. Only the init
                     // line promotes, so the spawn window is a real state rather
                     // than a claim that work began the instant we forked.
-                    mark_stream_live(env, session_id);
+                    env.publish(RuntimeEvent::StreamLive);
                 }
             }
             "stream_event" => {
@@ -251,6 +233,9 @@ pub fn parse_stream(
         }
     }
 
+    // The stream is over: nothing may reach the child any more, so a reply
+    // racing the drain below finds the channel closed rather than writing.
+    *stdin.lock().unwrap() = None;
     drain_orphaned_questions(env, session_id, pending_questions);
     drain_orphaned_permissions(env, session_id, pending_permissions);
 
@@ -267,85 +252,57 @@ pub fn parse_stream(
     }
 }
 
-/// FR-5: the process-owning entry point — takes the turn's output as a plain
-/// `BufRead` (the adapter owns the `Child` and hands this its stdout), runs
-/// `parse_stream` over it, then does the two things only it can: reap the
-/// child, and decide completion / resume-retry with the real `AppHandle` that
-/// recursion needs. `child` is here to be waited on, never to be read from.
+/// Read one native turn and publish normalized observations.
 #[allow(clippy::too_many_arguments)]
 pub fn run_reader(
-    app: AppHandle,
-    session_id: String,
-    reader: impl BufRead,
-    child: Arc<Mutex<Child>>,
+    env: &NativeStream,
+    context: &TurnContext,
+    read_frame: impl FnMut() -> Result<Option<String>, AppError>,
+    child: Arc<crate::process_util::OwnedChild>,
     interrupted: Arc<AtomicBool>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
-    model_id: String,
-    resume_used: bool,
-    block_id: String,
-    text: String,
 ) {
-    // interactive-commands: the turn's parsed command token (FR-17), read once
-    // here so both the parse loop and the FR-18 fallback below agree on it.
-    let turn_cmd: Option<String> = parse_command(&text).map(|(c, _)| c);
-
-    // The parse path emits through the coalescing wrapper (coalesce.rs): one
-    // webview event per run of `assistant.delta` instead of one per NDJSON
-    // `text_delta` line. Scoped, because EVERY emission below this point uses
-    // the bare `&app` and so bypasses the wrapper — `close_open_block`,
-    // `finish_reader_turn` and the resume-fail notice all emit directly, and a
-    // buffered tail arriving after any of them would land outside the block it
-    // belongs to. The explicit flush is what makes that impossible.
-    let outcome = {
-        let env = CoalescingEnv::new(&app, ASSISTANT_DELTA_COALESCE);
-        let outcome = parse_stream(
-            &env,
-            &session_id,
-            reader,
-            &stdin,
-            &pending_questions,
-            &pending_permissions,
-            turn_cmd.as_deref(),
-        );
-        env.flush();
-        outcome
-    };
-
-    // session-questions FR-2: stdout is gone (result, child death, or interrupt) —
-    // drop the stdin writer before wait() so the CLI can never linger on an open pipe.
+    let turn_cmd = parse_command(&context.text).map(|(command, _)| command);
+    let outcome = parse_frames(
+        env,
+        &context.session_id,
+        read_frame,
+        &stdin,
+        &pending_questions,
+        &pending_permissions,
+        turn_cmd.as_deref(),
+    );
+    env.flush();
     *stdin.lock().unwrap() = None;
-    let _ = child.lock().unwrap().wait();
+    let _ = child.close();
     let was_interrupted = interrupted.load(Ordering::SeqCst);
-
-    // Resume-fail (FR-8/9): Claude rejected the stale --resume id before starting a
-    // thread. Tell the UI and transparently re-run the same message on a fresh thread
-    // (ResumeRetry forces resume off → this can fire at most once). The stored id is
-    // left in place — a fresh init overwrites it on success; a transient failure keeps it.
+    // process-session-continuity FR-3: a refused effect (the anchor could not
+    // be saved) ends the turn explicitly instead of leaving it running.
+    if env.failure().is_some() {
+        env.fail_refused();
+        return;
+    }
     if is_resume_fail(
-        resume_used,
+        context.resume.is_some(),
         outcome.got_init,
         outcome.got_result,
         was_interrupted,
     ) {
-        emit(
-            &app,
-            SessionEvent::ResumeFailed {
-                session_id: session_id.clone(),
-            },
-        );
-        begin_turn(&app, &session_id, block_id, text, TurnMode::ResumeRetry);
+        env.publish(RuntimeEvent::ResumeRejected);
         return;
     }
-
-    // Close any block left open (interrupt or crash) — FR-24/FR-34.
-    close_open_block(&app, &session_id, outcome.open_block, &outcome.text_accum);
-
+    close_open_block(
+        env,
+        &context.session_id,
+        outcome.open_block,
+        &outcome.text_accum,
+    );
     finish_reader_turn(
-        &app,
-        &session_id,
-        &model_id,
+        env,
+        &context.session_id,
+        &context.model_id,
         outcome.ctx_usage,
         outcome.got_result,
         outcome.result_error,
@@ -357,17 +314,95 @@ pub fn run_reader(
     );
 }
 
+fn publish_attributed(env: &dyn StreamEnvironment, parent_tool_use_id: &str, value: &Value) {
+    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+    if !matches!(kind, "assistant" | "user") {
+        return;
+    }
+    let items = value
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(
+            |item| match (kind, item.get("type").and_then(Value::as_str).unwrap_or("")) {
+                ("assistant", "text") => Some(SubagentObservation::Text(
+                    item.get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                )),
+                ("assistant", "tool_use") => Some(SubagentObservation::ToolUse {
+                    id: item.get("id").and_then(Value::as_str).map(String::from),
+                    name: item
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    input: item
+                        .get("input")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                }),
+                ("user", "tool_result") => Some(SubagentObservation::ToolResult {
+                    tool_use_id: item
+                        .get("tool_use_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    text: extract_result_text(item.get("content")),
+                    is_error: item
+                        .get("is_error")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                }),
+                _ => None,
+            },
+        )
+        .collect();
+    env.publish(RuntimeEvent::SubagentObserved {
+        parent_tool_use_id: parent_tool_use_id.into(),
+        items,
+        at: now_ms(),
+    });
+}
+
+#[cfg(any(test, feature = "harness"))]
+#[allow(clippy::too_many_arguments)]
+pub fn parse_stream<E: crate::session::SessionEnv>(
+    env: &E,
+    session_id: &str,
+    reader: impl std::io::BufRead,
+    stdin: &Arc<Mutex<Option<ChildStdin>>>,
+    pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
+    pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
+    turn_cmd: Option<&str>,
+) -> ParseOutcome {
+    let mut frames = crate::process_util::FrameReader::new(reader);
+    parse_frames(
+        env,
+        session_id,
+        || frames.read_frame(),
+        stdin,
+        pending_questions,
+        pending_permissions,
+        turn_cmd,
+    )
+}
+
 #[cfg(test)]
-mod golden_replay_tests {
+pub(crate) mod golden_replay_tests {
     //! multi-provider-seam FR-17/FR-18: replay a captured NDJSON stream
     //! through the REAL parse path (`parse_stream`, this file's whole point)
     //! and assert the exact `SessionEvent` sequence it produces — the proof
     //! that FR-1..FR-10's trait extraction is a behavioural no-op. `TestEnv`
-    //! (session/env.rs) is what makes this possible without an `AppHandle`.
+    //! (session/env.rs) is what makes this possible without an `application handle`.
 
     use super::*;
     use crate::session::testenv::TestEnv;
     use crate::session::testutil::test_session;
+    use crate::session::*;
     use std::io::Cursor;
     use std::time::Duration;
 
@@ -411,7 +446,7 @@ mod golden_replay_tests {
     /// to the SAME placeholder — e.g. a tool's `tool.start`/`tool.done`
     /// `blockId` still visibly match) before comparing against the locked
     /// expected list, which is committed already normalized the same way.
-    fn normalize(events: &[Value]) -> Vec<Value> {
+    pub(crate) fn normalize(events: &[Value]) -> Vec<Value> {
         let mut id_map: HashMap<String, String> = HashMap::new();
         let mut next = 1usize;
         let mut out: Vec<Value> = events.to_vec();
@@ -667,6 +702,41 @@ mod golden_replay_tests {
             "no system/init"
         );
         assert_eq!(ty(lines.last().expect("fixture is non-empty")), "result");
+    }
+
+    /// process-runtime-events AC-6: a subagent's own request usage never
+    /// reaches the parent's occupancy, and the result aggregate does not
+    /// override the last parent request.
+    #[test]
+    fn subagent_usage_and_result_aggregate_do_not_inflate_parent_context() {
+        let env = TestEnv {
+            engine: crate::session::testutil::test_engine_with(test_session()),
+            ..Default::default()
+        };
+        let lines = [
+            r#"{"type":"stream_event","parent_tool_use_id":"toolu_sub","event":{"type":"message_start","message":{"usage":{"input_tokens":1,"cache_read_input_tokens":900000}}}}"#,
+            r#"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":40000}}}}"#,
+            r#"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_delta","usage":{"output_tokens":500}}}"#,
+            r#"{"type":"stream_event","parent_tool_use_id":"toolu_sub","event":{"type":"message_delta","usage":{"output_tokens":90000}}}"#,
+            r#"{"type":"result","subtype":"success","result":"ok","usage":{"input_tokens":5,"cache_read_input_tokens":3400000,"output_tokens":100}}"#,
+        ]
+        .join("\n")
+            + "\n";
+        let outcome = parse_stream(
+            &env,
+            "s1",
+            Cursor::new(lines.into_bytes()),
+            &Arc::new(Mutex::new(None)),
+            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(HashMap::new())),
+            None,
+        );
+        assert!(
+            outcome.got_result,
+            "result line was not read: {:?}",
+            outcome.result_error
+        );
+        assert_eq!(outcome.ctx_usage.finish(200_000), Some(40_510));
     }
 
     #[test]

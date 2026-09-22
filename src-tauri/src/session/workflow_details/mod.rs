@@ -43,6 +43,7 @@ mod scan;
 mod transcript;
 
 pub use ack::*;
+pub(crate) use asks::attribute_ask_fields;
 pub use asks::*;
 pub use commands::*;
 pub use detail::*;

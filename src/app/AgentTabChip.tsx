@@ -6,7 +6,7 @@
 // strip sits a level below that, so one component cannot serve both without
 // one of them reading wrong.
 
-import { agentTabLabel, type AgentTabRef } from '../features/agents/agent-tab';
+import { agentTabLabel, type AgentTabRef } from '../lib/agent-tab';
 import { StatusDot } from '../ui/StatusDot';
 
 export interface AgentTabChipProps {

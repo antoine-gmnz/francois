@@ -371,9 +371,13 @@ mod path_filter_tests {
 
 // Concern 3's data — the allowlist and how environment names compare — lives
 // in `env.rs`; the methods that apply it are below.
+mod supervision;
+#[cfg(any(test, feature = "harness"))]
+pub(crate) use supervision::FrameReader;
+pub(crate) use supervision::{FrameStream, OwnedChild};
 mod env;
 
-pub use env::{env_name_eq, scrub_env, ENV_ALLOWLIST};
+pub use env::{scrub_env, ENV_ALLOWLIST};
 
 /// A `Command` with the four spawn concerns already applied. Build it with
 /// [`spawn`]; every method mirrors the `Command` method of the same name, so a
@@ -482,25 +486,6 @@ impl CommandBuilder {
         }
         if let Some(path) = path_override {
             self.cmd.env("PATH", path);
-        }
-        self
-    }
-
-    /// Concern 3's third answer, for a caller that already computed the
-    /// EXACT child environment it wants (`account::pi_account_env`'s FR-5
-    /// isolation rule, spent by `session::adapter::pi::process::spawn`):
-    /// clear whatever this builder would otherwise inherit, then set exactly
-    /// the given pairs. Unlike [`Self::scrubbed_env`], this never re-reads
-    /// `std::env::vars()` — the caller already decided the child's env.
-    pub fn exact_env<I, K, V>(mut self, vars: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: AsRef<OsStr>,
-        V: AsRef<OsStr>,
-    {
-        self.cmd.env_clear();
-        for (k, v) in vars {
-            self.cmd.env(k, v);
         }
         self
     }
@@ -629,57 +614,16 @@ impl CommandBuilder {
     }
 }
 
-/// pi-rpc-sessions FR-7: put a long-lived child in its own process group so a
-/// tree cleanup (`kill_tree`) can reach grandchildren it spawns, not just the
-/// direct child. Mirrors `extensions::provider::own_process_group` — that copy
-/// is private to `extensions` (not reachable from `session::adapter`), and
-/// this is the cross-cutting home CLAUDE.md names for a helper every future
-/// long-lived-child owner would otherwise re-private-copy.
-#[cfg(unix)]
-pub(crate) fn own_process_group(cmd: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    // SAFETY: `pre_exec` runs in the forked child, after `fork()` and before
-    // `exec()` — at that point the child is single-threaded and this is its
-    // only thread, so calling the async-signal-safe `setpgid(0, 0)` here is
-    // sound. `pgid=0`/`pid=0` both mean "this process", so it only ever
-    // touches the child's own brand-new process group, never a sibling or
-    // the parent's.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setpgid(0, 0);
-            Ok(())
-        });
-    }
-}
-#[cfg(not(unix))]
-pub(crate) fn own_process_group(_cmd: &mut Command) {}
-
-/// pi-rpc-sessions FR-7: terminate the tracked process tree, not just the
-/// direct child — a `killpg` on its own process group on unix (see
-/// `own_process_group`); `Child::kill` alone on Windows, where a job object
-/// would be needed for true tree cleanup and none is wired up yet (tracked as
-/// a known gap, matching `extensions::provider::kill_group`'s same platform
-/// split).
-pub(crate) fn kill_tree(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        // SAFETY: `child.id()` is this process's own tracked child, spawned
-        // through `own_process_group` — so its pid IS its pgid, and
-        // `killpg` on it can only ever signal that child's own process
-        // group (itself plus whatever it forked), never an unrelated group.
-        unsafe {
-            libc::killpg(child.id() as i32, libc::SIGKILL);
-        }
-    }
-    let _ = child.kill();
-}
-
 /// The result of one [`CommandBuilder::run_bounded`] spawn: raw, undecoded —
 /// a native spawn's output is plain UTF-8; a WSL spawn's bytes need
 /// `wsl::decode_wsl_output` first (wsl.exe's OWN errors are UTF-16LE).
 pub struct BoundedRun {
+    // Kept for native process supervision; version probes consume only stdout.
+    #[allow(dead_code)]
     pub status: Option<std::process::ExitStatus>,
     pub stdout: Vec<u8>,
+    // Captured and drained to prevent child-pipe deadlocks.
+    #[allow(dead_code)]
     pub stderr: Vec<u8>,
     pub spawn_failed: bool,
     pub timed_out: bool,
@@ -817,41 +761,6 @@ mod facade_tests {
         let out = out.expect("the probe ran");
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         assert!(stdout.contains("inherited"), "stdout: {stdout:?}");
-    }
-
-    /// pi-session-durability: an EXACT, precomputed environment reaches the
-    /// child verbatim — nothing this process happens to have set survives
-    /// alongside it. Tolerant of a spawn failure, like
-    /// `a_scrubbed_child_does_not_see_a_secret` above.
-    #[test]
-    fn exact_env_clears_ambient_vars_and_carries_only_the_given_pairs() {
-        // Own var name: tests run concurrently and `set_var` is process-global
-        // — reusing `FRANCOIS_FACADE_TEST_VAR` raced with the test above.
-        std::env::set_var("FRANCOIS_FACADE_TEST_EXACT_ENV_VAR", "ambient-leak");
-        let (program, args): (&str, Vec<&str>) = if cfg!(windows) {
-            (
-                "cmd",
-                vec!["/C", "echo %FRANCOIS_FACADE_TEST_EXACT_ENV_VAR%%ONLY_VAR%"],
-            )
-        } else {
-            (
-                "/bin/sh",
-                vec![
-                    "-c",
-                    "printf %s \"$FRANCOIS_FACADE_TEST_EXACT_ENV_VAR$ONLY_VAR\"",
-                ],
-            )
-        };
-        let out = spawn(program)
-            .args(args)
-            .exact_env([("ONLY_VAR", "kept")])
-            .output();
-        std::env::remove_var("FRANCOIS_FACADE_TEST_EXACT_ENV_VAR");
-        if let Ok(out) = out {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            assert!(!stdout.contains("ambient-leak"), "stdout: {stdout:?}");
-            assert!(stdout.contains("kept"), "stdout: {stdout:?}");
-        }
     }
 
     /// ext-path-resolution FR-4, raised to the whole crate by FR-7: the scrub

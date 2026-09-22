@@ -12,6 +12,8 @@
 // in review without blocking a build on debt nobody is being asked to pay down
 // in this PR.
 
+import { nativeBoundaryFindings } from './native-boundary.mjs';
+
 /** CLAUDE.md §Code layout: "no source file over ~1000 lines." */
 export const MAX_FILE_LINES = 1000;
 
@@ -244,6 +246,7 @@ export function allFindings(files, baselines = {}) {
     ...crossFeatureFindings(files),
     ...bareSpawnFindings(files, b.bareSpawn ?? {}),
     ...domainCycleFindings(files, b.domainCycle ?? []),
+    ...nativeBoundaryFindings(files),
   ];
 }
 

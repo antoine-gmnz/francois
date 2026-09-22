@@ -14,27 +14,24 @@
 
 import type { StateCreator } from 'zustand';
 import type { RuntimeEventEnvelope, SessionId, SessionMeta } from '../../contract/common';
-import { dropSessionTabs, mainTabAfterClose } from '../features/agents/agent-tab';
-// pi-turn-controls: queue.changed/compaction/retry route to their OWN
-// per-session stores (never the fleet cache) — see applyRuntimeEvent below.
-import { clearQueueState, setQueueEntries } from './pi-queue';
-import { clearTurnProgress, setCompactionProgress, setRetryProgress } from './pi-turn-progress';
+import { dropSessionTabs, mainTabAfterClose } from './agent-tab';
 // pi-models-metrics: model.changed/metrics DO land on the fleet cache — the
 // run chip, roster context bar and every other SessionMeta reader need them.
-import { modelInfoFromRuntimeDescriptor } from './runtime-model-info';
 import type { MainTab } from './agentTabStore';
 import { deepEqual } from './deep-equal';
 import { closeStreamsForRemovedPanels } from './extensionsStore';
 import {
-  clampPaneIndex,
-  panesWithout,
-  persistedLeftPane,
-  persistedRightPane,
-  persistSplitState,
-  layoutRegime,
-  type PaneSlot,
+    clampPaneIndex,
+    layoutRegime,
+    panesWithout,
+    persistedLeftPane,
+    persistedRightPane,
+    persistSplitState,
+    type PaneSlot,
 } from './layoutStore';
+import { modelInfoFromRuntimeDescriptor } from './runtime-model-info';
 import type { AppState } from './store';
+import { sessionIsRetired } from './runtimeCapability';
 
 export interface SessionsSlice {
   // session cache (owned/written by sessions-sidebar, read by all)
@@ -119,11 +116,16 @@ function compact(s: AppState, extraPanes: PaneSlot[]): Partial<AppState> {
   };
 }
 
+function settledSession(meta: SessionMeta): SessionMeta {
+  return sessionIsRetired(meta) && meta.status !== 'done' ? { ...meta, status: 'done' } : meta;
+}
+
 export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> = (set, get) => ({
   sessions: [],
-  setSessions: (sessions) => set({ sessions }),
+  setSessions: (sessions) => set({ sessions: sessions.map(settledSession) }),
   upsertSession: (m) =>
     set((s) => {
+      m = settledSession(m);
       const i = s.sessions.findIndex((x) => x.id === m.id);
       if (i === -1) return { sessions: [...s.sessions, m] }; // append on create (FR-2)
       // pi-session-durability: a reconnect refused with the SAME recovery
@@ -152,7 +154,7 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
   patchStatus: (id, status) =>
     set((s) => {
       const i = s.sessions.findIndex((x) => x.id === id);
-      if (i === -1 || s.sessions[i].status === status) return {};
+      if (i === -1 || sessionIsRetired(s.sessions[i]) || s.sessions[i].status === status) return {};
       const next = s.sessions.slice();
       next[i] = { ...next[i], status: status as SessionMeta['status'] };
       return { sessions: next };
@@ -160,7 +162,7 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
   patchError: (id, message) =>
     set((s) => {
       const i = s.sessions.findIndex((x) => x.id === id);
-      if (i === -1 || s.sessions[i].errorMessage === message) return {};
+      if (i === -1 || sessionIsRetired(s.sessions[i]) || s.sessions[i].errorMessage === message) return {};
       const next = s.sessions.slice();
       next[i] = { ...next[i], errorMessage: message };
       return { sessions: next };
@@ -170,6 +172,7 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       const i = s.sessions.findIndex((x) => x.id === id);
       if (i === -1) return {};
       const cur = s.sessions[i];
+      if (sessionIsRetired(cur)) return {};
       // Identical figures = a duplicate event, not a turn — skip the
       // lastActivityAt stamp too, or the "idle Xh" readout would reset on noise.
       if (cur.contextUsedTokens === used && cur.contextLimitTokens === limit) return {};
@@ -178,6 +181,7 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       return { sessions: next };
     }),
   applyRuntimeEvent: (event) => {
+    if (sessionIsRetired(get().sessions.find((s) => s.id === event.sessionId))) return;
     // The routing decision happens OUT HERE, not inside the `set` updater: an
     // updater must be pure (it may run more than once, and it runs before the
     // new state is committed), and the control kinds below write to external
@@ -208,14 +212,7 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       // removal of a CACHED session).
       case 'queue.changed':
       case 'compaction':
-      case 'retry': {
-        const owner = get().sessions.find((session) => session.id === event.sessionId);
-        if (!owner || owner.runtimeGeneration !== event.generation) return;
-        if (event.event.kind === 'queue.changed') setQueueEntries(event.sessionId, event.event.entries);
-        else if (event.event.kind === 'compaction') setCompactionProgress(event.sessionId, event.event);
-        else setRetryProgress(event.sessionId, event.event);
-        return;
-      }
+      case 'retry': return;
       case 'capabilities':
       case 'failure':
       case 'run.state':
@@ -302,13 +299,6 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       if (extraPanes.length === s.extraPanes.length) return { sessions, agentTabs };
       return { sessions, agentTabs, ...compact(s, extraPanes) };
     });
-    // pi-turn-controls: …and its queue ledger + compaction/retry progress — a
-    // no-op for every non-Pi session, since neither map ever held an entry.
-    // AFTER the `set`, not inside its updater: both are external stores whose
-    // subscribers read the fleet cache, and from inside the updater they woke
-    // up to a cache that still listed the session being removed.
-    clearQueueState(id);
-    clearTurnProgress(id);
   },
 
   activeSessionId: null,

@@ -890,6 +890,12 @@ export interface QuestionOption {
 }
 
 export interface SessionQuestion {
+  /** Opaque answer key; absent preserves legacy question-text keys. */
+  id?: string;
+  /** With offered options, false suppresses Other; absent preserves legacy behavior. */
+  isOther?: boolean;
+  /** Secret answers travel transiently to the native runtime; history uses [redacted]. */
+  isSecret?: boolean;
   question: string; // full question text — also the key in the answers map
   header: string; // short chip label (nominally ≤ 12 chars; render verbatim)
   options: QuestionOption[]; // 2–4 in practice; render whatever arrives
@@ -907,8 +913,13 @@ export type PermissionTier = 'local' | 'global';
 /** The three effect buckets of Claude Code's `permissions` settings object. */
 export type PermissionEffect = 'allow' | 'deny' | 'ask';
 
+/** Native cancel may interrupt the turn; only offer it explicitly, never as Deny once. */
+export type PermissionDecision = 'allowOnce' | 'denyOnce' | 'allowAlways' | 'denyAlways' | 'cancel';
+
 /** A gated tool call parked on the stdio control channel (FR-2..FR-5). */
 export interface PermissionAsk {
+  /** Exact offered subset. Absent retains the four legacy choices (never cancel). */
+  allowedDecisions?: PermissionDecision[];
   toolName: string; // verbatim from the control request, e.g. 'Bash'
   summary: string; // one-line human rendering (command / path / url); '' when none
   inputJson: string; // whole tool input, pretty JSON, truncated to 4000 chars
@@ -973,7 +984,7 @@ export type SessionEvent =
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
-  | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[] } // session-questions FR-6: a question parked the turn
+  | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[]; blocking?: boolean } // absent blocking preserves legacy parked-turn semantics
   | { type: 'question.resolved'; sessionId: SessionId; blockId: BlockId; state: 'answered' | 'cancelled'; answers?: Record<string, string> } // session-questions FR-11/13: exactly one per asked
   | { type: 'permission.asked'; sessionId: SessionId; blockId: BlockId; ask: PermissionAsk } // permission-guardrails FR-2: a gated tool call parked the turn
   | { type: 'permission.resolved'; sessionId: SessionId; blockId: BlockId; state: 'allowed' | 'denied' | 'cancelled'; rule?: PermissionRule } // permission-guardrails FR-8/10: exactly one per asked
@@ -983,6 +994,6 @@ export type SessionEvent =
   | { type: 'workflow.update'; run: WorkflowRun } // workflow-panel FR-3: a run was minted, acked, or reached a terminal state
   | { type: 'mcp.update'; sessionId: SessionId; server: McpServerInfo }
   | { type: 'context.usage'; sessionId: SessionId; usedTokens: number; limitTokens: number }
-  | { type: 'session.resumeFailed'; sessionId: SessionId } // a --resume turn was rejected; the core continued on a fresh thread (durable-sessions FR-9/14)
+  | { type: 'session.resumeFailed'; sessionId: SessionId } // a --resume turn was rejected; the turn fails and the anchor is kept, never replayed on a fresh thread (process-session-continuity FR-5)
   | { type: 'session.cleared'; sessionId: SessionId } // /clear: transcript wiped + context reset (full reset)
   | { type: 'session.error'; sessionId: SessionId; error: AppError };

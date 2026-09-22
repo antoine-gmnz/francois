@@ -45,7 +45,7 @@ fn build_new_profile(
     name: String,
     system_prompt: Option<String>,
     extra_args_raw: Option<String>,
-    settings: Option<PiProfileSettingsInput>,
+    _settings: Option<PiProfileSettingsInput>,
     now: u64,
 ) -> Result<SessionProfile, AppError> {
     match kind {
@@ -53,18 +53,7 @@ fn build_new_profile(
             let legacy = build_profile(id, &name, system_prompt, extra_args_raw, now, now)?;
             Ok(SessionProfile::Legacy(legacy))
         }
-        Some("pi") => {
-            let name = validate_name(&name).map_err(ProfileError::InvalidInput)?;
-            let raw = settings.ok_or(ProfileError::InvalidInput(MISSING_PI_SETTINGS_MSG))?;
-            let validated = validate_pi_settings(raw)?;
-            Ok(SessionProfile::Pi(PiSessionProfile {
-                id,
-                name,
-                settings: validated,
-                created_at: now,
-                updated_at: now,
-            }))
-        }
+        Some("pi") => Err(crate::ipc::retired_pi_error()),
         Some(_unknown) => Err(AppError::new(
             ErrorCode::InvalidInput,
             "unknown profile kind",
@@ -153,6 +142,9 @@ fn create(
     extra_args_raw: Option<String>,
     settings: Option<PiProfileSettingsInput>,
 ) -> Result<SessionProfile, AppError> {
+    if kind.as_deref() == Some("pi") {
+        return Err(crate::ipc::retired_pi_error());
+    }
     ensure_writable(state)?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = crate::ids::now_ms();
@@ -211,11 +203,15 @@ fn update(
     extra_args_raw: Option<String>,
     settings: Option<PiProfileSettingsInput>,
 ) -> Result<SessionProfile, AppError> {
+    reject_retired_profile(state, &id)?;
     ensure_writable(state)?;
     let mut profiles = state.profiles.lock().unwrap();
     let Some(idx) = find_index(&profiles, &id) else {
         return Err(AppError::new(ErrorCode::ProfileNotFound, NOT_FOUND_MSG));
     };
+    if profiles[idx].kind() == "pi" {
+        return Err(crate::ipc::retired_pi_error());
+    }
     let requested_kind = kind.as_deref().unwrap_or("legacy");
     check_kind_match(profiles[idx].kind(), requested_kind)?;
     let created_at = match &profiles[idx] {
@@ -239,61 +235,6 @@ fn update(
     Ok(patched)
 }
 
-/// francois:profiles:copyToPi → `profiles_copy_to_pi` (pi-migration-rollout
-/// FR-4, NEW). The source must be `legacy` (a Pi source refuses with
-/// PROFILE_RUNTIME_MISMATCH — it is already a Pi profile); the original is
-/// always kept. Only `name`/`settings` as reviewed by the caller carry over —
-/// `extraArgs` are never translated (no `--mcp-config`, no `--allowedTools`).
-///
-/// Answers with the tagged `SessionProfile`, never the bare `PiSessionProfile`:
-/// the contract's `PiSessionProfile.kind: 'pi'` is the wrapping enum's serde
-/// tag, not a field of the struct, so the bare struct would reach the webview
-/// with no discriminant for the modal's `kind` switch.
-#[tauri::command(async)]
-pub fn profiles_copy_to_pi(
-    app: AppHandle,
-    state: State<'_, ProfileRegistry>,
-    id: String,
-    name: String,
-    settings: PiProfileSettingsInput,
-) -> IpcResult<SessionProfile> {
-    copy_to_pi(&app, &state, id, name, settings).into()
-}
-
-fn copy_to_pi(
-    app: &AppHandle,
-    state: &ProfileRegistry,
-    id: String,
-    name: String,
-    settings: PiProfileSettingsInput,
-) -> Result<SessionProfile, AppError> {
-    ensure_writable(state)?;
-    let mut profiles = state.profiles.lock().unwrap();
-    let Some(source) = profiles.iter().find(|p| p.id() == id) else {
-        return Err(AppError::new(ErrorCode::ProfileNotFound, NOT_FOUND_MSG));
-    };
-    if source.kind() != "legacy" {
-        return Err(AppError::new(
-            ErrorCode::ProfileRuntimeMismatch,
-            "the source profile is already a pi profile",
-        ));
-    }
-    let name = validate_name(&name).map_err(ProfileError::InvalidInput)?;
-    let validated = validate_pi_settings(settings)?;
-    let now = crate::ids::now_ms();
-    let copy = SessionProfile::Pi(PiSessionProfile {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        settings: validated,
-        created_at: now,
-        updated_at: now,
-    });
-    let mut next = profiles.clone();
-    next.push(copy.clone());
-    commit(app, state, &mut profiles, next)?;
-    Ok(copy)
-}
-
 /// francois:profiles:remove. Sessions created from this profile keep working
 /// and keep showing the snapshotted name (FR-22) — nothing else is touched.
 /// pi-migration-rollout FR-7: project defaults naming this profile are
@@ -309,6 +250,7 @@ pub fn profiles_remove(
 }
 
 fn remove(app: &AppHandle, state: &ProfileRegistry, id: &str) -> Result<Option<()>, AppError> {
+    reject_retired_profile(state, id)?;
     ensure_writable(state)?;
     let mut profiles = state.profiles.lock().unwrap();
     if find_index(&profiles, id).is_none() {
@@ -319,6 +261,9 @@ fn remove(app: &AppHandle, state: &ProfileRegistry, id: &str) -> Result<Option<(
     // whether the profile is in use, and "no references" is the one answer it
     // must not be allowed to imply. Refusing leaves the profile, the file and
     // every project default exactly as they were.
+    if profiles.iter().any(|p| p.id() == id && p.kind() == "pi") {
+        return Err(crate::ipc::retired_pi_error());
+    }
     let affected = sessions_referencing(app, id)?;
     let next: Vec<SessionProfile> = profiles.iter().filter(|p| p.id() != id).cloned().collect();
     commit(app, state, &mut profiles, next)?;
@@ -432,35 +377,6 @@ mod tests {
 
     // ---------- FR-4: copyToPi's wire shape ----------
 
-    /// contract/session-profiles.ts: `PiSessionProfile.kind: 'pi'` is REQUIRED
-    /// — it is the discriminant of the `SessionProfile` union the Profiles
-    /// modal switches on. `kind` is the wrapping enum's serde tag, not a field
-    /// of the struct, so a bare `PiSessionProfile` reaches the webview with no
-    /// `kind` at all. `copy_to_pi` needs an `AppHandle`, which this crate has
-    /// no test harness for, so the pin is in two halves: the first line fails
-    /// to COMPILE if the command ever answers with the bare struct again, and
-    /// the assertions record why that matters on the wire.
-    #[test]
-    fn copy_to_pi_answers_with_the_tagged_union_so_kind_reaches_the_webview() {
-        let _returns_the_tagged_union: fn(
-            &AppHandle,
-            &ProfileRegistry,
-            String,
-            String,
-            PiProfileSettingsInput,
-        ) -> Result<SessionProfile, AppError> = copy_to_pi;
-
-        let tagged = testutil::pi_fixture("p1", "pi-role");
-        assert_eq!(serde_json::to_value(&tagged).unwrap()["kind"], "pi");
-        let SessionProfile::Pi(bare) = tagged else {
-            panic!("pi_fixture must build a Pi profile");
-        };
-        assert!(
-            serde_json::to_value(&bare).unwrap().get("kind").is_none(),
-            "the bare struct carries no discriminant — which is why it must never be the wire type"
-        );
-    }
-
     // ---------- pi-migration-rollout FR-2: kind-change guard ----------
 
     #[test]
@@ -501,11 +417,11 @@ mod tests {
     fn build_new_profile_pi_kind_requires_settings() {
         let err = build_new_profile("id1".into(), Some("pi"), "role".into(), None, None, None, 0)
             .expect_err("missing settings");
-        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert_eq!(err.code, ErrorCode::RuntimeUnsupported);
     }
 
     #[test]
-    fn build_new_profile_pi_kind_builds_a_pi_profile() {
+    fn build_new_profile_pi_kind_rejects_even_valid_settings() {
         let settings = PiProfileSettingsInput {
             system_prompt_mode: "default".into(),
             system_prompt: None,
@@ -514,7 +430,7 @@ mod tests {
             tools: Vec::new(),
             project_resources: "ignore".into(),
         };
-        let profile = build_new_profile(
+        let error = build_new_profile(
             "id1".into(),
             Some("pi"),
             "reviewer".into(),
@@ -523,9 +439,8 @@ mod tests {
             Some(settings),
             0,
         )
-        .unwrap();
-        assert_eq!(profile.kind(), "pi");
-        assert_eq!(profile.name(), "reviewer");
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::RuntimeUnsupported);
     }
 
     #[test]

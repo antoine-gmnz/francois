@@ -1,30 +1,29 @@
-//! `ClaudeCodeAdapter` — the only real `SessionAdapter` today (FR-3). Wraps
-//! the pre-existing `claude -p --output-format stream-json …` spawn, the
-//! stdio control channel (`session::stdio`) and the NDJSON reader
-//! (`session::stream::run_reader`) with NO behavioural change: same argv,
-//! same env, same resume/`ResumeRetry` logic, same control-channel protocol,
-//! same `allow_git` auto-approval, same post-result close policy.
-//!
-//! The concrete turn handle (`TurnHandle`) lives here, `pub(crate)` to this
-//! module only — every other file reaches a live turn through the
-//! `TurnControl` trait (FR-2/FR-8). `spawn_claude`/`turn_args`/`user_line`
-//! moved here from `turn.rs` for the same reason: they are Claude-CLI-shaped,
-//! not engine-shaped.
-
-use super::*;
+//! Native Claude process adapter; all application effects use the injected sink.
+#[cfg(test)]
+mod boundary_tests;
+pub(crate) mod context;
+#[cfg(test)]
+mod product_tests;
+use super::{ControlAck, PendingCounts, PermissionDecision, TurnContext, TurnControl};
 use crate::ipc::{AppError, ErrorCode};
+use crate::session::application::{RuntimeEvent, RuntimeEventSink, RuntimePort};
+use crate::session::stream::{NativeStream, StreamEnvironment};
 
 // `super::*` only brings in this module's own siblings (AgentRuntime, TurnContext,
 // TurnControl, …) — the shared session data model (Session, Engine,
 // PendingQuestion/PendingPermission, emit, the stdio control-response
 // builders, run_reader, refresh_models, the spawn/env helpers, …) needs its
 // own glob import, same as every other child of `session`.
-use crate::session::*;
+use crate::session::{
+    account_env, allow_response, allow_tool_response, claim_pending, claude_invocation,
+    deny_response, permission_args, route_line, write_control_line, LineRoute, PendingPermission,
+    PendingQuestion, PERMISSION_DENY_MSG,
+};
 
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write as _};
-use std::process::{Child, ChildStdin, Stdio};
+use std::io::Write as _;
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -94,12 +93,16 @@ pub fn user_line(text: &str) -> String {
     line
 }
 
+/// `/compact`: a synchronous side-run on behalf of the session — same argv,
+/// account env and stdin delivery as a turn, stdin closed straight after the
+/// prompt (a compaction can never park on an ask), under the same supervised
+/// child ownership (`start_owned`: tree-killed and reaped, never orphaned).
+/// Returns only the resulting context figure (session-engine FR-28).
 #[allow(clippy::too_many_arguments)]
-pub fn spawn_claude(
+pub fn run_compact(
     cwd: &str,
     model_id: &str,
     resume: Option<&str>,
-    text: &str,
     effort: Option<&str>,
     permission_mode: &str,
     runtime: &str,
@@ -108,7 +111,8 @@ pub fn spawn_claude(
     system_prompt: Option<&str>,
     extra_args: &[String],
     response_mode: crate::session::ResponseMode,
-) -> std::io::Result<Child> {
+    limit: u64,
+) -> Option<u64> {
     let args = turn_args(
         model_id,
         resume,
@@ -119,11 +123,6 @@ pub fn spawn_claude(
         response_mode,
     );
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
-    // multi-account FR-21/FR-24: this turn runs under its session's account.
-    // session-questions FR-1: stdin is piped — the turn text goes down it as one
-    // NDJSON user line, and the stdio control channel (question answers /
-    // permission denies) rides the same pipe for the rest of the turn. It is the
-    // one spawn in the tree that overrides the facade's null stdin.
     let mut cmd = crate::process_util::spawn(program)
         .args(argv)
         .envs(account_env(account_config_dir, runtime, &[]))
@@ -132,43 +131,61 @@ pub fn spawn_claude(
     if runtime != "wsl" {
         cmd = cmd.current_dir(cwd); // wsl turns get their cwd via `--cd` inside the distro
     }
-    let mut child = cmd.start()?;
-    let wrote = match child.stdin.as_mut() {
-        Some(w) => w
-            .write_all(user_line(text).as_bytes())
-            .and_then(|_| w.flush()),
-        None => Ok(()),
+    let child = Arc::new(cmd.start_owned().ok()?);
+    let delivered = child.take_stdin().is_some_and(|mut w| {
+        // Dropping the writer is the EOF that lets the CLI exit after its result.
+        w.write_all(user_line("/compact").as_bytes())
+            .and_then(|_| w.flush())
+            .is_ok()
+    });
+    let used = match (delivered, child.take_frames()) {
+        (true, Some(mut frames)) => compact_usage(
+            std::iter::from_fn(|| frames.read_frame().ok().flatten()),
+            limit,
+        ),
+        _ => None,
     };
-    if let Err(e) = wrote {
-        // The child died before reading its prompt — surface it as a spawn failure.
-        let _ = child.kill();
-        return Err(e);
-    }
-    Ok(child)
+    let _ = child.close();
+    used
 }
 
-pub fn child_stdout_lines(mut child: Child) -> Option<Vec<String>> {
-    let stdout = child.stdout.take()?;
-    let reader = BufReader::new(stdout);
-    let mut lines = Vec::new();
-    for line in reader.lines() {
-        match line {
-            Ok(l) => lines.push(l),
-            Err(_) => break,
+/// The context figure of a `/compact` run's stdout, by the turn's own rules
+/// (`ContextTracker`): per-request parent usage wins, `result.usage` is only
+/// a last resort, and subagent lines never count.
+fn compact_usage(lines: impl IntoIterator<Item = String>, limit: u64) -> Option<u64> {
+    let mut usage = context::ContextTracker::default();
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if matches!(route_line(&v), LineRoute::Attributed(_)) {
+            continue;
+        }
+        match v.get("type").and_then(Value::as_str) {
+            Some("stream_event") => {
+                if let Some(ev) = v.get("event") {
+                    usage.observe_stream_event(ev);
+                }
+            }
+            Some("result") => {
+                if let Some(u) = v.get("usage") {
+                    usage.observe_result(u);
+                }
+            }
+            _ => {}
         }
     }
-    let _ = child.wait();
-    Some(lines)
+    usage.finish(limit)
 }
 
 // ---------- the concrete turn handle (FR-2) ----------
 
 pub struct TurnHandle {
-    child: Arc<Mutex<Child>>,
+    child: Arc<crate::process_util::OwnedChild>,
     interrupted: Arc<AtomicBool>,
     /// session-questions FR-2: the turn's stdin writer. Lives for the whole turn;
     /// None once the turn ends (closing it is what lets the CLI exit). ALL writes
-    /// go through this mutex — never while holding Engine.sessions (a blocking
+    /// go through this mutex — never while holding the session registry (a blocking
     /// pipe write must not stall every command).
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     /// session-questions FR-6: blockId → parked AskUserQuestion. Removing an entry
@@ -192,10 +209,13 @@ fn peek_permission_pattern(
 impl TurnControl for TurnHandle {
     fn interrupt(&self) {
         self.interrupted.store(true, Ordering::SeqCst);
+        self.kill();
     }
 
+    /// Immediate tree kill: a stop never waits on a grace period, and the
+    /// reader's EOF then settles the turn exactly once.
     fn kill(&self) {
-        let _ = self.child.lock().unwrap().kill();
+        let _ = self.child.terminate();
     }
 
     fn answer_question(&self, id: &str, answers: &Value) -> ControlAck {
@@ -213,6 +233,9 @@ impl TurnControl for TurnHandle {
     }
 
     fn decide_permission(&self, id: &str, decision: PermissionDecision) -> ControlAck {
+        if decision == PermissionDecision::Cancel {
+            return ControlAck::NotPending;
+        }
         // FR-10: removal from the pending map IS the exactly-once claim.
         let claimed = claim_pending(&self.pending_permissions, id);
         let Some(q) = claimed else {
@@ -221,6 +244,7 @@ impl TurnControl for TurnHandle {
         let payload = match decision {
             PermissionDecision::Allow => allow_tool_response(&q.request_id, &q.input),
             PermissionDecision::Deny => deny_response(&q.request_id, PERMISSION_DENY_MSG),
+            PermissionDecision::Cancel => return ControlAck::NotPending,
         };
         if write_control_line(&self.stdin, &payload) {
             ControlAck::Applied
@@ -261,134 +285,113 @@ impl TurnControl for TurnHandle {
 
 // ---------- the adapter ----------
 
-impl SessionAdapter for ClaudeCodeAdapter {
-    fn agent_runtime(&self) -> AgentRuntime {
-        AgentRuntime::ClaudeCode
-    }
-
-    /// FR-7: the `ACCOUNT_NOT_AUTHENTICATED` preflight that used to live
-    /// inline in `begin_turn` (turn.rs:271-287) — same error code, same
-    /// `mark_auth_failed` side effect, same message.
-    fn preflight(&self, app: &tauri::AppHandle, ctx: &TurnContext) -> Result<(), AppError> {
-        let account_config_dir = crate::account::config_dir_of(app, &ctx.account_id);
-        if let Some(dir) = account_config_dir.as_deref() {
-            if !crate::account::identity_file_exists(dir) {
-                crate::account::mark_auth_failed(app, &ctx.account_id);
-                return Err(AppError {
-                    code: ErrorCode::AccountNotAuthenticated,
-                    message:
-                        "this session's account is not signed in — use Re-login in the Accounts modal"
-                            .into(),
-                    detail: None,
-
-                runtime_failure: None,
-});
-            }
+impl RuntimePort for ClaudeCodeAdapter {
+    fn preflight(&self, ctx: &TurnContext) -> Result<(), AppError> {
+        if !ctx.execution.account_authenticated {
+            return Err(AppError::new(
+                ErrorCode::AccountNotAuthenticated,
+                "this session's account is not signed in — use Re-login in the Accounts modal",
+            ));
         }
         Ok(())
     }
 
     fn begin_turn(
         &self,
-        app: &tauri::AppHandle,
         ctx: TurnContext,
+        sink: Arc<dyn RuntimeEventSink>,
     ) -> Result<Arc<dyn TurnControl>, AppError> {
-        let account_config_dir = crate::account::config_dir_of(app, &ctx.account_id);
-        let mut child = spawn_claude(
-            &ctx.cwd,
-            &ctx.model_id,
-            ctx.resume.as_deref(),
-            &ctx.text,
-            ctx.effort.as_deref(),
-            &ctx.permission_mode,
-            &ctx.runtime,
-            ctx.worktree_distro.as_deref(),
-            account_config_dir.as_deref(),
-            ctx.system_prompt.as_deref(),
-            &ctx.extra_args,
-            ctx.response_mode,
+        begin_native_turn(ctx, sink, |program, argv| (program, argv))
+    }
+}
+
+/// The whole native turn start behind `ClaudeCodeAdapter::begin_turn`.
+/// `launch` sees the resolved `(program, argv)` and returns what is actually
+/// executed — identity in production; a test swaps only the executable.
+pub(super) fn begin_native_turn(
+    ctx: TurnContext,
+    sink: Arc<dyn RuntimeEventSink>,
+    launch: impl FnOnce(String, Vec<String>) -> (String, Vec<String>),
+) -> Result<Arc<dyn TurnControl>, AppError> {
+    let args = turn_args(
+        &ctx.model_id,
+        ctx.resume.as_deref(),
+        ctx.effort.as_deref(),
+        &ctx.permission_mode,
+        ctx.system_prompt.as_deref(),
+        &ctx.extra_args,
+        ctx.response_mode,
+    );
+    let (program, argv) =
+        claude_invocation(&ctx.runtime, &ctx.cwd, args, ctx.worktree_distro.as_deref());
+    let (program, argv) = launch(program, argv);
+    let mut command = crate::process_util::spawn(program)
+        .args(argv)
+        .envs(ctx.execution.environment.clone())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    if ctx.runtime != "wsl" {
+        command = command.current_dir(&ctx.cwd);
+    }
+    let child = Arc::new(command.start_owned().map_err(|error| {
+        AppError::new(
+            ErrorCode::SpawnFailed,
+            format!("could not start claude: {error}"),
         )
-        .map_err(|e| AppError {
-            code: ErrorCode::SpawnFailed,
-            message: format!("could not start claude: {e}"),
-            detail: None,
-
-            runtime_failure: None,
+    })?);
+    let mut writer = child.take_stdin().ok_or_else(|| {
+        AppError::new(ErrorCode::RuntimeUnavailable, "Claude input is unavailable")
+    })?;
+    writer
+        .write_all(user_line(&ctx.text).as_bytes())
+        .and_then(|_| writer.flush())
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::RuntimeUnavailable,
+                "could not deliver prompt to Claude",
+            )
         })?;
-
-        // session-questions FR-2: the stdin writer joins the turn state for the
-        // whole turn — the reader thread (denies) and session_answer_question
-        // (answers) share it; it closes only when the turn ends.
-        let stdin = Arc::new(Mutex::new(child.stdin.take()));
-        // FR-5: the adapter owns the process and hands the reader its stdout —
-        // `run_reader` never reaches into the `Child` for it. `None` is
-        // unreachable in practice (spawn_claude pipes stdout and nothing else
-        // takes it); it still ends the turn exactly as it did before.
-        let stdout = child.stdout.take();
-        let pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let child = Arc::new(Mutex::new(child));
-        let interrupted = Arc::new(AtomicBool::new(false));
-
-        let handle: Arc<TurnHandle> = Arc::new(TurnHandle {
-            child: child.clone(),
-            interrupted: interrupted.clone(),
-            stdin: stdin.clone(),
-            pending_questions: pending_questions.clone(),
-            pending_permissions: pending_permissions.clone(),
-        });
-
-        let resume_used = ctx.resume.is_some();
-        let app2 = app.clone();
-        let TurnContext {
-            session_id,
-            block_id,
-            text,
-            model_id,
-            ..
-        } = ctx;
-        // block_id/text carried into the reader so a resume-fail can re-run this
-        // turn fresh (session-engine FR-9).
-        std::thread::spawn(move || match stdout {
-            Some(out) => crate::session::run_reader(
-                app2,
-                session_id,
-                BufReader::new(out),
-                child,
-                interrupted,
-                stdin,
-                pending_questions,
-                pending_permissions,
-                model_id,
-                resume_used,
-                block_id,
-                text,
-            ),
-            None => crate::session::finish_turn(&app2, &session_id, false, None),
-        });
-
-        Ok(handle)
+    let stdin = Arc::new(Mutex::new(Some(writer)));
+    let mut frames = child.take_frames().ok_or_else(|| {
+        AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            "Claude output is unavailable",
+        )
+    })?;
+    let pending_questions = Arc::new(Mutex::new(HashMap::new()));
+    let pending_permissions = Arc::new(Mutex::new(HashMap::new()));
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let handle = Arc::new(TurnHandle {
+        child: child.clone(),
+        interrupted: interrupted.clone(),
+        stdin: stdin.clone(),
+        pending_questions: pending_questions.clone(),
+        pending_permissions: pending_permissions.clone(),
+    });
+    let env = NativeStream::new(ctx.clone(), sink);
+    env.publish(RuntimeEvent::PromptDelivered(ctx.response_mode));
+    if let Some(error) = env.failure() {
+        return Err(error);
     }
-
-    /// FR-10: today's `models.rs` path verbatim (live `/v1/models` fetch,
-    /// static fallback). `account_id` is accepted for the trait's sake but
-    /// unused — v1 `session_models` has no per-session/per-account context on
-    /// the wire (`contract/session-engine.ts`'s `session_models` payload is
-    /// empty) and always read the GLOBAL `~/.claude/.credentials.json`, a
-    /// pre-existing gap this refactor does not change.
-    fn models(&self, app: &tauri::AppHandle, _account_id: &str) -> Vec<ModelInfo> {
-        // With the handle: a picker open that lands a live fetch also mirrors the
-        // catalog and reconciles every session's window, so a run that booted
-        // offline heals as soon as the network comes back.
-        crate::session::refresh_models_for(Some(app))
-    }
+    std::thread::spawn(move || {
+        crate::session::stream::run_reader(
+            &env,
+            &ctx,
+            || frames.read_frame(),
+            child,
+            interrupted,
+            stdin,
+            pending_questions,
+            pending_permissions,
+        )
+    });
+    Ok(handle)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::*;
 
     #[test]
     fn turn_args_enable_stdio_control_channel_without_positional_prompt() {
@@ -551,6 +554,30 @@ mod tests {
             serde_json::json!({ "type": "user", "message": { "role": "user",
                 "content": [{ "type": "text", "text": "fix the bug" }] } })
         );
+    }
+
+    /// claude-process-adapter FR-7: `/compact`'s context figure is decoded by
+    /// the adapter with the turn's own rules — last parent request wins,
+    /// subagent requests never count, `result.usage` only as a last resort.
+    #[test]
+    fn compact_usage_uses_the_last_parent_request_and_ignores_subagents() {
+        let lines = [
+            r#"{"type":"stream_event","parent_tool_use_id":"toolu_sub","event":{"type":"message_start","message":{"usage":{"input_tokens":1,"cache_read_input_tokens":900000}}}}"#,
+            r#"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":12000}}}}"#,
+            r#"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_delta","usage":{"output_tokens":90}}}"#,
+            "not json",
+            r#"{"type":"result","usage":{"input_tokens":5,"cache_read_input_tokens":3400000,"output_tokens":100}}"#,
+        ];
+        assert_eq!(
+            compact_usage(lines.map(String::from), 200_000),
+            Some(12_100)
+        );
+        let only_result = [r#"{"type":"result","usage":{"input_tokens":7,"output_tokens":3}}"#];
+        assert_eq!(
+            compact_usage(only_result.map(String::from), 200_000),
+            Some(10)
+        );
+        assert_eq!(compact_usage(std::iter::empty(), 200_000), None);
     }
 
     #[test]

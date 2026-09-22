@@ -616,7 +616,10 @@ pub(crate) fn catalog_for_account(
     refresh: bool,
 ) -> Result<ModelCatalog, AppError> {
     let id = resolve_catalog_account(account_id, &crate::account::known_ids(app))?;
-    let runtime = AgentRuntime::from_account_kind(crate::account::kind_of(app, id)).0;
+    // process-settings-and-metrics FR-2: a retired Pi account answers with the
+    // retired error rather than an empty "unverified" catalogue.
+    let (kind, _) = crate::account::execution_account(app, id)?;
+    let runtime = AgentRuntime::from_account_kind(kind).0;
     if runtime == AgentRuntime::Codex {
         return super::adapter::codex::model_catalog(app, id, refresh);
     }

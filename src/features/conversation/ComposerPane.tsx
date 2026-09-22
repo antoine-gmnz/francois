@@ -15,49 +15,38 @@
 // change what it covers (conversation.css has no z-index it could lose to).
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { DeliveryMode, RuntimeQueueEntry, SessionMeta, SessionStatus, SlashCommandInfo } from '../../../contract/common';
+import type { SessionMeta, SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus, isTerminalStatus } from '../../../contract/fleet-board';
-import { MAX_PENDING_INTENTS } from '../../../contract/pi-turn-controls';
-import { sessionAcknowledgePolicy, sessionClear, sessionClearQueue, sessionInterrupt, sessionSend, sessionSubmit, sessionUnqueue } from '../../lib/api';
-import Composer, { type PiComposerProps } from './Composer';
-import { isClearCommand, readingWindowHint, RESTORING_PLACEHOLDER, type TranscriptDispatch } from './conversation-blocks';
+import { sessionClear, sessionInterrupt, sessionSend, sessionUnqueue } from '../../lib/api';
+import { sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
+import {
+    commandInvocation,
+    filterCommands,
+    moveSelection,
+    nextDismissed,
+    popupKeyAction,
+    popupVisible,
+    refreshSelection,
+    slashToken,
+} from '../commands/slash-menu';
+import { composerPlaceholder } from '../questions/question-card';
+import Composer from './Composer';
 import { getDraft, setDraft } from './composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
-import { resolveEffectiveChoice, resolveKeyDelivery, type DeliveryChoice } from './delivery-mode';
-import {
-  atFirstLine,
-  atLastLine,
-  getHistory,
-  recallNext,
-  recallPrev,
-  recordSent,
-  type Browse,
-} from './message-history';
-import { composerPlaceholder } from '../questions/question-card';
-import { sessionCapability } from '../../lib/runtimeCapability';
-import {
-  commandInvocation,
-  filterCommands,
-  moveSelection,
-  nextDismissed,
-  popupKeyAction,
-  popupVisible,
-  refreshSelection,
-  slashToken,
-} from '../commands/slash-menu';
-import DropOverlay from './DropOverlay';
-import { useSessionAttachments } from './useSessionAttachments';
-import { appendToDraft, parkPrompt, resolvePrompt, usePendingQueue, wasWronglyOptimistic } from './pending-queue';
-import { beginResend, endResend, exceedsMessageByteCap, isQueueFull, shouldUnqueueAfterResend, useQueueEntries } from '../../lib/pi-queue';
-import { useMounted } from '../../lib/hooks/useMounted';
-import {
-  compactionBannerText,
-  dismissCompactionProgress,
-  retryBannerText,
-  useCompactionProgress,
-  useRetryProgress,
-} from '../../lib/pi-turn-progress';
+import { isClearCommand, readingWindowHint, RESTORING_PLACEHOLDER, type TranscriptDispatch } from './conversation-blocks';
 import './conversation.css';
+import DropOverlay from './DropOverlay';
+import {
+    atFirstLine,
+    atLastLine,
+    getHistory,
+    recallNext,
+    recallPrev,
+    recordSent,
+    type Browse,
+} from './message-history';
+import { appendToDraft, parkPrompt, resolvePrompt, usePendingQueue, wasWronglyOptimistic } from './pending-queue';
+import { useSessionAttachments } from './useSessionAttachments';
 
 export interface ComposerPaneProps {
   sessionId: string;
@@ -108,7 +97,7 @@ export default function ComposerPane({
   setPinned,
   showSkeleton,
 }: ComposerPaneProps) {
-  const disabled = isTerminalStatus(status);
+  const disabled = sessionIsRetired(meta) || isTerminalStatus(status);
 
   // The composer text. Seeded from — and mirrored back into — the per-session
   // draft map, because this component is keyed by sessionId (via
@@ -127,33 +116,7 @@ export default function ComposerPane({
   // transcript-perf §6: this session's pending queue, reactive. Legacy
   // (non-Pi) runtimes only — a Pi session never parks anything here.
   const pending = usePendingQueue(sessionId);
-
-  // pi-turn-controls: a Pi session submits through francois:session:submit —
-  // a different admissions model (explicit delivery mode, a core-owned
-  // ledger) entirely separate from the legacy pending-queue strip above,
-  // which stays untouched for every other runtime.
-  const isPi = meta?.agentRuntime === 'pi';
-  const queueEntries = useQueueEntries(sessionId);
-  const compaction = useCompactionProgress(sessionId);
-  const retry = useRetryProgress(sessionId);
-  const [deliveryChoice, setDeliveryChoice] = useState<DeliveryChoice>('followUp');
   const [stopping, setStopping] = useState(false);
-  // frontend fix loop (double-Resend defect): a per-row in-flight guard for
-  // Resend/Discard, modelled on `stopping` above. The ref is the actual
-  // dedupe — checked-and-claimed synchronously (pi-queue's beginResend)
-  // before either handler's first `await`, since React state from a first
-  // click is not yet visible to a fast second click in the same tick. The
-  // state mirror exists only so QueueStrip can render the disabled row.
-  const resendingRef = useRef<Set<string>>(new Set());
-  const [resendingIds, setResendingIds] = useState<ReadonlySet<string>>(() => new Set());
-  const mountedRef = useMounted();
-  // pi-skills-capabilities FR-5: a send refused with RUNTIME_POLICY_REQUIRED —
-  // the acknowledgment prompt (Composer's `pi.policyRequired`) replaces the
-  // plain error banner until the user acts; never set for any other failure.
-  const [policyRequired, setPolicyRequired] = useState(false);
-  const steeringCapability = sessionCapability(meta, 'steering');
-  const followUpsCapability = sessionCapability(meta, 'followUps');
-  const effectiveChoice = resolveEffectiveChoice(deliveryChoice, steeringCapability.available, followUpsCapability.available);
 
   // FR-6: a Stop confirmed (or refused) while the session settled some other
   // way must not leave the button stuck reading "Stopping…".
@@ -198,7 +161,7 @@ export default function ComposerPane({
   // webview drag-drop channel), so it must name the one composer a gesture
   // could have been meant for: focused (not inert) AND on screen.
   const imagesCapability = sessionCapability(meta, 'images');
-  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !inert && visible, imagesCapability });
+  const attachments = useSessionAttachments({ sessionId, input, setInput, inputRef, autoGrow, active: !sessionIsRetired(meta) && !inert && visible, imagesCapability });
 
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 
@@ -242,67 +205,7 @@ export default function ComposerPane({
     void send(commandInvocation(command, 'run'));
   };
 
-  // pi-turn-controls §5/FR-1..FR-4: the explicit-delivery submit. `delivery`
-  // is resolved at the CALL SITE (onInputKey knows the pressed key's altKey;
-  // every other caller falls back to the plain Enter/Send resolution) so this
-  // stays one function regardless of what triggered it.
-  const sendPi = async (text: string, delivery: DeliveryMode | null) => {
-    if (delivery === null) {
-      setSendError('No delivery mode is available for this session right now.');
-      setTimeout(() => setSendError(null), 4000);
-      return;
-    }
-    if (exceedsMessageByteCap(text)) {
-      setSendError('Message is too large — the limit is 1 MiB.');
-      setTimeout(() => setSendError(null), 4000);
-      return;
-    }
-    if (isQueueFull(queueEntries)) {
-      setSendError(`Too many pending messages — clear some first (max ${MAX_PENDING_INTENTS}).`);
-      setTimeout(() => setSendError(null), 4000);
-      return;
-    }
-    const clientMessageId = crypto.randomUUID();
-    setInput('');
-    if (inputRef.current) inputRef.current.style.height = 'auto';
-    // FR-3/FR-4: NO optimistic transcript block — the block is created only by
-    // the eventual `message.user` runtime event, carrying this clientMessageId.
-    const res = await sessionSubmit({
-      sessionId,
-      clientMessageId,
-      text,
-      delivery,
-      attachmentIds: attachments.chips.map((a) => a.id),
-    });
-    if (!res.ok) {
-      setInput(text);
-      // pi-skills-capabilities FR-5: the acknowledgment banner takes over —
-      // never stack a duplicate generic error on top of it.
-      if (res.error.code === 'RUNTIME_POLICY_REQUIRED') {
-        setPolicyRequired(true);
-      } else {
-        setSendError(res.error.message);
-        setTimeout(() => setSendError(null), 4000);
-      }
-      return;
-    }
-    attachments.commit(text);
-    recordSent(sessionId, text);
-  };
-
-  // FR-5: never auto-acknowledged — this fires only on the user's own click.
-  // Clears the prompt whether or not it succeeded; a failure surfaces as the
-  // ordinary transient error, so the user is never stuck on a dead banner.
-  const acknowledgePolicy = async () => {
-    const res = await sessionAcknowledgePolicy(sessionId);
-    setPolicyRequired(false);
-    if (!res.ok) {
-      setSendError(res.error.message);
-      setTimeout(() => setSendError(null), 4000);
-    }
-  };
-
-  const send = async (textArg?: string, delivery?: DeliveryMode | null) => {
+  const send = async (textArg?: string) => {
     const text = textArg ?? input;
     if (!text.trim() || disabled) return;
     setBrowse(null); // message-history FR-9: sending (or /clear) ends the walk.
@@ -318,11 +221,6 @@ export default function ComposerPane({
       return;
     }
     if (!attachments.canSubmit(text)) return;
-
-    if (isPi) {
-      await sendPi(text, delivery ?? resolveKeyDelivery(status, false, effectiveChoice));
-      return;
-    }
 
     const blockId = crypto.randomUUID();
     // transcript-perf FR-10: a busy session parks the prompt instead of
@@ -374,104 +272,12 @@ export default function ComposerPane({
     }
   };
 
-  // pi-turn-controls FR-5 (amended): session_unqueue (blockId = the entry's
-  // clientMessageId) removes any entry Pi does NOT own — an intent still
-  // 'admitting' (the composer strip's ✕), or one of the three recoverable
-  // terminal states (the strip's "Discard"). `removed: false` is not an
-  // error: it means Pi already accepted the entry (or it was already gone)
-  // between the click and this response — the strip's own next
-  // `queue.changed` is what actually repaints/clears the row either way, so
-  // there is nothing to reconcile locally.
-  // frontend fix loop: shares the resend in-flight set — a Discard racing a
-  // Resend of the SAME row is the same double-submit bug from the other
-  // side, so both go through the one guard, keyed by clientMessageId.
-  const onUnqueuePi = async (clientMessageId: string) => {
-    if (!beginResend(resendingRef.current, clientMessageId)) return;
-    setResendingIds(new Set(resendingRef.current));
-    try {
-      const res = await sessionUnqueue(sessionId, clientMessageId);
-      if (!res.ok) {
-        setSendError(res.error.message);
-        setTimeout(() => setSendError(null), 4000);
-      }
-    } finally {
-      endResend(resendingRef.current, clientMessageId);
-      if (mountedRef.current) setResendingIds(new Set(resendingRef.current));
-    }
-  };
-
-  // FR-3: Resend always mints a NEW clientMessageId, and reuses the entry's
-  // OWN attachmentIds — never the composer's currently-staged ones, which may
-  // be unrelated to this historical entry or already released.
-  //
-  // frontend fix loop (double-Resend defect): a double click used to mint TWO
-  // fresh clientMessageIds and submit the same text twice — nothing
-  // downstream can dedupe distinct ids. `beginResend` is the synchronous
-  // check-and-claim, before this function's first `await`; `endResend` always
-  // runs in the `finally`, so an error `Result` or a thrown exception never
-  // leaves the row stuck disabled.
-  const onResendPi = async (entry: RuntimeQueueEntry) => {
-    if (!beginResend(resendingRef.current, entry.clientMessageId)) return;
-    setResendingIds(new Set(resendingRef.current));
-    try {
-      const delivery = resolveKeyDelivery(status, false, effectiveChoice);
-      if (delivery === null) {
-        setSendError('No delivery mode is available for this session right now.');
-        setTimeout(() => setSendError(null), 4000);
-        return;
-      }
-      const res = await sessionSubmit({
-        sessionId,
-        clientMessageId: crypto.randomUUID(),
-        text: entry.text,
-        delivery,
-        attachmentIds: entry.attachmentIds,
-      });
-      if (!res.ok) {
-        setSendError(res.error.message);
-        setTimeout(() => setSendError(null), 4000);
-        return;
-      }
-      // FR-3 (amended): the resend landed under a NEW id — drop the stale
-      // recovery row so the strip does not show both. Never reached on the
-      // failure above (shouldUnqueueAfterResend(false)): the user must not
-      // lose the only copy of the text.
-      //
-      // AWAITED, not fired and forgotten: the claim below must outlive the
-      // stale row. With `void`, the `finally` re-enabled a row still on
-      // screen (it only goes on the next `queue.changed`), and a second click
-      // in that gap resent the message — the very bug this guard is for. The
-      // core publishes `queue.changed` before this command answers, so by the
-      // time the claim is released the row is already on its way out.
-      if (shouldUnqueueAfterResend(res.ok)) {
-        const dropped = await sessionUnqueue(sessionId, entry.clientMessageId);
-        if (!dropped.ok && mountedRef.current) {
-          setSendError(dropped.error.message);
-          setTimeout(() => setSendError(null), 4000);
-        }
-      }
-    } finally {
-      endResend(resendingRef.current, entry.clientMessageId);
-      if (mountedRef.current) setResendingIds(new Set(resendingRef.current));
-    }
-  };
-
-  // FR-5: bulk-drains every entry Pi has already accepted; the core's own
-  // `queue.changed` repaints the strip once it applies — no local reconciliation.
-  const onClearQueuePi = async () => {
-    const res = await sessionClearQueue(sessionId);
-    if (!res.ok) {
-      setSendError(res.error.message);
-      setTimeout(() => setSendError(null), 4000);
-    }
-  };
-
   // FR-6/FR-7: shared by the composer's Stop button and the ⌃C shortcut below
   // — session_interrupt now resolves only AFTER the cancel is confirmed, so
   // this tracks the round trip for the "Stopping…" state. The `stopping`
   // guard is cosmetic only: a second session_interrupt is idempotent core-side.
   const handleStop = async () => {
-    if (stopping) return;
+    if (stopping || disabled) return;
     setStopping(true);
     const res = await sessionInterrupt(sessionId);
     setStopping(false);
@@ -536,7 +342,7 @@ export default function ComposerPane({
       // pi-turn-controls §3: Alt+Enter is always an explicit follow-up;
       // plain Enter follows the toggle while busy. Ignored (undefined) for
       // every non-Pi runtime — `send` falls back to its existing behaviour.
-      void send(undefined, isPi ? resolveKeyDelivery(status, e.altKey, effectiveChoice) : undefined);
+      void send();
     }
   };
 
@@ -587,32 +393,6 @@ export default function ComposerPane({
     );
   }
 
-  // pi-turn-controls: everything Composer's `pi` prop needs, computed once
-  // per render rather than inline in the JSX below. `null` for every non-Pi
-  // session — Composer then renders exactly as it did before this feature.
-  const piProps: PiComposerProps | null = isPi
-    ? {
-        busy: isBusyStatus(status),
-        deliveryChoice: effectiveChoice ?? deliveryChoice,
-        canSteer: steeringCapability.available,
-        canFollowUp: followUpsCapability.available,
-        onChangeDelivery: setDeliveryChoice,
-        queue: queueEntries,
-        onUnqueue: (clientMessageId) => void onUnqueuePi(clientMessageId),
-        onResend: (entry) => void onResendPi(entry),
-        onClearQueue: () => void onClearQueuePi(),
-        resendingIds,
-        stopping,
-        onStop: () => void handleStop(),
-        compactionNotice: compactionBannerText(compaction),
-        compactionFailed: compaction?.state === 'failed',
-        onDismissCompaction: () => dismissCompactionProgress(sessionId),
-        retryNotice: retryBannerText(retry),
-        policyRequired,
-        onAcknowledgePolicy: () => void acknowledgePolicy(),
-      }
-    : null;
-
   return (
     <>
       <DropOverlay state={attachments.overlay} />
@@ -651,7 +431,6 @@ export default function ComposerPane({
         popupUnavailableReason={interactiveCommandsCapability.available ? null : (interactiveCommandsCapability.reason ?? null)}
         pending={pending}
         onRetractPending={(blockId, text) => void onRetractPending(blockId, text)}
-        pi={piProps}
       />
     </>
   );

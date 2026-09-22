@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionMeta, RuntimeCapability } from '../../../contract/common';
+import type { RuntimeCapability, SessionMeta } from '../../../contract/common';
 vi.mock('../../lib/api', () => ({ sessionModels: vi.fn(async () => ({ ok: false })), sessionSwitchModel: vi.fn(), sessionCompact: vi.fn(), skillsRun: vi.fn(), agentsKill: vi.fn() }));
 const commands: [string, RuntimeCapability][] = [['switch-model', 'modelSwitching'], ['compact-context', 'compaction'], ['run-skill', 'skills'], ['attach-mcp-server', 'mcp'], ['new-agent', 'subagents'], ['manage-permissions', 'permissions']];
 beforeEach(() => { vi.resetModules(); vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} }); });
 describe('palette runtime capabilities', () => {
-  it.each([undefined, { available: false, reason: 'Model disabled this action.' }])('blocks availability and direct execution with snapshot %j', async (snapshot) => {
+  it.each([undefined, { available: true }, { available: false, reason: 'Model disabled this action.' }])('blocks availability and direct execution with snapshot %j', async (snapshot) => {
     const { useStore } = await import('../../lib/store');
     const { paletteCommands } = await import('./palette');
     (await import('./paletteCommands')).registerBuiltinCommands();
@@ -12,7 +12,7 @@ describe('palette runtime capabilities', () => {
       useStore.setState({ activeSessionId: 's', sessions: [{ id: 's', agentRuntime: 'pi', effectiveCapabilities: snapshot ? { [capability]: snapshot } : undefined } as SessionMeta] });
       const cmd = paletteCommands().find(c => c.id === id)!;
       expect(cmd.enabled?.({ activeSessionId: 's', runningAgentCount: 0 })).toBe(false);
-      expect(cmd.hint?.()).toBe(snapshot?.reason ?? 'Runtime is not connected.');
+      expect(cmd.hint?.()).toBe('Pi is unavailable in this version. Saved history is read-only.');
       expect(cmd.run({ activeSessionId: 's', runningAgentCount: 0 })).toBeUndefined();
     }
     expect(useStore.getState().mcpAttachOpen).toBe(false);

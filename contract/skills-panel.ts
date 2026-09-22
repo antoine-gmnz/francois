@@ -6,6 +6,8 @@
 // the event `francois:skills:event` → Tauri event `francois://skills/event`.
 
 import type { DeliveryMode, Result, SessionId, SkillInfo } from './common';
+// Pi retirement overrides the historical Pi descriptions below: all Pi-targeted
+// skill execution/install/listing returns RUNTIME_UNSUPPORTED without native I/O.
 
 // ---------- francois:skills:list ----------
 export interface SkillsListRequest {

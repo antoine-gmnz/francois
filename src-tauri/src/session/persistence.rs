@@ -72,6 +72,9 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
                 "questions": card.get("questions").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
                 "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
             });
+            if let Some(blocking) = card.get("blocking") {
+                o["blocking"] = blocking.clone();
+            }
             if let Some(a) = card.get("answers") {
                 o["answers"] = a.clone();
             }
@@ -148,18 +151,6 @@ pub fn append_transcript(app: &AppHandle, session_id: &str, block: &BufBlock) {
     }
 }
 
-/// pi-session-durability FR-6: atomically REPLACE a session's whole transcript
-/// file with a freshly rebuilt block list (`transcript_file::replace_at`).
-pub(crate) fn replace_transcript(
-    app: &AppHandle,
-    session_id: &str,
-    blocks: &[BufBlock],
-) -> std::io::Result<()> {
-    let path = transcript_path(app, session_id)
-        .ok_or_else(|| std::io::Error::other("invalid session id"))?;
-    transcript_file::replace_at(&path, blocks)
-}
-
 /// /clear: remove the session's persisted transcript so a reload starts empty.
 /// Best-effort — a missing file or remove error is ignored. command-inspect
 /// FR-7: its `.details.jsonl` sidecar is swept in the same call — it shadows
@@ -215,6 +206,9 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
                 _ => "cancelled",
             };
             let mut card = serde_json::json!({ "questions": questions, "state": state });
+            if let Some(blocking) = v.get("blocking").and_then(Value::as_bool) {
+                card["blocking"] = Value::Bool(blocking);
+            }
             if let Some(a) = v.get("answers").filter(|a| !a.is_null()) {
                 card["answers"] = a.clone();
             }
@@ -378,151 +372,25 @@ pub fn read_transcript(app: &AppHandle, session_id: &str) -> Vec<BufBlock> {
     parse_transcript(&content)
 }
 
+static PERSIST_LOCK: Mutex<()> = Mutex::new(());
+mod native_anchor;
+pub(crate) use native_anchor::persist_anchor;
+#[cfg(any(test, feature = "harness"))]
+pub(crate) use native_anchor::persist_anchor_at;
+#[cfg(test)]
+pub(crate) use native_anchor::{reopen, save};
+
 pub fn persist(app: &AppHandle, engine: &Engine) {
     // One writer at a time: persist() is called from commands (async runtime) AND
     // from run_reader threads, and every caller writes the SAME sessions.json.tmp
     // before the atomic rename — two concurrent writers could rename a torn file.
-    static PERSIST_LOCK: Mutex<()> = Mutex::new(());
     let _w = PERSIST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // FR-1: the `MutexGuard` on `Engine.sessions` must not be live across the
     // filesystem I/O below — it is scoped to this block, so serialization
     // (building `list`) finishes and the guard drops before `to_vec_pretty` +
     // `fs::write` + `fs::rename` run. `PERSIST_LOCK` still serialises
     // concurrent writers; that invariant is unchanged.
-    let mut list: Vec<Value> = {
-        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
-        map
-        .values()
-        .map(|s| {
-            let mut rec = serde_json::json!({
-                "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
-                // display-openai-model-name FR-1: always written, like modelId —
-                // every session has both, resolved once at creation/switch/reconcile
-                // and never re-derived on load (FR-8).
-                "modelLabel": s.model_label,
-                "contextLimitTokens": s.context_limit_tokens,
-                "permissionMode": s.permission_mode,
-                // rework-top-bar (design 11c): the `on since` line must survive a
-                // restart — a bypass left on last week is exactly the case the
-                // line exists for.
-                "permissionModeSince": s.permission_mode_since,
-                "runtime": s.runtime,
-                "allowGit": s.allow_git,
-                "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
-                "lastActivityAt": s.last_activity_at,
-                "contextUsedTokens": s.context_used_tokens,
-                // multi-account FR-19: always written (unlike projectId) — a
-                // session always has an account, and 'default' is a real value.
-                "accountId": s.account_id,
-                // multi-provider-seam FR-11a: always written — every session
-                // has both, derived once at creation and never re-derived.
-                // The superseded `provider` key is read (see
-                // `parse_session_record`), never written.
-                "agentRuntime": s.agent_runtime,
-                "protocol": s.protocol,
-                "runtimeModel": s.runtime_model,
-                // response-mode FR-1: always written, like accountId — every
-                // session has one and 'default' is a real value. FR-10's
-                // `responseModeSent` rides alongside the thread anchor it is
-                // scoped to, so a resumed codex/grok thread does not re-send a
-                // directive it already carries.
-                "responseMode": s.response_mode.as_str(),
-                "responseModeSent": s.response_mode_sent.map(|m| m.as_str()),
-            });
-            // projects FR-18: write projectId ONLY when linked. An unlinked session
-            // must omit the key entirely rather than emit null, so a record written
-            // here stays byte-compatible with a pre-projects build's reader.
-            if let Some(pid) = &s.project_id {
-                rec["projectId"] = Value::String(pid.clone());
-            }
-            // session-worktree FR-12: written only when present, same omit-not-null
-            // convention as projectId (a pre-feature reader must see no key).
-            if let Some(wt) = &s.worktree {
-                rec["worktree"] = serde_json::to_value(wt).unwrap_or(Value::Null);
-            }
-            // session-worktree FR-10: the `GitHost` distro this session's cwd was
-            // resolved under, written as a sibling key (never inside the contract
-            // `worktree` object) so it survives a restart — without it, a reloaded
-            // WSL worktree session's bare Linux-path cwd has no distro to route
-            // git/turn-spawn calls to.
-            if let Some(distro) = &s.worktree_distro {
-                rec["worktreeDistro"] = Value::String(distro.clone());
-            }
-            // session-attachments §6: the staged/sent refs ride along with the
-            // session record — that is what makes FR-17's start-up sweep
-            // crash-proof. Same omit-not-null convention: a session that never
-            // attached anything writes no key at all.
-            if !s.attachments.is_empty() {
-                rec["attachments"] = serde_json::to_value(&s.attachments).unwrap_or(Value::Null);
-            }
-            // cloud-sessions FR-10/§6: the ONLY thing this feature persists.
-            // Same omit-not-null convention — a session that was never adopted
-            // writes no key at all.
-            if let Some(c) = &s.cloud {
-                rec["cloud"] = serde_json::to_value(c).unwrap_or(Value::Null);
-            }
-            // session-profiles FR-19: snapshotted at creation, resumed with
-            // exactly the persisted values — never re-read from the profile.
-            // Same omit-not-null convention as projectId/worktree.
-            if let Some(sp) = &s.system_prompt {
-                rec["systemPrompt"] = Value::String(sp.clone());
-            }
-            if !s.extra_args.is_empty() {
-                rec["extraArgs"] = serde_json::to_value(&s.extra_args).unwrap_or(Value::Null);
-            }
-            if let Some(p) = &s.profile {
-                rec["profile"] = serde_json::to_value(p).unwrap_or(Value::Null);
-            }
-            // pi-migration-rollout FR-3: the resolved settings snapshot rides
-            // the SAME atomic write, so a resume/reconnect relaunches with
-            // the identical snapshot — never re-resolved from the registry.
-            // Same omit-not-null convention: no key at all for a session
-            // that carries no Pi profile.
-            if let Some(settings) = &s.pi_profile_settings {
-                rec["piProfile"] = serde_json::to_value(settings).unwrap_or(Value::Null);
-            }
-            // pi-migration-rollout FR-3 (read-once fix): the launch prompt
-            // resolved from `piProfile.instructionPaths` rides the SAME
-            // atomic write, alongside it — a resume/reconnect relaunches
-            // from THIS text, never re-reading the instruction files. Same
-            // omit-not-null convention: absent until resolved (creation, or
-            // the lazy once-only backward-compat resolve on first connect).
-            if let Some(prompt) = &s.pi_launch_prompt {
-                rec["piLaunchPrompt"] = serde_json::to_value(prompt).unwrap_or(Value::Null);
-            }
-            // pi-session-durability FR-1/FR-2/FR-6: nested under the matching
-            // session record so it rides the SAME atomic temp+rename write —
-            // same omit-not-null convention as `worktree`/`profile`. Absent
-            // until the first successful connect writes it (FR-2's "before
-            // any first prompt").
-            if let Some(pi) = &s.pi_resume {
-                rec["pi"] = serde_json::to_value(pi).unwrap_or(Value::Null);
-            }
-            // pi-models-metrics: same omit-not-null convention — absent until
-            // the first successful read lands (session_metrics/an automatic
-            // refresh). Loaded back `stale: true` (see `parse_session_record`).
-            if let Some(metrics) = &s.metrics {
-                rec["metrics"] = serde_json::to_value(metrics).unwrap_or(Value::Null);
-            }
-            // pi-skills-capabilities: same omit-not-null convention — a
-            // pre-feature record, and every non-Pi session, writes no key.
-            if let Some(policy) = &s.resource_policy {
-                rec["resourcePolicy"] = serde_json::to_value(policy).unwrap_or(Value::Null);
-            }
-            rec
-        })
-        .collect()
-    }; // FR-1: `map`'s MutexGuard drops here — no lock held across the I/O below.
-       // pi-runtime-boundary: records of a runtime this build cannot drive are
-       // retained verbatim so a later build can recover them.
-    list.extend(
-        engine
-            .unsupported_runtime_records
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .values()
-            .cloned(),
-    );
+    let list = persisted_session_records(engine);
     if let Some(path) = sessions_json_path(app) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -612,7 +480,7 @@ pub struct PersistedMeta {
     /// (`adapter::pi::recovery`), rather than failing to load. A malformed
     /// value loads as unresolved for the same reason every other best-effort
     /// field here does.
-    pi_launch_prompt: Option<adapter::pi::PiLaunchPrompt>,
+    pi_launch_prompt: Option<retired_pi::PiLaunchPrompt>,
     /// response-mode FR-1/§7: `Default` on every pre-feature record, and on
     /// every record carrying a value outside the enum — not an error, and never
     /// a load failure.
@@ -625,7 +493,7 @@ pub struct PersistedMeta {
     /// Pi session that has never successfully connected. A malformed value
     /// loads as "never connected" rather than costing the session its whole
     /// record — recovery treats that exactly like a fresh session (FR-3).
-    pi_resume: Option<adapter::pi::PiResumeRecord>,
+    pi_resume: Option<retired_pi::PiResumeRecord>,
     /// pi-models-metrics: None on every pre-feature record, and on every
     /// session that has never reported usage. A malformed value loads as
     /// "never measured" rather than costing the session its whole record.
@@ -633,7 +501,7 @@ pub struct PersistedMeta {
     /// pi-skills-capabilities: None on every pre-feature record, and on
     /// every non-Pi session. A malformed value loads as "no policy" rather
     /// than costing the session its whole record.
-    resource_policy: Option<adapter::pi::RuntimeResourcePolicy>,
+    resource_policy: Option<retired_pi::RuntimeResourcePolicy>,
 }
 
 /// multi-provider-seam FR-11a (Phase B gate): the read-side migration off the
@@ -888,6 +756,18 @@ pub fn resolve_account(persisted: Option<String>, known: &HashSet<String>) -> St
 /// released, so the engine lock is taken alone (multi-account §6 LOCK ORDER).
 pub fn reassign_account_sessions(app: &AppHandle, account_id: &str) -> Vec<String> {
     let engine = app.state::<Engine>();
+    let owned: Vec<_> = engine
+        .sessions
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|s| s.account_id == account_id && s.agent_runtime != AgentRuntime::Pi)
+        .map(|s| s.id.clone())
+        .collect();
+    for id in owned {
+        let _ = runtime_bridge::close_session(app, &engine, &id);
+    }
+
     let changed = engine.clear_account(app, account_id);
     if changed.is_empty() {
         return Vec::new();
@@ -921,7 +801,6 @@ pub fn load_persisted(app: &AppHandle) {
     // command-inspect FR-7: a `.details.jsonl` sidecar with no transcript
     // beside it (its session was removed some other way, or a partial write
     // left it behind) is swept once, up front — not on every read.
-    sweep_orphaned_step_detail_sidecars(app);
     let Some(path) = sessions_json_path(app) else {
         return;
     };
@@ -941,169 +820,11 @@ pub fn load_persisted(app: &AppHandle) {
     // multi-account FR-10: same discipline, same one-read-for-the-whole-load —
     // main.rs runs account::load_accounts before this too.
     let known_accounts = crate::account::known_ids(app);
-    let mut watched: Vec<(String, String)> = Vec::new();
-    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    for rec in list {
-        let now = now_ms();
-        let Some(m) = parse_session_record(&rec, now) else {
-            if parse_agent_runtime_and_protocol(&rec).is_err() {
-                if let Some(id) = rec.get("id").and_then(Value::as_str) {
-                    engine
-                        .unsupported_runtime_records
-                        .lock()
-                        .unwrap()
-                        .insert(id.into(), rec);
-                }
-            }
-            continue;
-        };
-        // FR-9: no transcript read here — `block_buffer` starts empty and
-        // `spawn_transcript_hydration` fills it in on a background thread.
-        let block_buffer = Vec::new();
-        let transcript_truncated = false;
-        // display-openai-model-name FR-8/FR-9/FR-12: no adapter call on the
-        // load path (no network, no CODEX_HOME read). An Anthropic-shaped id
-        // keeps TODAY's byte-for-byte behavior — the persisted
-        // contextLimitTokens is ignored and `resolve_context_tokens` (cache
-        // only; `load_model_cache` runs before this) decides real vs
-        // placeholder, exactly as before this feature (Goals: "no change on
-        // Claude Code sessions"). A non-Anthropic id trusts its own
-        // persisted figure — or FR-5's pure table fallback on a pre-feature
-        // record (FR-9) — as real: FR-11 says this path must never overwrite
-        // a resolved non-Anthropic limit with the Anthropic placeholder.
-        let anthropic = is_anthropic_shaped(&m.model_id);
-        let model_label = if anthropic {
-            fallback_label(&m.model_id)
-        } else {
-            m.model_label
-                .clone()
-                .unwrap_or_else(|| fallback_label(&m.model_id))
-        };
-        let known_context: Option<u64> = if anthropic {
-            resolve_context_tokens(&m.model_id)
-        } else {
-            Some(
-                m.context_limit_tokens
-                    .unwrap_or_else(|| fallback_context(&m.model_id)),
-            )
-        };
-        let (limit, used) = loaded_context(known_context, m.context_used_tokens);
-        watched.push((m.id.clone(), m.cwd.clone()));
-        map.insert(
-            m.id.clone(),
-            Session {
-                id: m.id,
-                name: m.name,
-                cwd: m.cwd,
-                model_id: m.model_id,
-                model_label,
-                // Always `idle` on load, whatever the session was when the app
-                // quit: the child process is gone, so a persisted `starting` or
-                // `awaiting_*` would describe a turn that no longer exists.
-                status: status::IDLE.into(),
-                // Clamped against a KNOWN window only: a record written by a
-                // build that mistook the turn's cost aggregate for the context
-                // could hold a figure larger than the window itself, and
-                // reloading heals it — but clamping against the 200K placeholder
-                // is not healing, it is destroying a number we cannot recover.
-                context_used_tokens: used,
-                context_limit_tokens: limit,
-                started_at: now,
-                last_activity_at: m.last_activity_at,
-                error_message: None,
-                effort: m.effort,
-                permission_mode: m.permission_mode,
-                permission_mode_since: m.permission_mode_since.unwrap_or(m.last_activity_at),
-                runtime: m.runtime,
-                allow_git: m.allow_git,
-                // projects FR-18: a link whose project is gone from the registry is
-                // DROPPED here — the session loads unlinked and the pruned value is
-                // persisted by the next write (§7 #14).
-                project_id: resolve_link(m.project_id, &known),
-                worktree: m.worktree,
-                worktree_distro: m.worktree_distro,
-                // multi-account FR-10: an accountId that resolves to no registry
-                // entry — and every pre-feature record, which has none — loads
-                // as `default`; the pruned value is written by the next persist.
-                account_id: resolve_account(m.account_id, &known_accounts),
-                // cloud-sessions FR-10: provenance survives quit/reopen — that
-                // is the whole point of persisting it (§9).
-                cloud: m.cloud,
-                agent_runtime: m.agent_runtime,
-                protocol: m.protocol,
-                runtime_model: m.runtime_model,
-                effective_capabilities: None,
-                runtime_generation: None,
-                // session-profiles FR-19: a resumed session spawns with ITS
-                // persisted values, not the profile's current ones.
-                system_prompt: m.system_prompt,
-                extra_args: m.extra_args,
-                profile: m.profile,
-                pi_profile_settings: m.pi_profile_settings,
-                pi_launch_prompt: m.pi_launch_prompt,
-                resource_policy: m.resource_policy,
-                response_mode: m.response_mode,
-                response_mode_sent: m.response_mode_sent,
-                queue: VecDeque::new(),
-                claude_session_id: m.claude_session_id,
-                current: None,
-                pending_probe: None,
-                agents: HashMap::new(),
-                agent_order: Vec::new(),
-                agent_by_tool: HashMap::new(),
-                agent_steps: HashMap::new(),
-                agent_step_seq: HashMap::new(),
-                agent_inner_tools: HashMap::new(),
-                agent_backend_ref: HashMap::new(),
-                agent_blocks: HashMap::new(),
-                agent_block_seq: HashMap::new(),
-                agent_blocks_dropped: HashMap::new(),
-                block_buffer,
-                transcript_truncated,
-                // session-attachments FR-17: the file of every attachment still
-                // 'staged' is deleted right here, and the record dropped —
-                // composer drafts do not survive a restart, so a surviving
-                // staged record is by definition abandoned. Crash-proof in a way
-                // a shutdown hook is not.
-                attachments: sweep_staged(m.attachments),
-                mcp: HashMap::new(),
-                workflows: HashMap::new(),
-                workflow_order: Vec::new(),
-                workflow_by_tool: HashMap::new(),
-                workflow_scripts: HashMap::new(),
-                cli_commands: Vec::new(),
-                // multi-provider-grok FR-27: a reload starts false again — a
-                // fresh reminder after a restart is honest, not a bug.
-                grok_sandbox_notice_emitted: false,
-                // pi-session-durability: "Quit and reopen: old transcript is
-                // visible immediately" — there is no live connection to
-                // report `ready` for, whatever the session held last time.
-                recovery: events::RuntimeRecovery::disconnected(),
-                recovery_busy: false,
-                pi_resume: m.pi_resume,
-                // pi-models-metrics: "loaded stale: true until refreshed" —
-                // the figures survive a restart, but no live read confirmed
-                // them for THIS process yet.
-                metrics: m.metrics.map(|metrics| events::RuntimeMetrics {
-                    stale: true,
-                    ..metrics
-                }),
-                // pi-models-metrics: in-memory only, like effective_capabilities
-                // — re-derived on the next connect/switch, never persisted.
-                model_efforts: Vec::new(),
-            },
-        );
-    }
-    drop(map);
+    let watched = load_session_records(&engine, list, &known, &known_accounts);
+    sweep_orphaned_step_detail_sidecars(app);
     // Start a diff watcher per restored session (FR-15).
     for (id, cwd) in &watched {
         crate::diff::watch_session(app, id, cwd);
-    }
-    // pi-turn-controls FR-9: recover whatever the admissions sidecar still
-    // holds for each restored session — a draft still `admitting`/`queued`
-    // at crash time reloads `delivery-unknown`, never auto-submitted.
-    for (id, _cwd) in &watched {
-        engine.hydrate_admissions(app, id);
     }
 }
 
@@ -1206,7 +927,7 @@ pub fn compact_all_transcripts(app: &AppHandle) {
     let ids: Vec<String> = {
         let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.values()
-            .filter(|s| !status::is_busy(&s.status))
+            .filter(|s| s.agent_runtime != AgentRuntime::Pi && !status::is_busy(&s.status))
             .map(|s| s.id.clone())
             .collect()
     };
@@ -1725,7 +1446,7 @@ mod tests {
             tools: Vec::new(),
             project_resources: crate::profiles::PiProjectResources::Ignore,
         });
-        s.pi_launch_prompt = Some(adapter::pi::PiLaunchPrompt {
+        s.pi_launch_prompt = Some(retired_pi::PiLaunchPrompt {
             text: Some("a secret system prompt".into()),
         });
         let meta = serde_json::to_value(s.meta(&fake_accounts())).unwrap();
@@ -1760,7 +1481,7 @@ mod tests {
             let policy = m.resource_policy.expect("policy present");
             assert_eq!(
                 policy.project_resources,
-                adapter::pi::ProjectResources::Allow
+                retired_pi::ProjectResources::Allow
             );
             assert_eq!(policy.acknowledged_unrestricted_tools, acknowledged);
         }
@@ -2812,3 +2533,363 @@ mod runtime_record_tests {
         );
     }
 }
+
+fn persisted_session_records(engine: &Engine) -> Vec<Value> {
+    let mut list: Vec<Value> = {
+        let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        map
+        .values()
+        .map(|s| {
+            if let Some(raw) = engine.retired_runtime_records.lock().unwrap().get(&s.id) { return raw.clone(); }
+            let mut rec = serde_json::json!({
+                "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
+                // display-openai-model-name FR-1: always written, like modelId —
+                // every session has both, resolved once at creation/switch/reconcile
+                // and never re-derived on load (FR-8).
+                "modelLabel": s.model_label,
+                "contextLimitTokens": s.context_limit_tokens,
+                "permissionMode": s.permission_mode,
+                // rework-top-bar (design 11c): the `on since` line must survive a
+                // restart — a bypass left on last week is exactly the case the
+                // line exists for.
+                "permissionModeSince": s.permission_mode_since,
+                "runtime": s.runtime,
+                "allowGit": s.allow_git,
+                "claudeSessionId": s.claude_session_id, // durable-sessions FR-3
+                "lastActivityAt": s.last_activity_at,
+                "contextUsedTokens": s.context_used_tokens,
+                // multi-account FR-19: always written (unlike projectId) — a
+                // session always has an account, and 'default' is a real value.
+                "accountId": s.account_id,
+                // multi-provider-seam FR-11a: always written — every session
+                // has both, derived once at creation and never re-derived.
+                // The superseded `provider` key is read (see
+                // `parse_session_record`), never written.
+                "agentRuntime": s.agent_runtime,
+                "protocol": s.protocol,
+                "runtimeModel": s.runtime_model,
+                // response-mode FR-1: always written, like accountId — every
+                // session has one and 'default' is a real value. FR-10's
+                // `responseModeSent` rides alongside the thread anchor it is
+                // scoped to, so a resumed codex/grok thread does not re-send a
+                // directive it already carries.
+                "responseMode": s.response_mode.as_str(),
+                "responseModeSent": s.response_mode_sent.map(|m| m.as_str()),
+            });
+            // projects FR-18: write projectId ONLY when linked. An unlinked session
+            // must omit the key entirely rather than emit null, so a record written
+            // here stays byte-compatible with a pre-projects build's reader.
+            if let Some(pid) = &s.project_id {
+                rec["projectId"] = Value::String(pid.clone());
+            }
+            // session-worktree FR-12: written only when present, same omit-not-null
+            // convention as projectId (a pre-feature reader must see no key).
+            if let Some(wt) = &s.worktree {
+                rec["worktree"] = serde_json::to_value(wt).unwrap_or(Value::Null);
+            }
+            // session-worktree FR-10: the `GitHost` distro this session's cwd was
+            // resolved under, written as a sibling key (never inside the contract
+            // `worktree` object) so it survives a restart — without it, a reloaded
+            // WSL worktree session's bare Linux-path cwd has no distro to route
+            // git/turn-spawn calls to.
+            if let Some(distro) = &s.worktree_distro {
+                rec["worktreeDistro"] = Value::String(distro.clone());
+            }
+            // session-attachments §6: the staged/sent refs ride along with the
+            // session record — that is what makes FR-17's start-up sweep
+            // crash-proof. Same omit-not-null convention: a session that never
+            // attached anything writes no key at all.
+            if !s.attachments.is_empty() {
+                rec["attachments"] = serde_json::to_value(&s.attachments).unwrap_or(Value::Null);
+            }
+            // cloud-sessions FR-10/§6: the ONLY thing this feature persists.
+            // Same omit-not-null convention — a session that was never adopted
+            // writes no key at all.
+            if let Some(c) = &s.cloud {
+                rec["cloud"] = serde_json::to_value(c).unwrap_or(Value::Null);
+            }
+            // session-profiles FR-19: snapshotted at creation, resumed with
+            // exactly the persisted values — never re-read from the profile.
+            // Same omit-not-null convention as projectId/worktree.
+            if let Some(sp) = &s.system_prompt {
+                rec["systemPrompt"] = Value::String(sp.clone());
+            }
+            if !s.extra_args.is_empty() {
+                rec["extraArgs"] = serde_json::to_value(&s.extra_args).unwrap_or(Value::Null);
+            }
+            if let Some(p) = &s.profile {
+                rec["profile"] = serde_json::to_value(p).unwrap_or(Value::Null);
+            }
+            // pi-migration-rollout FR-3: the resolved settings snapshot rides
+            // the SAME atomic write, so a resume/reconnect relaunches with
+            // the identical snapshot — never re-resolved from the registry.
+            // Same omit-not-null convention: no key at all for a session
+            // that carries no Pi profile.
+            if let Some(settings) = &s.pi_profile_settings {
+                rec["piProfile"] = serde_json::to_value(settings).unwrap_or(Value::Null);
+            }
+            // pi-migration-rollout FR-3 (read-once fix): the launch prompt
+            // resolved from `piProfile.instructionPaths` rides the SAME
+            // atomic write, alongside it — a resume/reconnect relaunches
+            // from THIS text, never re-reading the instruction files. Same
+            // omit-not-null convention: absent until resolved (creation, or
+            // the lazy once-only backward-compat resolve on first connect).
+            if let Some(prompt) = &s.pi_launch_prompt {
+                rec["piLaunchPrompt"] = serde_json::to_value(prompt).unwrap_or(Value::Null);
+            }
+            // pi-session-durability FR-1/FR-2/FR-6: nested under the matching
+            // session record so it rides the SAME atomic temp+rename write —
+            // same omit-not-null convention as `worktree`/`profile`. Absent
+            // until the first successful connect writes it (FR-2's "before
+            // any first prompt").
+            if let Some(pi) = &s.pi_resume {
+                rec["pi"] = serde_json::to_value(pi).unwrap_or(Value::Null);
+            }
+            // pi-models-metrics: same omit-not-null convention — absent until
+            // the first successful read lands (session_metrics/an automatic
+            // refresh). Loaded back `stale: true` (see `parse_session_record`).
+            if let Some(metrics) = &s.metrics {
+                rec["metrics"] = serde_json::to_value(metrics).unwrap_or(Value::Null);
+            }
+            // pi-skills-capabilities: same omit-not-null convention — a
+            // pre-feature record, and every non-Pi session, writes no key.
+            if let Some(policy) = &s.resource_policy {
+                rec["resourcePolicy"] = serde_json::to_value(policy).unwrap_or(Value::Null);
+            }
+            rec
+        })
+        .collect()
+    }; // FR-1: `map`'s MutexGuard drops here — no lock held across the I/O below.
+       // pi-runtime-boundary: records of a runtime this build cannot drive are
+       // retained verbatim so a later build can recover them.
+    list.extend(
+        engine
+            .unsupported_runtime_records
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .cloned(),
+    );
+    let ids: HashSet<String> = list
+        .iter()
+        .filter_map(|r| r.get("id").and_then(Value::as_str).map(String::from))
+        .collect();
+    list.extend(
+        engine
+            .retired_runtime_records
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, _)| !ids.contains(*id))
+            .map(|(_, raw)| raw.clone()),
+    );
+    list
+}
+
+fn load_session_records(
+    engine: &Engine,
+    list: Vec<Value>,
+    known: &HashSet<String>,
+    known_accounts: &HashSet<String>,
+) -> Vec<(String, String)> {
+    let mut watched: Vec<(String, String)> = Vec::new();
+    let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+    for rec in list {
+        let now = now_ms();
+        let retired = rec.get("agentRuntime").and_then(Value::as_str) == Some("pi");
+        if retired {
+            if let Some(id) = rec.get("id").and_then(Value::as_str) {
+                engine
+                    .retired_runtime_records
+                    .lock()
+                    .unwrap()
+                    .insert(id.into(), rec.clone());
+            }
+        }
+        let Some(m) = parse_session_record(&rec, now) else {
+            if parse_agent_runtime_and_protocol(&rec).is_err() {
+                if let Some(id) = rec.get("id").and_then(Value::as_str) {
+                    engine
+                        .unsupported_runtime_records
+                        .lock()
+                        .unwrap()
+                        .insert(id.into(), rec);
+                }
+            }
+            continue;
+        };
+        // FR-9: no transcript read here — `block_buffer` starts empty and
+        // `spawn_transcript_hydration` fills it in on a background thread.
+        let block_buffer = Vec::new();
+        let transcript_truncated = false;
+        // display-openai-model-name FR-8/FR-9/FR-12: no adapter call on the
+        // load path (no network, no CODEX_HOME read). An Anthropic-shaped id
+        // keeps TODAY's byte-for-byte behavior — the persisted
+        // contextLimitTokens is ignored and `resolve_context_tokens` (cache
+        // only; `load_model_cache` runs before this) decides real vs
+        // placeholder, exactly as before this feature (Goals: "no change on
+        // Claude Code sessions"). A non-Anthropic id trusts its own
+        // persisted figure — or FR-5's pure table fallback on a pre-feature
+        // record (FR-9) — as real: FR-11 says this path must never overwrite
+        // a resolved non-Anthropic limit with the Anthropic placeholder.
+        let anthropic = is_anthropic_shaped(&m.model_id);
+        let model_label = if anthropic {
+            fallback_label(&m.model_id)
+        } else {
+            m.model_label
+                .clone()
+                .unwrap_or_else(|| fallback_label(&m.model_id))
+        };
+        let known_context: Option<u64> = if anthropic {
+            resolve_context_tokens(&m.model_id)
+        } else {
+            Some(
+                m.context_limit_tokens
+                    .unwrap_or_else(|| fallback_context(&m.model_id)),
+            )
+        };
+        let (limit, used) = loaded_context(known_context, m.context_used_tokens);
+        if !retired {
+            watched.push((m.id.clone(), m.cwd.clone()));
+        }
+        map.insert(
+            m.id.clone(),
+            Session {
+                id: m.id,
+                name: m.name,
+                cwd: m.cwd,
+                model_id: m.model_id,
+                model_label,
+                // Always `idle` on load, whatever the session was when the app
+                // quit: the child process is gone, so a persisted `starting` or
+                // `awaiting_*` would describe a turn that no longer exists.
+                status: status::IDLE.into(),
+                // Clamped against a KNOWN window only: a record written by a
+                // build that mistook the turn's cost aggregate for the context
+                // could hold a figure larger than the window itself, and
+                // reloading heals it — but clamping against the 200K placeholder
+                // is not healing, it is destroying a number we cannot recover.
+                context_used_tokens: used,
+                context_limit_tokens: limit,
+                started_at: now,
+                last_activity_at: m.last_activity_at,
+                error_message: None,
+                effort: m.effort,
+                permission_mode: m.permission_mode,
+                permission_mode_since: m.permission_mode_since.unwrap_or(m.last_activity_at),
+                runtime: m.runtime,
+                allow_git: m.allow_git,
+                // projects FR-18: a link whose project is gone from the registry is
+                // DROPPED here — the session loads unlinked and the pruned value is
+                // persisted by the next write (§7 #14).
+                project_id: if retired {
+                    m.project_id
+                } else {
+                    resolve_link(m.project_id, known)
+                },
+                worktree: m.worktree,
+                worktree_distro: m.worktree_distro,
+                // Native continuity: an identified account is part of the
+                // saved thread's identity, even if its registry row is gone.
+                // Preserve it so execution can report ACCOUNT_NOT_FOUND before
+                // resolving credentials. Only an absent/unusable legacy field
+                // migrates to default; compatibility runtimes keep their prior
+                // account-resolution policy and retired Pi keeps its raw record.
+                account_id: if retired {
+                    m.account_id.unwrap_or_default()
+                } else if matches!(
+                    m.agent_runtime,
+                    AgentRuntime::ClaudeCode | AgentRuntime::Codex
+                ) {
+                    m.account_id
+                        .unwrap_or_else(|| crate::account::DEFAULT_ACCOUNT_ID.to_string())
+                } else {
+                    resolve_account(m.account_id, known_accounts)
+                },
+                // cloud-sessions FR-10: provenance survives quit/reopen — that
+                // is the whole point of persisting it (§9).
+                cloud: m.cloud,
+                agent_runtime: m.agent_runtime,
+                protocol: m.protocol,
+                runtime_model: m.runtime_model,
+                effective_capabilities: None,
+                runtime_generation: None,
+                // session-profiles FR-19: a resumed session spawns with ITS
+                // persisted values, not the profile's current ones.
+                system_prompt: m.system_prompt,
+                extra_args: m.extra_args,
+                profile: m.profile,
+                pi_profile_settings: m.pi_profile_settings,
+                pi_launch_prompt: m.pi_launch_prompt,
+                resource_policy: m.resource_policy,
+                response_mode: m.response_mode,
+                response_mode_sent: m.response_mode_sent,
+                queue: VecDeque::new(),
+                claude_session_id: m.claude_session_id,
+                current: None,
+                runtime_owner: None,
+                session_runtime: None,
+                runtime_gate: Arc::new(Mutex::new(())),
+                next_generation: 0,
+                settings_revision: 0,
+                running_context: None,
+                pending_probe: None,
+                agents: HashMap::new(),
+                agent_order: Vec::new(),
+                agent_by_tool: HashMap::new(),
+                agent_steps: HashMap::new(),
+                agent_step_seq: HashMap::new(),
+                agent_inner_tools: HashMap::new(),
+                agent_backend_ref: HashMap::new(),
+                agent_blocks: HashMap::new(),
+                agent_block_seq: HashMap::new(),
+                agent_blocks_dropped: HashMap::new(),
+                block_buffer,
+                transcript_truncated,
+                // session-attachments FR-17: the file of every attachment still
+                // 'staged' is deleted right here, and the record dropped —
+                // composer drafts do not survive a restart, so a surviving
+                // staged record is by definition abandoned. Crash-proof in a way
+                // a shutdown hook is not.
+                attachments: if retired {
+                    m.attachments
+                } else {
+                    sweep_staged(m.attachments)
+                },
+                mcp: HashMap::new(),
+                workflows: HashMap::new(),
+                workflow_order: Vec::new(),
+                workflow_by_tool: HashMap::new(),
+                workflow_scripts: HashMap::new(),
+                cli_commands: Vec::new(),
+                // multi-provider-grok FR-27: a reload starts false again — a
+                // fresh reminder after a restart is honest, not a bug.
+                grok_sandbox_notice_emitted: false,
+                // pi-session-durability: "Quit and reopen: old transcript is
+                // visible immediately" — there is no live connection to
+                // report `ready` for, whatever the session held last time.
+                pi_resume: m.pi_resume,
+                // pi-models-metrics: "loaded stale: true until refreshed" —
+                // the figures survive a restart, but no live read confirmed
+                // them for THIS process yet.
+                metrics: m.metrics.map(|metrics| events::RuntimeMetrics {
+                    stale: true,
+                    ..metrics
+                }),
+                // pi-models-metrics: in-memory only, like effective_capabilities
+                // — re-derived on the next connect/switch, never persisted.
+                model_efforts: Vec::new(),
+            },
+        );
+    }
+    drop(map);
+    watched
+}
+
+#[cfg(test)]
+#[path = "persistence/retirement_tests.rs"]
+mod retirement_tests;
+
+#[cfg(test)]
+#[path = "persistence/continuity_tests.rs"]
+mod continuity_tests;

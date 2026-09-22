@@ -41,9 +41,6 @@ fn main() {
         // multi-account §6: the account registry + the single in-flight login.
         // Another LEAF lock — nothing under account/ ever takes Engine.sessions.
         .manage(account::AccountState::default())
-        // pi-provider-auth FR-7: account/ reaches the Pi install preflight
-        // through this injected probe — session/ already depends on account/.
-        .manage(account::PiInstallProbe(session::installation_preflight))
         // self-update §6/FR-19: the last UpdateCheck, in memory only. Another
         // LEAF lock — `update::app_apply_update` reads the engine's running
         // count BEFORE it ever touches this.
@@ -64,10 +61,6 @@ fn main() {
             // sessions bound to it, and `account` no longer names `session` to
             // say so.
             account::register_removal_observers(vec![Box::new(session::SessionAccountObserver)]);
-            // pi-provider-auth FR-4/FR-6/FR-8: the read-only counterpart —
-            // `account` asks whether a Pi account is still in use; `session`
-            // (which owns the sessions registry) answers.
-            account::register_session_query(Box::new(session::SessionAccountObserver));
             // pr-142 §9: the same inversion once more — removing a profile
             // clears the project defaults naming it, and `profiles` no longer
             // names `project` to say so.
@@ -127,18 +120,13 @@ fn main() {
             session::session_list,
             session::session_create,
             session::session_remove,
-            session::session_reconnect,
-            session::session_new_from,
             session::session_send,
-            session::session_submit,
-            session::session_clear_queue,
             session::session_unqueue,
             session::session_interrupt,
             session::session_answer_question,
             session::session_switch_model,
             session::session_switch_permission_mode,
             session::session_switch_effort,
-            session::session_acknowledge_policy,
             session::session_switch_response_mode,
             session::session_rename,
             session::session_update_settings,
@@ -146,8 +134,6 @@ fn main() {
             session::session_clear,
             session::session_list_commands,
             session::session_models,
-            session::runtime_models,
-            session::session_metrics,
             session::session_pick_directory,
             session::session_attach_file,
             session::session_attach_clipboard_image,
@@ -170,7 +156,6 @@ fn main() {
             profiles::profiles_create,
             profiles::profiles_update,
             profiles::profiles_remove,
-            profiles::profiles_copy_to_pi,
             session::conversation_get_transcript,
             session::conversation_step_detail,
             session::agents_list,
@@ -206,7 +191,6 @@ fn main() {
             session::session_worktree_probe,
             session::session_worktree_status,
             session::session_worktree_remove,
-            session::runtime_installation,
             editor::session_editor_list,
             editor::session_open_in_editor,
             permissions::permissions_list,
@@ -236,10 +220,6 @@ fn main() {
             account::account_test_endpoint,
             account::account_cli_tools,
             account::account_install_cli,
-            account::account_add_pi,
-            account::account_trust_pi,
-            account::account_pi_setup,
-            account::account_pi_refresh,
             extensions::extensions_list,
             extensions::extensions_set_enabled,
             extensions::extensions_detect,

@@ -1,0 +1,40 @@
+{
+  "_comment": "process-native-capabilities FR-6/AC-1: the ONE expected matrix both the core guard (adapter::check_capability) and the frontend selector (src/lib/runtimeCapability.ts) are tested against. Snapshots: none = no live snapshot; live-all = valid all-true snapshot with a runtime generation; live-none = valid all-false snapshot with a generation; invalid = all-true snapshot missing a key, with a generation; stale-all = valid all-true snapshot without a generation. Each row lists the keys that must resolve available; every other key must resolve unavailable.",
+  "cases": {
+    "claude-code": {
+      "none": ["mcp", "subagents", "skills", "skillsInstall", "workflows", "interactiveCommands", "permissions", "remoteControl", "usageBar", "compaction", "modelSwitching", "images"],
+      "live-all": ["mcp", "subagents", "skills", "skillsInstall", "workflows", "interactiveCommands", "permissions", "remoteControl", "usageBar", "compaction", "modelSwitching", "images"],
+      "live-none": [],
+      "invalid": [],
+      "stale-all": ["mcp", "subagents", "skills", "skillsInstall", "workflows", "interactiveCommands", "permissions", "remoteControl", "usageBar", "compaction", "modelSwitching", "images"]
+    },
+    "codex": {
+      "none": ["interactiveCommands", "usageBar", "modelSwitching", "images"],
+      "live-all": ["interactiveCommands", "permissions", "usageBar", "modelSwitching", "images"],
+      "live-none": [],
+      "invalid": [],
+      "stale-all": ["interactiveCommands", "usageBar", "modelSwitching", "images"]
+    },
+    "francois": {
+      "none": ["skills", "permissions", "modelSwitching", "images"],
+      "live-all": ["skills", "permissions", "modelSwitching", "images"],
+      "live-none": [],
+      "invalid": [],
+      "stale-all": ["skills", "permissions", "modelSwitching", "images"]
+    },
+    "grok": {
+      "none": ["modelSwitching", "images"],
+      "live-all": ["modelSwitching", "images"],
+      "live-none": [],
+      "invalid": [],
+      "stale-all": ["modelSwitching", "images"]
+    },
+    "pi": {
+      "none": [],
+      "live-all": [],
+      "live-none": [],
+      "invalid": [],
+      "stale-all": []
+    }
+  }
+}

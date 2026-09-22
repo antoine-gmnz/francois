@@ -44,9 +44,22 @@ pub fn attribute_ask(
     v: &Value,
     seen: &HashMap<String, Vec<String>>,
 ) -> Option<AskAttribution> {
+    attribute_ask_fields(
+        s,
+        request_field(v, &["parent_tool_use_id", "parentToolUseId"]).as_deref(),
+        request_field(v, &["agent_id", "agentId"]).as_deref(),
+        seen,
+    )
+}
+pub(crate) fn attribute_ask_fields(
+    s: &Session,
+    parent_tool_use_id: Option<&str>,
+    agent_id: Option<&str>,
+    seen: &HashMap<String, Vec<String>>,
+) -> Option<AskAttribution> {
     // rung 1 — the dispatch's own tool_use_id names the RUN, never an agent.
-    if let Some(ptuid) = request_field(v, &["parent_tool_use_id", "parentToolUseId"]) {
-        if let Some(run_id) = s.workflow_by_tool.get(&ptuid) {
+    if let Some(ptuid) = parent_tool_use_id {
+        if let Some(run_id) = s.workflow_by_tool.get(ptuid) {
             return Some(AskAttribution {
                 run_id: run_id.clone(),
                 agent_id: None,
@@ -55,14 +68,14 @@ pub fn attribute_ask(
         }
     }
     // rung 2 — an agent id the scan has already seen.
-    if let Some(agent_id) = request_field(v, &["agent_id", "agentId"]) {
+    if let Some(agent_id) = agent_id {
         let mut run_ids: Vec<&String> = seen.keys().collect();
         run_ids.sort(); // deterministic when (impossibly) two runs saw one id
         for run_id in run_ids {
-            if seen[run_id].iter().any(|a| a == &agent_id) {
+            if seen[run_id].iter().any(|a| a == agent_id) {
                 return Some(AskAttribution {
                     run_id: run_id.clone(),
-                    agent_id: Some(agent_id),
+                    agent_id: Some(agent_id.into()),
                     confidence: "exact".into(),
                 });
             }

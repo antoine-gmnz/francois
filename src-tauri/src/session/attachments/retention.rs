@@ -134,6 +134,10 @@ pub fn clear_dir(cwd: &str, session_id: &str) -> ClearAttachmentsResult {
 /// benign "attachment file deleted outside Francois": the copy is already absent,
 /// so `delete_stored` reports success at commit and the record retires normally.
 pub fn clear_session(engine: &Engine, session_id: &str, cwd: &str) -> ClearAttachmentsResult {
+    if matches!(engine.ensure_available(session_id), Err(e) if e.code == ErrorCode::RuntimeUnsupported)
+    {
+        return ClearAttachmentsResult::default();
+    }
     // Every copied record's file is about to go; in-place refs still resolve.
     // `None` ⇒ the session vanished between the registry read and the lock —
     // there is simply no record left to reconcile, and the bytes still are.

@@ -1,25 +1,4 @@
-//! `CodexAdapter` — the third `SessionAdapter` (multi-provider-codex FR-3).
-//!
-//! Where `ClaudeCodeAdapter` wraps a CLI that owns its loop, and `OpenAiAdapter`
-//! *is* a loop, this wraps a **different** CLI that owns its own:
-//! `codex exec --json`. That similarity to the Claude adapter is the point — the
-//! seam was built so a second loop-owning runner costs an argv builder, a line
-//! parser and a translation table, not an engine change.
-//!
-//! Three things make it genuinely different from the Claude path, and each shows
-//! up as an absence rather than a workaround:
-//!
-//! 1. **No control channel.** `codex exec` takes its prompt on stdin and stdin
-//!    then closes. There is nothing to write an approval or a question answer
-//!    back into, so `CodexTurnHandle` carries no pending maps and no `ChildStdin`
-//!    (FR-10), and enforcement is the sandbox `permissionMode` picks (FR-9).
-//! 2. **No text deltas.** `agent_message` arrives whole in one `item.completed`,
-//!    so a reply is finalized in one step instead of streamed. Tool activity is
-//!    still live.
-//! 3. The model catalogue is discovered through an isolated App Server probe.
-//!
-//! Module shape follows the domain convention: the model and the adapter here,
-//! one concern per child (`args` · `wire` · `models` · `runner`).
+//! Native Codex App Server session adapter and retained read-model probes.
 
 mod args;
 mod catalog;
@@ -30,12 +9,17 @@ mod translate;
 pub(crate) mod usage;
 mod wire;
 
-use super::*;
-use crate::ipc::{AppError, ErrorCode};
-use crate::session::*;
+mod native;
+pub(crate) fn session_runtime() -> std::sync::Arc<dyn crate::session::application::SessionRuntime> {
+    native::session_runtime()
+}
 
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use crate::ipc::{AppError, ErrorCode};
+use crate::session::application::{TurnContext, TurnControl};
+#[cfg(test)]
+use crate::session::{AgentRuntime, SessionAdapter};
+
+use std::sync::Arc;
 
 // core-architecture-wave3 FR-9: the name and the program resolver moved to
 // `process_util`, beside the PATH scan they were already delegating to — so
@@ -52,98 +36,23 @@ const CODEX_MISSING_HINT: &str =
 
 pub struct CodexAdapter;
 
-/// FR-10: the live turn. A `Child` and an interrupt flag, and **deliberately
-/// nothing else** — every other `TurnControl` member answers "nothing is
-/// pending", because on this transport nothing ever can be.
-pub struct CodexTurnHandle {
-    child: Arc<Mutex<std::process::Child>>,
-    interrupted: Arc<AtomicBool>,
-}
-
-impl TurnControl for CodexTurnHandle {
-    fn interrupt(&self) {
-        // Codex has no interrupt protocol over this transport and stdin is
-        // already closed, so the flag is what the reader checks to stop
-        // translating; `kill` is what actually ends the child.
-        self.interrupted
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    fn kill(&self) {
-        let _ = self.child.lock().unwrap().kill();
-    }
-
-    /// FR-10. Not "unimplemented": on a Codex session no question is ever asked,
-    /// so no id can ever be pending, and `NotPending` is the correct — not the
-    /// placeholder — answer. `session_answer_question` already maps it to
-    /// `QUESTION_NOT_PENDING`.
-    fn answer_question(&self, _id: &str, _answers: &serde_json::Value) -> ControlAck {
-        ControlAck::NotPending
-    }
-
-    /// FR-10, same reasoning: enforcement is the sandbox (FR-9), so no approval
-    /// card exists to decide.
-    fn decide_permission(&self, _id: &str, _decision: PermissionDecision) -> ControlAck {
-        ControlAck::NotPending
-    }
-
-    /// FR-10. `None` is also the authorization gate on a rule write
-    /// (permission-guardrails FR-7) — a Codex session must never be able to
-    /// author an `*Always` rule, since it has no ask to authorize one.
-    fn pending_permission_pattern(&self, _id: &str) -> Option<String> {
-        None
-    }
-
-    /// FR-10: a Codex session never parks, so `refresh_parked_status` derives
-    /// "not waiting" from this with no special case anywhere.
-    fn pending_counts(&self) -> PendingCounts {
-        PendingCounts::default()
-    }
-
-    fn drain_pending(&self) -> (Vec<String>, Vec<String>) {
-        (Vec::new(), Vec::new())
-    }
-}
-
-impl SessionAdapter for CodexAdapter {
-    fn agent_runtime(&self) -> AgentRuntime {
-        AgentRuntime::Codex
-    }
-
-    /// FR-20: signed in iff the account's `CODEX_HOME` holds an `auth.json` —
-    /// derived, never persisted, mirroring `identity_file_exists` for Claude
-    /// accounts. Same error code and same `mark_auth_failed` side effect as the
-    /// Claude adapter; only the copy names Codex.
-    fn preflight(&self, app: &tauri::AppHandle, ctx: &TurnContext) -> Result<(), AppError> {
-        let config_dir = crate::account::config_dir_of(app, &ctx.account_id);
-        if let Some(dir) = config_dir.as_deref() {
-            if !crate::account::codex_auth_file_exists(dir) {
-                crate::account::mark_auth_failed(app, &ctx.account_id);
-                return Err(AppError {
-                    code: ErrorCode::AccountNotAuthenticated,
-                    message: "this session's account is not signed in to Codex — use Sign in in the Accounts modal"
-                        .into(),
-                    detail: None,
-
-                runtime_failure: None,
-});
-            }
+impl crate::session::application::RuntimePort for CodexAdapter {
+    fn preflight(&self, ctx: &TurnContext) -> Result<(), AppError> {
+        if !ctx.execution.account_authenticated {
+            return Err(AppError::new(ErrorCode::AccountNotAuthenticated, "this session's account is not signed in to Codex — use Sign in in the Accounts modal"));
         }
         Ok(())
     }
-
     fn begin_turn(
         &self,
-        app: &tauri::AppHandle,
         ctx: TurnContext,
+        sink: Arc<dyn crate::session::application::RuntimeEventSink>,
     ) -> Result<Arc<dyn TurnControl>, AppError> {
-        runner::begin_turn(app, ctx)
-    }
-
-    fn models(&self, app: &tauri::AppHandle, account_id: &str) -> Vec<ModelInfo> {
-        model_catalog(app, account_id, false)
-            .map(|catalog| catalog.models)
-            .unwrap_or_default()
+        let _ = (ctx, sink);
+        Err(AppError::new(
+            ErrorCode::RuntimeUnsupported,
+            "Codex turns require a session-owned native connection",
+        ))
     }
 }
 
@@ -195,46 +104,5 @@ mod tests {
         } else {
             assert_eq!(program, CODEX_BIN);
         }
-    }
-
-    /// FR-10 as a whole, on the real handle rather than on a fake: a Codex turn
-    /// answers "nothing pending" to every control question. If any of these ever
-    /// starts returning `Applied`, a card was created that nothing can resolve
-    /// and the session would park forever.
-    #[test]
-    fn a_codex_turn_never_has_anything_pending() {
-        let handle = CodexTurnHandle {
-            // A process that is already finished — this test never touches it,
-            // and `kill` on a dead child is a no-op by design.
-            child: Arc::new(Mutex::new(
-                crate::process_util::spawn(if cfg!(windows) { "cmd" } else { "true" })
-                    .args(if cfg!(windows) {
-                        vec!["/C", "exit"]
-                    } else {
-                        vec![]
-                    })
-                    .start()
-                    .expect("spawns a trivial process"),
-            )),
-            interrupted: Arc::new(AtomicBool::new(false)),
-        };
-
-        assert_eq!(handle.pending_counts().questions, 0);
-        assert_eq!(handle.pending_counts().permissions, 0);
-        assert_eq!(
-            handle.answer_question("b1", &serde_json::json!({})),
-            ControlAck::NotPending
-        );
-        assert_eq!(
-            handle.decide_permission("b1", PermissionDecision::Allow),
-            ControlAck::NotPending
-        );
-        // permission-guardrails FR-7: no ask ⇒ no authorization to write a rule.
-        assert_eq!(handle.pending_permission_pattern("b1"), None);
-        assert_eq!(handle.drain_pending(), (Vec::new(), Vec::new()));
-
-        handle.interrupt();
-        assert!(handle.interrupted.load(std::sync::atomic::Ordering::SeqCst));
-        handle.kill();
     }
 }

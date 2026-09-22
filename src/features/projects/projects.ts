@@ -9,24 +9,25 @@
 // list edits the standards editor commits.
 
 import type {
-  AppError,
-  ClaudeRuntime,
-  ModelInfo,
-  PermissionMode,
-  ProjectDefaults,
-  ResponseMode,
-  ProjectId,
-  Result,
-  SessionMeta,
+    AppError,
+    ClaudeRuntime,
+    ModelInfo,
+    PermissionMode,
+    ProjectDefaults,
+    ProjectId,
+    ResponseMode,
+    Result,
+    SessionMeta,
 } from '../../../contract/common';
 import {
-  ACTIVE_PROJECT_STORAGE_KEY,
-  MAX_RULES,
-  MAX_RULE_LENGTH,
-  filterSessionsByProject,
-  type ProjectMeta,
+    ACTIVE_PROJECT_STORAGE_KEY,
+    MAX_RULES,
+    MAX_RULE_LENGTH,
+    filterSessionsByProject,
+    type ProjectMeta,
 } from '../../../contract/projects';
 import { displayWslCwd } from '../../../contract/wsl-filesystem';
+import { accountIsRetired, profileIsRetired } from '../../lib/runtimeCapability';
 
 // ---------- activeProjectId persistence (FR-26) ----------
 
@@ -283,6 +284,7 @@ export function nextSelectionAfterRemove(
 export type DefaultsKey = keyof ProjectDefaults;
 
 export interface FieldOption {
+  disabled?: boolean;
   value: string;
   label: string;
 }
@@ -331,6 +333,7 @@ export interface AccountOptionSource {
 export interface ProfileOptionSource {
   id: string;
   name: string;
+  kind?: string;
 }
 
 /**
@@ -355,9 +358,9 @@ export function defaultFieldDefs(
   // AccountOptionSource's own doc comment. DefaultsSection shows the saved
   // `runtimeModel` pair read-only instead (it round-trips untouched either way,
   // since this function simply omits the two keys rather than clearing them).
-  const isPiDefaultAccount = accounts.find((a) => a.id === defaults.accountId)?.kind === 'pi';
+  const isPiDefaultAccount = accountIsRetired(accounts.find((a) => a.id === defaults.accountId));
   const accountField: DefaultFieldDef[] =
-    accounts.length > 1
+    (accounts.length > 1 || accounts.some((a) => accountIsRetired(a)))
       ? [
           {
             key: 'accountId',
@@ -365,7 +368,7 @@ export function defaultFieldDefs(
             // multi-provider-openai FR-22: every account, endpoint included, is
             // a plain option — multi-provider-endpoint FR-14's disabled block
             // is deleted, not just relaxed.
-            options: [INHERIT, ...accounts.map((a) => ({ value: a.id, label: a.label }))],
+            options: [INHERIT, ...accounts.map((a) => ({ value: a.id, label: a.label + (accountIsRetired(a) ? ' · Unavailable' : ''), ...(accountIsRetired(a) ? { disabled: true } : {}) }))],
           },
         ]
       : [];
@@ -377,7 +380,7 @@ export function defaultFieldDefs(
           {
             key: 'profileId',
             label: 'profile',
-            options: [INHERIT, ...profiles.map((p) => ({ value: p.id, label: p.name }))],
+            options: [INHERIT, ...profiles.map((p) => ({ value: p.id, label: p.name + (profileIsRetired(p) ? ' · Unavailable' : ''), ...(profileIsRetired(p) ? { disabled: true } : {}) }))],
           },
         ]
       : [];
@@ -502,7 +505,7 @@ export function patchDefaults(
     // multi-account FR-20: the account a new session under this project opens on.
     case 'accountId':
       next.accountId = value;
-      if (accounts?.find((a) => a.id === value)?.kind === 'pi') {
+      if (accountIsRetired(accounts?.find((a) => a.id === value))) {
         delete next.modelId;
         delete next.effort;
       } else {

@@ -1,10 +1,10 @@
-import { useState } from 'react';
 import type { RefObject } from 'react';
-import type { AppError, RuntimeResourcePolicy, SkillInfo } from '../../../contract/common';
+import { useState } from 'react';
+import type { AppError, SkillInfo } from '../../../contract/common';
 import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { ListRow } from '../../ui/ListRow';
-import { isSkillRunnable, projectResourcesNote, skillInvocationLabel, skillRowKey } from './skills-loaded';
+import { isSkillRunnable, skillInvocationLabel, skillRowKey } from './skills-loaded';
 
 // pi-skills-capabilities FR-1: 'path' is the Pi-only scope (a profile's skillPaths).
 const scopeTag: Record<string, string> = { project: 'proj', user: 'user', plugin: 'plugin', path: 'path' };
@@ -31,7 +31,6 @@ export interface SkillsListBodyProps {
   /** pi-skills-capabilities FR-8: present only for a Pi session — the status
    *  line that keeps "no skills" from being confused with "project resources
    *  are disabled" (the empty state never has to infer it). */
-  resourcePolicy?: RuntimeResourcePolicy;
 }
 
 /** Pane [5]'s scrollable skill/command list: the "/" filter row, its
@@ -49,12 +48,9 @@ export function SkillsListBody({
   visible,
   selected,
   onRowClick,
-  resourcePolicy,
 }: SkillsListBodyProps): JSX.Element {
-  const resourcesNote = projectResourcesNote(resourcePolicy);
   return (
     <div className="scz skills-list">
-      {resourcesNote && capability.available && <div className="skills-resources-note">{resourcesNote}</div>}
       {filterOpen && (
         <div className="skills-filter">
           <span className="skills-filter-glyph">/</span>

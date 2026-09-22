@@ -116,36 +116,6 @@
    (FR-3/FR-7). Same geometry as .resume-banner/.worktree-notice above, tinted
    --warn (not --error): this asks the user to act, it does not report a live
    failure the way the usage-limit banner does. */
-.pi-recovery-banner {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-9);
-  background: color-mix(in srgb, var(--warn) 9%, transparent);
-  border-left: 2px solid var(--warn);
-  border-radius: var(--radius-base);
-  padding: var(--space-8) var(--space-11);
-  margin: var(--space-6) var(--space-8);
-  flex-shrink: 0;
-  animation: fadeIn 120ms ease-out;
-}
-.pi-recovery-banner__text {
-  font-size: var(--font-size-11-5);
-  color: var(--text-hint);
-  flex: 1;
-  min-width: 200px;
-}
-.pi-recovery-banner__actions {
-  display: flex;
-  gap: var(--space-8);
-  flex-shrink: 0;
-}
-.pi-recovery-banner__error {
-  flex-basis: 100%;
-  font-size: var(--font-size-11);
-  color: var(--error);
-}
-
 .conv-transcript-wrap {
   flex: 1;
   position: relative;

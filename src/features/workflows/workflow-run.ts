@@ -4,7 +4,7 @@
 // (this project has none — see REFACTOR-CONVENTIONS.md).
 
 import type { WorkflowRun } from '../../../contract/common';
-import type { AgentTabRef } from '../agents/agent-tab';
+import type { AgentTabRef } from '../../lib/agent-tab';
 
 /** Running runs float to the top; within a rank, first-seen order is kept. */
 const rank = (status: string) => (status === 'running' ? 0 : 1);
