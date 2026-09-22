@@ -1,48 +1,121 @@
-// usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit meters.
+// usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit control.
 //
-// design 7a: this used to be the whole titlebar (`UsageBar`, brand cluster
-// included). 7a's app row owns the brand, the nav and the account cluster, so
-// what is left here is exactly the meter region — same data, same events, same
-// click-to-refresh affordance, mounted by AppRow instead of by App.
+// The app bar used to spell every meter out inline (`Session ▬ 42%  Week ▬
+// 72%  …`); with several Claude Code accounts that ran out of room. It is now
+// ONE 28px icon button — same data, same events, same click-to-refresh
+// affordance — that opens a popover with the detail on demand. The icon signals
+// a problem WITHOUT text (danger tint + a 5px dot, `update`'s `.upd-dot`
+// pattern) when a meter is high or the probe is a full error; the popover's
+// `title` carries the one-line summary for anyone who reads before clicking.
 //
-// Pure chrome: NOT a focusable pane (FR-3 — no tabIndex, no key handling, no
-// focus ring). FR-25's original "no motion at all" is superseded for the one
-// case a background probe needs to say something: a `LoaderStitch` hairline
-// on `refreshing` (Figma "33 · Loaders") — it already pauses under
-// `html[data-hidden='1']` (loader.css), which is what FR-25 was guarding
-// against. Nothing else in this file animates.
+// Pure chrome: NOT a focusable pane (FR-3 — no tabIndex on the trigger beyond
+// the button itself, no key handling beyond Escape/outside-click to dismiss)
+// and NO motion at all (FR-25 — no @keyframes, no animation, no transition
+// anywhere in this file; the webview may fall back to software compositing,
+// where permanent chrome that animates repaints forever).
 //
 // All logic lives in ./usage (covered by src/features/usage/usage.test.ts); this
 // file only maps the view model onto §8's tokens.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { UsageMeter } from '../../../contract/common';
 import { focusedSessionId } from '../../lib/layoutStore';
+import { useDismiss } from '../../lib/hooks/useDismiss';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
+import { Icon } from '../../ui/Icon';
+import { IconButton } from '../../ui/IconButton';
+import { Meter } from '../../ui/Meter';
 import { accountDisplayLabel, findAccount, usageAccountId } from '../accounts/accounts';
 import { EMPTY_USAGE } from '../../lib/usageStore';
-import { LoaderCaret, LoaderStitch } from '../../ui/Loader';
 import './usage.css';
-import { requestUsageRefresh, seedAccountUsage, startUsageFeed, usageBarView, type MeterChipView } from './usage';
+import {
+  USAGE_ERROR,
+  meterResetLine,
+  requestUsageRefresh,
+  seedAccountUsage,
+  startUsageFeed,
+  usageBarView,
+  usageIconAttention,
+  usageIconSummary,
+  type MeterChipView,
+  type UsageBarView,
+} from './usage';
 
-function MeterChip({ chip }: { chip: MeterChipView }) {
+function MeterRow({ chip, meter, now }: { chip: MeterChipView; meter: UsageMeter | undefined; now: number }) {
   return (
-    <span title={chip.title} className="usage-chip">
-      <span className="usage-chip-label">{chip.label}</span>
-      {/* <span className="usage-track">
-        <span className="usage-fill" style={{ width: `${chip.fillPercent}%`, background: chip.color }} />
-      </span> */}
-      {/* No inline colour: the fill above carries the severity hue, the figure
-          stays neutral (--text-hint) as in the mock — design-refresh FR-4. */}
-      <span className="usage-percent">{chip.percentText}</span>
-    </span>
+    <div className="usage-popover__row">
+      <div className="usage-popover__row-head">
+        <span className="usage-popover__label truncate">{chip.label}</span>
+        <span className="usage-popover__percent">{chip.percentText}</span>
+      </div>
+      <Meter fraction={chip.fillPercent / 100} tone={chip.color === USAGE_ERROR ? 'danger' : 'default'} />
+      {meter && <span className="usage-popover__reset">{meterResetLine(meter, now)}</span>}
+    </div>
+  );
+}
+
+// The shape MeterRow needs off UsageMeter — kept local so this file does not
+// import the contract type twice under two names.
+function PopoverBody({
+  view,
+  now,
+  meters,
+  accountLabel,
+  split,
+  focusedName,
+  onRefresh,
+}: {
+  view: UsageBarView;
+  now: number;
+  meters: UsageMeter[];
+  accountLabel: string | null;
+  split: boolean;
+  focusedName: string | null;
+  onRefresh: () => void;
+}) {
+  const fullError = view.error && !view.error.compact ? view.error : null;
+
+  return (
+    <div role="dialog" aria-label="Plan usage" className="usage-popover">
+      <div className="usage-popover__head">
+        <span className="usage-popover__title">Plan usage</span>
+        {accountLabel && <span className="usage-popover__account truncate">{accountLabel}</span>}
+        {split && focusedName && <span className="usage-popover__focused truncate">focused · {focusedName}</span>}
+      </div>
+
+      {fullError ? (
+        <div className="usage-popover__error">{fullError.message}</div>
+      ) : view.empty ? (
+        <div className="usage-popover__empty">No usage data yet</div>
+      ) : (
+        <>
+          {view.error && <div className="usage-popover__warning">{view.error.message}</div>}
+          <div className={view.dimmed ? 'usage-popover__rows usage-popover__rows--dimmed' : 'usage-popover__rows'}>
+            {view.chips.map((chip, i) => (
+              <MeterRow key={`${chip.label}:${i}`} chip={chip} meter={meters[i]} now={now} />
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="usage-popover__foot">
+        <span className="usage-popover__freshness">{view.freshness}</span>
+        <button type="button" className="usage-popover__refresh" onClick={onRefresh}>
+          Refresh
+        </button>
+      </div>
+    </div>
   );
 }
 
 export default function UsageMeters() {
   const setAccountUsage = useStore((s) => s.setAccountUsage);
   const [now, setNow] = useState(() => Date.now());
-  const [freshHover, setFreshHover] = useState(false);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useDismiss(rootRef, { onEscape: () => setOpen(false), onOutsideClick: () => setOpen(false), enabled: open });
 
   const sessions = useStore((s) => s.sessions);
   // split-session FR-7: the meters follow the FOCUSED session, which equals
@@ -51,10 +124,10 @@ export default function UsageMeters() {
   const split = useStore((s) => s.extraPanes.length > 0);
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
   // multi-provider-openai FR-20 design brief §2: the focused session's own
-  // usageBar capability — replaces the meters with the reason at dim, same height.
+  // usageBar capability — the popover shows the reason instead of the meters.
   const usageCapability = sessionCapability(activeSession, 'usageBar');
 
-  // multi-account FR-30: the bar renders the SELECTED session's account —
+  // multi-account FR-30: the popover follows the SELECTED session's account —
   // derived, never stored, so it can never drift from the session cache.
   const accounts = useStore((s) => s.accounts);
   const accountId = usageAccountId(accounts, sessions, activeSessionId);
@@ -71,81 +144,73 @@ export default function UsageMeters() {
   // lands after the switch a no-op.
   useEffect(() => seedAccountUsage(accountId, setAccountUsage), [accountId, setAccountUsage]);
 
-  // Trailing-label granularity only (the reset countdown, FR-30): one text tick a
-  // minute. Not motion — a single setState/min, no repaint loop (contrast with an
-  // animation, FR-25). The countdown's finest unit is the minute, so this matches.
+  // One text tick a minute for the reset countdowns — not motion (FR-25): a
+  // single setState/min, no repaint loop.
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
 
   const view = usageBarView(snapshot, now, accountLabel ?? undefined);
-  const fullError = view.error && !view.error.compact ? view.error : null;
   const refresh = () => requestUsageRefresh(accountId);
 
   if (!usageCapability.available) {
-    // multi-provider-openai FR-20 design brief §2: same height, no refresh
-    // affordance (there is nothing to probe), no layout shift on focus change.
+    // multi-provider-openai FR-20 design brief §2: the icon stays put (same hit
+    // target, no layout shift on focus change); the popover carries the reason.
     return (
-      <div onMouseDown={(e) => e.preventDefault()} className="usage-meters">
-        {split && activeSession && <span className="usage-focused-label truncate">focused · {activeSession.name}</span>}
-        <span title={usageCapability.reason} className="usage-unavailable">
-          {usageCapability.reason}
-        </span>
+      <div ref={rootRef} className="usage-trigger">
+        <IconButton
+          title={usageCapability.reason ?? 'Plan usage unavailable'}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <Icon name="usage" size={16} />
+        </IconButton>
+        {open && (
+          <div role="dialog" aria-label="Plan usage" className="usage-popover">
+            <div className="usage-popover__head">
+              <span className="usage-popover__title">Plan usage</span>
+            </div>
+            <div className="usage-popover__empty">{usageCapability.reason ?? 'Plan usage unavailable'}</div>
+          </div>
+        )}
       </div>
     );
   }
 
+  const attention = usageIconAttention(view);
+  const summary = usageIconSummary(view);
+
   return (
-    <div
-      onClick={refresh}
-      // Keep focus where it was: a bare div steals it to <body> on mousedown, and
-      // App.tsx's global keys only stand down while focus is in an input/terminal —
-      // so without this the next keystroke after a click fires `n`/`d`/`t` (FR-3).
-      onMouseDown={(e) => e.preventDefault()}
-      className="usage-meters"
-    >
-      {/* Loading WITH data: the old numbers stay put, undimmed — a hairline on
-          the container's own edge says a probe is running (FR-25). */}
-      {view.refreshing && <LoaderStitch edge="bottom" label="Refreshing usage" />}
-      {/* split-session §8: while split the quota cluster says WHOSE quota it
-          is showing — the meters silently follow the focused pane otherwise. */}
-      {split && activeSession && <span className="usage-focused-label truncate">focused · {activeSession.name}</span>}
-      {fullError ? (
-        // no stale data to protect → the one-line affordance replaces the meters (FR-26)
-        <span title={fullError.message} className="usage-error-full">
-          <span>⚠</span>
-          <span>usage unavailable</span>
-        </span>
-      ) : (
-        <>
-          {/* stale meters survive an error; the glyph shrinks to bare ⚠ beside them (FR-26) */}
-          {view.error && (
-            <span title={view.error.message} className="usage-error-glyph">
-              ⚠
-            </span>
-          )}
-          {view.loadingEmpty ? (
-            <LoaderCaret label="reading usage" />
-          ) : view.empty ? (
-            <span className="usage-empty">usage —</span>
-          ) : (
-            view.chips.map((chip, i) => <MeterChip key={`${chip.label}:${i}`} chip={chip} />)
-          )}
-        </>
-      )}
-      {/* freshness + session reset countdown, joined by ' · ' (FR-30); degrades to
-          whichever half exists — doubles as the refresh affordance (§8) */}
-      <span
-        onClick={refresh}
-        onMouseDown={(e) => e.preventDefault()} // see the meter region above (FR-3)
-        onMouseEnter={() => setFreshHover(true)}
-        onMouseLeave={() => setFreshHover(false)}
-        title={view.resetTitle}
-        className={`usage-fresh${freshHover ? ' usage-fresh--hover' : ''}`}
+    <div ref={rootRef} className="usage-trigger">
+      <IconButton
+        title={summary}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={attention ? 'usg-icon-btn usg-icon-btn--attention' : 'usg-icon-btn'}
+        // Keep focus where it was: a bare button can steal it via click, and
+        // App.tsx's global keys only stand down while focus is in an
+        // input/terminal — so without this the next keystroke after a click
+        // fires `n`/`d`/`t` (FR-3, carried over from the inline meters).
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
       >
-        {view.trailing}
-      </span>
+        <Icon name="usage" size={16} />
+        {attention && <span className="usg-dot" />}
+      </IconButton>
+      {open && (
+        <PopoverBody
+          view={view}
+          now={now}
+          meters={snapshot.meters}
+          accountLabel={accountLabel}
+          split={split}
+          focusedName={activeSession?.name ?? null}
+          onRefresh={refresh}
+        />
+      )}
     </div>
   );
 }

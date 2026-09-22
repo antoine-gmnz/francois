@@ -106,10 +106,13 @@ the precedent `cloud-sessions.css` set for the adopt list: a skeleton that moves
 the thing it stands for.
 
 **FR-7 — One indeterminate hairline.** A 2px full-width element sits between the chrome and the
-transcript column, with a thumb 30% of the track width animated left-to-right on a 1.5s
-ease-in-out loop. It mounts and unmounts with the skeleton — same gate (FR-2), same suppression
-(FR-3) — and covers **initial hydration only**. It is the only motion in the pane besides the composer
-caret.
+transcript column. **Superseded by the loaders adoption**: the hand-rolled `.conv-hydrating-bar__thumb`
+(30%-wide thumb, 1.5s ease-in-out) is retired in favour of the shared `Stitch` primitive
+(`src/ui/Loaders.tsx` / `src/ui/loaders.css`) — a 38%-wide thumb on a 1.25s cubic-bezier loop, with its
+own `prefers-reduced-motion` treatment (a 2.2s opacity breathe, rather than freezing mid-slide). The
+wrapping `<div role="progressbar" aria-label="restoring transcript">` is unchanged. It mounts and
+unmounts with the skeleton — same gate (FR-2), same suppression (FR-3) — and covers **initial hydration
+only**. It is the only motion in the pane besides the composer caret.
 
 **FR-8 — Composer placeholder.** While the skeleton is showing, the composer placeholder reads
 `restoring transcript — you can start typing`. It reverts to the normal placeholder the moment
@@ -182,7 +185,7 @@ All frontend, all ephemeral. Nothing is persisted and nothing is added to any st
 | Session switched again while the skeleton is up | The outgoing transcript unmounts with its timer; the incoming one starts a fresh 140ms gate. No timer survives the switch (FR-13). |
 | Session is held by `SessionViewHost` | Already hydrated — no loading state (FR-12). |
 | App cold start hydrating several sessions | Same path per session; only the visible one renders a skeleton, since the hidden held mounts render nothing on screen. |
-| `prefers-reduced-motion: reduce` | The hairline thumb stops animating and renders as a static 30% fill. The bars are already static (FR-6). |
+| `prefers-reduced-motion: reduce` | **Amended by the loaders adoption (FR-7):** the hairline is now the shared `Stitch` primitive, which swaps to its own 2.2s opacity breathe rather than freezing as a static fill. The bars are already static (FR-6). |
 | Transcript lands empty on a session whose `contextUsedTokens > 0` | Skeleton is replaced by the `WelcomeBlock` — correct, and the only case where the two-turn rhythm was briefly wrong. |
 
 ## 8. Design brief
@@ -196,11 +199,16 @@ extracted section is `.design-turn18a.html`, gitignored).
 Two skeleton turns on the transcript's real geometry — a `20px 1fr` grid with the literal gutter
 glyphs `›` and `⏺`, a header strip (bar · 1px rule · bar), body lines at varying widths, and a
 tool rail on the latest turn — stacked bottom-pinned, older turn at `opacity: .55`. Bar fills step
-darker with depth, from `--border-emphasis` down. Above them a 2px hairline whose 30%-wide olive
-(`--accent`) thumb creeps across a `#131720` track. Below, the composer with the placeholder
-*"restoring transcript — you can start typing"* and a blinking `--accent` caret, over a hint bar
-reading `⏎ send when ready` · `esc back to previous session` · *"reading last 200 of the session"*.
-Every colour is an existing token in `src/styles.css`; no new token, no new glyph, no asset.
+darker with depth, from `--border-emphasis` down. Above them a 2px hairline whose thumb creeps
+across the track. Below, the composer with the placeholder *"restoring transcript — you can start
+typing"* and a blinking `--accent` caret, over a hint bar reading `⏎ send when ready` ·
+`esc back to previous session` · *"reading last 200 of the session"*.
+
+> **Superseded (loaders adoption):** the hairline originally described here (a 30%-wide olive
+> `--accent` thumb on a `#131720` track) is now the shared `Stitch` primitive — see `François
+> Loaders.html` / `src/ui/loaders.css`: a 38%-wide `var(--state-running)` thumb on a 1.25s
+> cubic-bezier loop, drawn with the loader system's tokens rather than this feature's own. Every
+> other colour is still an existing token in `src/styles.css`; no new token, no new glyph, no asset.
 
 ## 9. Acceptance criteria
 
@@ -210,7 +218,8 @@ Every colour is an existing token in `src/styles.css`; no new token, no new glyp
 - [x] A session with `contextUsedTokens === 0`, and a session with no `SessionMeta`, render no
       skeleton however long hydration takes (FR-3).
 - [x] `grep -r "@keyframes" src/features/conversation/conversation.css` matches nothing that targets a
-      `conv-skel` bar; the only new animation is the hairline thumb (FR-6).
+      `conv-skel` bar; the hairline's animation now lives entirely in `src/ui/loaders.css` (`fr-stitch`)
+      as the shared `Stitch` primitive, not a local keyframe (FR-6, amended by the loaders adoption).
 - [x] The composer accepts and sends a prompt while the skeleton is up, and its placeholder reverts on
       `hydrated` (FR-8).
 - [x] The hint-bar figure changes when `RENDER_WINDOW` changes — it is not a literal (FR-9).
@@ -218,7 +227,8 @@ Every colour is an existing token in `src/styles.css`; no new token, no new glyp
 - [x] `useDelayedFlag` has unit tests covering: flips true after the delay, never flips when `active`
       goes false first, and clears its timer on unmount and on an `active` identity change (FR-13).
 - [x] `showSkeleton` has unit tests for each of its four inputs in isolation.
-- [x] Under `prefers-reduced-motion: reduce` the hairline thumb is static (§7).
+- [x] Under `prefers-reduced-motion: reduce` the hairline (now the shared `Stitch` primitive) breathes
+      at 2.2s rather than freezing (§7, amended by the loaders adoption).
 - [x] `npm run quality` and `npm test` are green; no new file crosses the 1000-line cap.
 
 ## Remediation

@@ -3,14 +3,14 @@
    provenance chip.
 
    No new colors, tokens or glyphs: everything below is a var() from
-   src/styles.css. The current-step row draws the shared LoaderOrbit (violet,
-   src/ui/loader.css) instead of an acid dot — adoption runs in the cloud, so
+   src/styles.css. The current-step row draws the shared Orbit (violet,
+   src/ui/loaders.css) instead of an acid dot — adoption runs in the cloud, so
    this view only WATCHES it; done/pending/failed rows keep their static
    StatusDot. The primary Adopt button (shared kit) is disabled, and therefore
    not acid, for as long as an adoption is running.
 
    Motion: the list's loading state is the shared LoaderPane
-   (src/ui/Loader.tsx) rather than a skeleton. */
+   (src/ui/Loaders.tsx) rather than a skeleton. */
 
 /* ---------- modal ---------- */
 

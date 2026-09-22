@@ -40,6 +40,16 @@
   align-items: center;
   gap: var(--space-8);
 }
+/* A fixed-size slot for the status glyph — a resting StatusDot and a running
+   Orbit (14px) are different footprints, so the row centers whichever is
+   showing in the same box rather than letting the name column shift. */
+.agent-status-slot {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
 
 /* "async" marker chip (AgentsPanel card + AgentView header — identical
    look; the card usage additionally needs flex-shrink since it sits among

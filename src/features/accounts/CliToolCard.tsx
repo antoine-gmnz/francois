@@ -22,7 +22,7 @@
 
 import { Check, Download, ExternalLink } from 'lucide-react';
 import type { CliToolStatus } from '../../../contract/multi-account';
-import { LoaderCaret } from '../../ui/Loader';
+import { Caret } from '../../ui/Loaders';
 import './accounts.css';
 import {
     cliToolHeadline,
@@ -84,8 +84,7 @@ export function CliToolCard({ spec, tool, state, busy, onInstall }: CliToolCardP
               disabled={busy || installing}
               onClick={onInstall}
             >
-              {installing && <LoaderCaret />}
-              {installButtonLabel(state, tool)}
+              {installing ? <Caret>{installButtonLabel(state, tool)}</Caret> : installButtonLabel(state, tool)}
             </button>
             <a
               className="acc-cli-docs"

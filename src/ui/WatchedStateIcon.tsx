@@ -3,7 +3,7 @@
 // else is busy"); every settled state is the ordinary StateIcon. The session's
 // own running state stays StateIcon's spinner — never this.
 
-import { LoaderOrbit } from './Loader';
+import { Orbit } from './Loaders';
 import { StateIcon } from './StateIcon';
 import type { StateKind } from './state-kind';
 
@@ -14,6 +14,6 @@ function settledKind(status: string): StateKind {
 }
 
 export function WatchedStateIcon({ status, size, name }: { status: string; size: number; name?: string }): JSX.Element {
-  if (status === 'running') return <LoaderOrbit size={14} title={name ? `${name} running` : 'running'} />;
+  if (status === 'running') return <Orbit size={14} label={name ? `${name} running` : 'running'} />;
   return <StateIcon kind={settledKind(status)} size={size} />;
 }

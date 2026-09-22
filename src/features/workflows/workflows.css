@@ -35,6 +35,16 @@
   align-items: center;
   gap: var(--space-8);
 }
+/* Fixed-size slot for the status glyph — see agents.css's .agent-status-slot
+   for why: a resting StatusDot and a running Orbit (14px) are different
+   footprints, so the row centers whichever is showing rather than shifting. */
+.workflow-status-slot {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
 .workflow-card {
   padding: var(--space-11);
   border-radius: var(--radius-card);

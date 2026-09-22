@@ -19,7 +19,7 @@ import type { PanelId, TableRow } from '../../../contract/extensions';
 import { extensionsSetEnabled } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
-import { LoaderPane } from '../../ui/Loader';
+import { LoaderPane } from '../../ui/Loaders';
 import LogTailSection from './LogTailSection';
 import PanelSection from './PanelSection';
 import { DISABLE_COPY, panelRoot, sanitizeForDisplay, tokenFromRow } from './extensions';

@@ -1,16 +1,39 @@
 /* The app bar (AppBar.tsx) — redesign "Graphite & Signal", Figma "App bar"
-   126:158. 48px, --bg-canvas, a --line-subtle bottom edge, 20px between groups.
+   126:2 (Sessions variant). 48px, --bg-canvas, a --line-subtle bottom edge. A
+   3-column grid (left / search / right) centers the search truly, whatever
+   either side weighs — the code-side equivalent of the mock's absolute
+   centering (the mock offsets the field itself because its 138px window
+   controls eat the right edge in a fixed-width frame; the grid gets the same
+   result without that math, on any width). The side columns are plain `1fr`
+   (min = their content), so a heavy right cluster squeezes the search column
+   rather than sliding under it. Search caps at 400px (was 480).
+   The plan-usage meters live behind a single icon button (usage.css
+   `.usage-trigger`/`.usage-popover`) now, not inline — several Claude Code
+   accounts made the old `Session ▬ 42%  Week ▬ 72%` strip too wide.
+   Right cluster, in order: notify-mute chip (not in the design) · usage icon ·
+   running version · [update button, only when available] · divider · pane
+   layout (Sessions view only) · divider · theme/settings tools · account
+   avatar · divider · window controls (Windows/Linux only — WindowControls.tsx,
+   flush with the bar's own right edge; macOS keeps its native traffic lights
+   and renders none of this).
    Fixed height in every state so nothing below it ever reflows. */
 .app-bar {
   height: 48px;
   flex: 0 0 48px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr minmax(160px, 400px) 1fr;
   align-items: center;
-  gap: var(--space-20);
+  column-gap: var(--space-20);
   padding: 0 var(--space-14);
   background: var(--bg-canvas);
   border-bottom: 1px solid var(--line-subtle);
   min-width: 0;
+}
+.app-bar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-18);
+  justify-self: start;
 }
 .app-bar__brand {
   display: flex;
@@ -62,17 +85,14 @@
   background: var(--state-attention);
   color: var(--state-attention-on);
 }
-.app-bar__spacer {
-  flex: 1 1 0;
-  min-width: 0;
-}
-/* The command search — a button that opens the palette, drawn as a field. */
+/* The command search — a button that opens the palette, drawn as a field.
+   Centered by the grid's middle column, not by flex spacers. */
 .app-bar__search {
   display: flex;
   align-items: center;
   gap: var(--space-10);
-  flex: 0 1 440px;
-  min-width: 160px;
+  width: 100%;
+  min-width: 0;
   height: 30px;
   padding: 0 var(--space-10);
   border: 1px solid var(--line-subtle);
@@ -89,6 +109,20 @@
 .app-bar__search-text {
   flex: 1;
   min-width: 0;
+}
+.app-bar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  justify-self: end;
+}
+/* 1×18 --line-default rule between the update control / layout segments / tools
+   clusters — the only strokes this bar draws besides its own bottom edge. */
+.app-bar__divider {
+  width: 1px;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--line-default);
 }
 .app-bar__tools {
   display: flex;
@@ -119,27 +153,55 @@
   box-shadow: 0 0 0 1.5px var(--state-attention);
 }
 
+/* Window controls (Windows/Linux only — App bar 126:2, "Window controls"
+   180:17326). Frameless native chrome (lib.rs `set_decorations(false)`, not
+   macOS), so this bar draws the caption buttons itself: 46×48 each, flush
+   with the bar's right edge. `.app-bar` keeps its usual 14px right padding
+   for every OTHER control (the bar has no per-platform CSS build); a negative
+   right margin here cancels exactly that padding so the last button's edge is
+   the window edge, with no gap. */
+.win-controls {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  margin-right: calc(var(--space-14) * -1);
+}
+.win-controls__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.win-controls__btn:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.win-controls__btn--close:hover {
+  background: var(--state-danger);
+  color: var(--text-inverse);
+}
+
 /* Below ~1120px the bar sheds the least useful pieces first: the search field's
-   copy (the ⌘K keycap still says what it is), then the plan meters' trailing
-   freshness readout. */
+   copy (the ⌘K keycap still says what it is) and its own middle column shrinks
+   with it. */
 @media (max-width: 1120px) {
   .app-bar {
-    gap: var(--space-12);
-  }
-  .app-bar__search {
-    flex-basis: 220px;
-  }
-  .app-bar .usage-fresh {
-    display: none;
+    grid-template-columns: 1fr minmax(140px, 220px) 1fr;
+    column-gap: var(--space-12);
   }
 }
 @media (max-width: 840px) {
+  .app-bar {
+    grid-template-columns: 1fr max-content 1fr;
+  }
   .app-bar__search-text {
     display: none;
-  }
-  .app-bar__search {
-    flex: 0 0 auto;
-    min-width: 0;
   }
   .app-bar__wordmark {
     display: none;

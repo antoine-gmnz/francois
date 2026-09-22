@@ -9,7 +9,7 @@ import type { GithubRepoInfo } from '../../../contract/github-page';
 import { githubFetch, githubListBranches, githubListPulls, githubOpenUrl, githubRepoInfo } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { EmptyPane } from '../../ui/EmptyPane';
-import { LoaderPane, LoaderStitch } from '../../ui/Loader';
+import { LoaderPane, LoaderStitch } from '../../ui/Loaders';
 import { BranchesTab } from './BranchesTab';
 import { CommitsTab } from './CommitsTab';
 import { PullsTab } from './PullsTab';

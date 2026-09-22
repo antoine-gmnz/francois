@@ -8,7 +8,8 @@
 // already lean on `.btn`.
 
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
-import { LoaderCaret } from './Loader';
+import { useDelayedFlag } from '../lib/hooks/useDelayedFlag';
+import { Caret, LOADER_DELAY_MS } from './Loaders';
 
 export type ButtonKind = 'primary' | 'secondary' | 'ghost' | 'attention' | 'danger';
 /** The pre-redesign name for `ButtonKind`. */
@@ -47,6 +48,9 @@ export function Button({
   busy = false,
   ...rest
 }: ButtonProps): JSX.Element {
+  // Same shape as the hand-gated sites (CodexForm's `<Caret>Save</Caret>`):
+  // nothing for the first 300 ms, then the caret leads the kept label.
+  const showCaret = useDelayedFlag(busy, LOADER_DELAY_MS);
   return (
     <button
       type={type}
@@ -55,8 +59,7 @@ export function Button({
       aria-busy={busy || undefined}
       {...rest}
     >
-      {busy && <LoaderCaret />}
-      {children}
+      {showCaret ? <Caret>{children}</Caret> : children}
       {shortcut && <span className="btn__shortcut">{shortcut}</span>}
     </button>
   );

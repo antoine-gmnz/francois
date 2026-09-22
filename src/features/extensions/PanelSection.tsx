@@ -6,11 +6,12 @@
 // `log-tail` opens a stream instead and has its own component.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { EXT_PAGE_SIZE, type ExtensionInfo, type PanelInfo, type TableRow } from '../../../contract/extensions';
+import { EXT_PAGE_SIZE, type ExtensionInfo, type KeyValueRow, type PanelInfo, type TableRow } from '../../../contract/extensions';
 import { extensionsPanel } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { EmptyPane } from '../../ui/EmptyPane';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret, Orbit } from '../../ui/Loaders';
 import ExtSectionError from './ExtSectionError';
 import ExtTable from './ExtTable';
 import {
@@ -144,6 +145,8 @@ export default function PanelSection({
         <span className="ext-section__header-right">
           {refreshMs !== null && gate === 'ready' && (
             <span className="ext-section__refresh" title={`refreshes every ${Math.round(refreshMs / 1000)}s`}>
+              {/* This is François's own poll ticking, not work it's watching someone
+                  else do — Orbit read as a flash on every tick. Back to the pulsing dot. */}
               <StatusDot color="var(--text-muted)" size={5} pulsing={state.status === 'loading'} />
               <span>{Math.round(refreshMs / 1000)}s</span>
             </span>
@@ -213,11 +216,7 @@ function Body({
     return (
       <div className="ext-kv">
         {state.keyValue.map((row, i) => (
-          <div className="ext-kv__row" key={`${row.key}:${i}`}>
-            <StatusDot color={toneColor(row.tone)} size={6} pulsing={row.tone === 'busy'} />
-            <span className="ext-kv__key">{row.key}</span>
-            <span className="ext-kv__value">{row.value}</span>
-          </div>
+          <KvRow key={`${row.key}:${i}`} row={row} />
         ))}
       </div>
     );
@@ -248,6 +247,28 @@ function Body({
       onSelectRow={onSelectRow}
       onLoadMore={onLoadMore}
     />
+  );
+}
+
+/**
+ * One `key-value` row. A `busy` tone means the PROVIDER (an out-of-process
+ * extension, not François's own poll) is still working on that value — Orbit
+ * fits, but only once the wait clears 300ms, so a value that resolves fast
+ * never flashes it.
+ */
+function KvRow({ row }: { row: KeyValueRow }) {
+  const busy = row.tone === 'busy';
+  const showOrbit = useDelayedFlag(busy, 300);
+  return (
+    <div className="ext-kv__row">
+      <span className="ext-kv__status-slot">
+        {/* Under 300ms a busy row still reads as busy — its own colour, just not
+            yet animated — rather than flashing a spinner or leaving the slot blank. */}
+        {showOrbit ? <Orbit size={14} label={null} /> : <StatusDot color={toneColor(row.tone)} size={busy ? 8 : 6} />}
+      </span>
+      <span className="ext-kv__key">{row.key}</span>
+      <span className="ext-kv__value">{row.value}</span>
+    </div>
   );
 }
 

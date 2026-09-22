@@ -152,11 +152,11 @@ describe('updateChipView (FR-8)', () => {
     expect(view.label).toBe('0.15.8');
   });
 
-  it('shows ↑ <latest> — the NEW version, not the current one — when an update is available', () => {
+  it('keeps the running version as the label when an update is available — App bar 126:2 shows the button separately', () => {
     const view = updateChipView(check(), '0.15.8');
     expect(view).toEqual({
       available: true,
-      label: '↑ 0.16.0',
+      label: '0.15.8',
       title: 'Francois 0.16.0 is available',
     });
   });

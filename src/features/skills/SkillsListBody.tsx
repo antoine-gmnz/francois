@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { AppError, SkillInfo } from '../../../contract/common';
 import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
-import { LoaderPane } from '../../ui/Loader';
+import { LoaderPane } from '../../ui/Loaders';
 import { ListRow } from '../../ui/ListRow';
 import { isSkillRunnable, skillInvocationLabel, skillRowKey } from './skills-loaded';
 

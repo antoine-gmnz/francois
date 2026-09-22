@@ -8,7 +8,7 @@ import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { HintBar } from '../../ui/HintBar';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret, Orbit } from '../../ui/Loaders';
 import { StatusDot } from '../../ui/StatusDot';
 import { approvalSummary, approveAllDecision, canReconnect, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
 import { useAttachFlow } from './useAttachFlow';
@@ -220,23 +220,20 @@ function ApprovalBanner({
 
 function ServerRow({ server, selected, onClick }: { server: McpServerInfo; selected: boolean; onClick: () => void }) {
   const detail = detailText(server);
-  const connecting = server.status === 'connecting';
   return (
     <div data-mcp-row onClick={(e) => { e.stopPropagation(); onClick(); }} className={selected ? 'mcp-row mcp-row--selected' : 'mcp-row'}>
-      <StatusDot color={dotColor(server.status)} />
+      <span className="mcp-status-slot">
+        {server.status === 'connecting' ? <Orbit size={14} label={null} /> : <StatusDot color={dotColor(server.status)} />}
+      </span>
       <span className="mcp-row-name truncate">{server.name}</span>
       {server.scope && (
         <span className="mcp-scope-badge" style={{ color: scopeColor(server.scope) }}>
           {server.scope}
         </span>
       )}
-      {connecting ? (
-        <LoaderCaret label="connecting" className="mcp-row-detail" />
-      ) : (
-        <span className="mcp-row-detail" style={{ color: detail.color }}>
-          {detail.text}
-        </span>
-      )}
+      <span className="mcp-row-detail" style={{ color: detail.color }}>
+        {detail.text}
+      </span>
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CapabilityState, SessionId } from '../../../contract/common';
 import { mcpDecide, remoteGet, remoteStart, remoteStop } from '../../lib/api';
 import { useStore } from '../../lib/store';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import './remote.css';
 import {
   approvalRequiredOf,

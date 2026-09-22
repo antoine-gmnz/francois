@@ -11,7 +11,7 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
-import { LoaderCaret, LoaderPane, LoaderStitch } from '../../ui/Loader';
+import { LoaderCaret, LoaderPane, LoaderStitch } from '../../ui/Loaders';
 import { StateIcon } from '../../ui/StateIcon';
 import { openSession, startSessionOnBranch } from './actions';
 import {

@@ -1,6 +1,6 @@
 import './model-catalog-status.css';
 import type { ModelCatalogState } from '../lib/hooks/useModelCatalog';
-import { LoaderCaret } from './Loader';
+import { LoaderCaret } from './Loaders';
 
 export function ModelCatalogStatus({ state }: { state: ModelCatalogState }) {
   const { catalog, error, modelsLoading, showLoading, refresh } = state;

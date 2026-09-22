@@ -14,7 +14,7 @@ import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
-import { LoaderOrbit, LoaderPane } from '../../ui/Loader';
+import { LoaderPane, Orbit } from '../../ui/Loaders';
 import { PanelHeader } from '../../ui/PanelHeader';
 import { StatusDot } from '../../ui/StatusDot';
 import { useWorkflowsFeed } from './useWorkflowsFeed';
@@ -160,11 +160,9 @@ function Card({
   return (
     <div onClick={onClick} className={cardClass}>
       <div className="workflow-inline-row">
-        {run.status === 'running' ? (
-          <LoaderOrbit size={14} title={run.name} />
-        ) : (
-          <StatusDot color={sc} />
-        )}
+        <span className="workflow-status-slot">
+          {run.status === 'running' ? <Orbit size={14} label={null} /> : <StatusDot color={sc} />}
+        </span>
         <span className="workflow-card__name truncate">{run.name}</span>
         {phaseCount && <span className="workflow-phase-badge">{phaseCount}</span>}
         <span className="workflow-card__status" style={{ color: sc }}>

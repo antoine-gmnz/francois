@@ -1,8 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
 import type { DiffFileSummary, DiffSummary } from '../../../contract/diff-view';
 import { diffCommit, diffStageAll } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
+import { Stitch } from '../../ui/Loaders';
 import { Meter } from '../../ui/Meter';
 import { IS_WINDOWS } from '../../lib/platform';
 import { siblingWorktreeSummaryLine } from '../sessions/worktree';
@@ -76,6 +78,9 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   // just from clicking through the file list — staging and committing are unaffected
   // by which file's diff is on screen.
   const requestBusy = busy || summaryLoading;
+  // Background work on a still-usable pane (a list is already on screen) — the
+  // Stitch hairline, not a blocking spinner. Gated so a fast refresh never flashes.
+  const showRefreshStitch = useDelayedFlag(requestBusy && files.length > 0, 300);
 
   const stageAll = useCallback(() => {
     if (requestBusy || notRepo || files.length === 0) return; // FR-22 inert
@@ -147,6 +152,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="diff-view">
+      {showRefreshStitch && <Stitch />}
       {/* review bar (Figma 135:5161) — hidden entirely for a non-repo (nothing actionable) */}
       {!notRepo && (
         <ReviewBar
@@ -183,8 +189,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
         selectedCount={selectedCount}
         notRepo={notRepo}
         summaryError={summaryError}
-        summary={summary}
-        summaryLoading={summaryLoading}
+        summary={summary}
         fileDiff={fileDiff}
         fileDiffError={fileDiffError}
         fileDiffLoading={fileDiffLoading}

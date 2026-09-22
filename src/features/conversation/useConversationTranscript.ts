@@ -20,7 +20,6 @@ import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
 import { subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
-import { LOADER_DELAY_MS } from '../../ui/Loader';
 import { getSessionCommands, setSessionCommands } from '../commands/slash-menu';
 import {
   applySessionEvent,
@@ -42,12 +41,9 @@ import {
   type TranscriptState,
 } from './conversation-blocks';
 
-/** session-switch-loader FR-2: `LoaderPane` never mounts for a load short
- *  enough to be imperceptible — ConversationView passes it `delay={0}` and
- *  gates on `showSkeleton` instead, so this is the ONE delay, not a second
- *  one stacked on the loader's own default. Figma "33 · Loaders": under
- *  300 ms, show nothing. */
-const SKELETON_DELAY_MS = LOADER_DELAY_MS;
+/** session-switch-loader FR-2: the skeleton/hairline never fire for a load
+ *  short enough to be imperceptible. */
+const SKELETON_DELAY_MS = 140;
 
 export interface ConversationTranscript {
   state: TranscriptState;
@@ -74,9 +70,8 @@ export interface ConversationTranscript {
   activateEarlier: () => void;
   /**
    * session-switch-loader FR-1..FR-3: whether ConversationView's loading
-   * branch (Figma "33 · Loaders" LoaderPane) should render — past the 300ms
-   * gate, still unhydrated, no hydration error, and this session is not
-   * known-empty. Also what ComposerPane swaps its placeholder for.
+   * branch (skeleton + hairline) should render — past the 140ms gate, still
+   * unhydrated, no hydration error, and this session is not known-empty.
    */
   showSkeleton: boolean;
 }

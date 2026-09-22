@@ -1,7 +1,9 @@
 /* `pulse` and the running spinner used to be stepped (6 and 12 steps) to spare
    CPU under WebView2's software-compositing fallback; the stepping read as lag,
    so both are smooth now. They still pause while the window is hidden (below).
-   (`blink` stays step-based — a caret blink is discrete by nature.) */
+   (The old `blink` keyframe stayed step-based on the same reasoning — a caret
+   blink is discrete by nature — until the `fr-blink` in src/ui/loaders.css
+   replaced its one caller with the shared `Caret` primitive.) */
 /* Stop every looping animation while the window is hidden/minimized — no wasted
    repaints, and no compositor backlog to flush (and re-lag) on restore. Toggled by
    the visibilitychange handler in main.tsx. The class-declared loops (the running
@@ -9,14 +11,19 @@
    ever matched INLINE animations. */
 html[data-hidden='1'] [style*='animation'],
 html[data-hidden='1'] .state-icon--running,
-html[data-hidden='1'] .status-dot--pulsing {
+html[data-hidden='1'] .status-dot--pulsing,
+html[data-hidden='1'] .fr-slabs i,
+html[data-hidden='1'] .fr-caret::before,
+html[data-hidden='1'] .fr-stitch::after,
+html[data-hidden='1'] .fr-orbit i {
   animation-play-state: paused !important;
 }
 
 /* Honour the OS-level "reduce motion" setting everywhere at once, rather than
-   listing every keyframe/transition site individually — the one exception is
-   the shared loaders (src/ui/loader.css), which out-specify this rule to swap
-   their motion for a 2.2s opacity breathe (Figma "33 · Loaders"). */
+   listing every keyframe/transition site individually — the exception is the
+   four `fr-*` loaders (src/ui/loaders.css, which the session-switch hairline
+   now draws through too), which swap to a slow opacity breathe instead of
+   freezing — see the note next to that override. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -374,16 +381,6 @@ body {
 a {
   color: var(--accent);
   text-decoration: none;
-}
-@keyframes blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
-  }
 }
 @keyframes pulse {
   0%,

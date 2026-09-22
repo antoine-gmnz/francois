@@ -23,9 +23,9 @@ export function runtimeToolSummary(inputText: string): string {
  * FR-3 + design brief ("Status uses text as well as colour"): the word the
  * row states for a RuntimeToolCall status. 'pending'/'running' state nothing
  * yet — a tool is never SHOWN running during argument generation, and a
- * genuinely running call already reads as live via `isStreaming` (the
- * existing pulsing-dot treatment). Every terminal status states its own word,
- * so `failed` also drives the existing error-tone chip rule (toolResultChips).
+ * genuinely running call already reads as live via `isStreaming` (the shared
+ * `Caret` loader, src/ui/Loaders.tsx). Every terminal status states its own
+ * word, so `failed` also drives the existing error-tone chip rule (toolResultChips).
  */
 export function runtimeToolStatusLabel(status: RuntimeToolCall['status']): string {
   switch (status) {

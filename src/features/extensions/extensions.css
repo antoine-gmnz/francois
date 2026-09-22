@@ -158,10 +158,19 @@
 }
 .ext-kv__row {
   display: grid;
-  grid-template-columns: 10px 180px 1fr;
+  grid-template-columns: 14px 180px 1fr;
   align-items: center;
   gap: var(--space-8);
   min-width: 0;
+}
+/* Fixed-size slot for the status glyph — a resting StatusDot and a running
+   Orbit (14px) are different footprints, so the column centers whichever is
+   showing rather than shifting the key/value columns. */
+.ext-kv__status-slot {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
 }
 .ext-kv__key {
   font-size: var(--font-size-11);

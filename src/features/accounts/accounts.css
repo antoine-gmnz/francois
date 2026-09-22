@@ -329,7 +329,6 @@
   align-items: center;
   gap: var(--space-6);
 }
-
 /* ── vendor CLI: installed-ness, and the npm that fixes it ──────────────────
    A CLI you have not installed yet is a NORMAL state, not a fault, so this
    borrows the dashed "empty slot" register the API KEYS section already uses

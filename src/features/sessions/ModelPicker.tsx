@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { Star } from 'lucide-react';
 import type { ModelInfo } from '../../../contract/common';
 import { useDismiss } from '../../lib/hooks/useDismiss';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import {
   activeFamily,
   activeModelId,

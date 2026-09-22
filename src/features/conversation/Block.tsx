@@ -32,7 +32,7 @@ import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
 import StepDetailPanel from './StepDetailPanel';
-import { LoaderCaret } from '../../ui/Loader';
+import { Caret, LoaderCaret } from '../../ui/Loaders';
 import { toolResultChips } from './transcript-turns';
 import './conversation.css';
 
@@ -148,7 +148,7 @@ function AssistantBodyImpl({ b }: { b: AssistantConversationBlock }) {
   return (
     <>
       <Markdown text={b.text} streaming={b.isStreaming} />
-      {b.isStreaming && <span className="block-caret" />}
+      {b.isStreaming && <Caret />}
       {/* pi-transcript-events FR-9: the word a non-'complete' outcome states —
           crash/stop finalizes partial output as interrupted, never as
           succeeded. 'interrupted'/'error' already read as their own label. */}
@@ -300,9 +300,7 @@ function ToolRowImpl({
         <span className="toolrow__meta">
           <span className="toolrow__chips">
             {b.isStreaming && chips.length === 0 ? (
-              // Figma "33 · Loaders" Caret — the live token cursor, so no
-              // 300ms mount delay (it IS the "still streaming" signal).
-              <LoaderCaret delay={0} />
+              <Caret />
             ) : (
               chips.map((c) => (
                 <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>

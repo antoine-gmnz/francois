@@ -11,7 +11,7 @@
 
 import type { CloudSession } from '../../../contract/cloud-sessions';
 import { ListRow } from '../../ui/ListRow';
-import { LoaderPane } from '../../ui/Loader';
+import { LoaderPane } from '../../ui/Loaders';
 import { cloudListRender, cloudRowMeta, cloudRowTitle, type CloudListState } from './cloud-sessions';
 import './cloud-sessions.css';
 

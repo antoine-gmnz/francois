@@ -1,121 +1,148 @@
-/* usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit strip. All colours
-   here are fixed per §8 tokens; the only genuinely dynamic values are the per-chip fill
-   percent/colour and the two hover/dimmed boolean states, which stay inline or become
-   modifier classes below. */
+/* usage-bar (specs/usage-bar.md §8) — the always-mounted plan-limit control.
+   One 28px icon button (IconButton, `.usg-icon-btn`) in the app bar; clicking
+   it opens `.usage-popover` with the detail. All colours are §8 tokens; the
+   only dynamic values are the per-row fill percent/colour and the loading
+   dim, which stay inline / a modifier class below. */
 
-/* design-refresh FR-4: 38px (was 28px) — the app's custom titlebar row, left
-   brand cluster + right usage meters, both described below. */
-.usage-bar {
-  height: 38px;
-  flex: 0 0 38px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-14);
-  padding: 0 var(--space-14);
-  background: var(--bg-chrome);
-  font-size: var(--font-size-11);
-}
-
-.usage-meters {
+.usage-trigger {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-14);
-  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Signal without text (§Signal state): tinted danger + a 5px dot at the
+   button's top-right corner, same geometry as `update`'s `.upd-dot`. Covers
+   both "a meter is high" and "the probe is a full error with nothing to
+   show" — usage.ts `usageIconAttention` decides which. */
+.icon-btn.usg-icon-btn--attention,
+.icon-btn.usg-icon-btn--attention:hover {
+  color: var(--state-danger);
+}
+.usg-dot {
+  position: absolute;
+  left: 17px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--state-danger);
+}
+
+/* Same panel shell, width and footer grammar as the extensions/run-chip
+   menus — the bar has one popover language, not a bespoke one per control. */
+.usage-popover {
+  position: absolute;
+  top: calc(100% + var(--space-6));
+  right: 0;
+  z-index: 60;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-9) 0;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+}
+.usage-popover__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  padding: 0 var(--space-11) var(--space-7);
   min-width: 0;
-  overflow: hidden;
+}
+.usage-popover__title {
+  font-size: var(--font-size-11);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-hint);
+  flex-shrink: 0;
+}
+.usage-popover__account,
+.usage-popover__focused {
+  font-size: var(--font-size-10-5);
+  color: var(--text-dim);
+  min-width: 0;
+}
+.usage-popover__error,
+.usage-popover__empty {
+  padding: var(--space-6) var(--space-11) var(--space-9);
+  font-size: var(--font-size-11-5);
+  color: var(--text-faint);
+}
+.usage-popover__error {
+  color: var(--error);
+}
+.usage-popover__warning {
+  padding: 0 var(--space-11) var(--space-7);
+  font-size: var(--font-size-10-5);
+  color: var(--error);
+}
+.usage-popover__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: 0 var(--space-11) var(--space-7);
   opacity: 1;
 }
-.usage-error-full {
-  color: var(--error);
+/* loading WITH data: a plain opacity swap, nothing else (FR-25) */
+.usage-popover__rows--dimmed {
+  opacity: 0.45;
+}
+.usage-popover__row {
   display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  white-space: nowrap;
+  flex-direction: column;
+  gap: var(--space-4);
 }
-
-.usage-error-glyph {
-  color: var(--error);
-  flex: 0 0 auto;
-}
-
-.usage-empty {
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-
-/* multi-provider-openai FR-20 design brief §2: the usage bar's off-state —
-   the reason line stands in for the meters at the bar's existing height, so
-   focus moving between a Claude session and an endpoint session never shifts
-   the layout. Full sentence rides on `title` for a narrow window. */
-.usage-unavailable {
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.usage-chip {
+.usage-popover__row-head {
   display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-8);
 }
-
-/* redesign "Graphite & Signal" App bar: `Session ▬ 47%` — 12px muted label, a
-   40×3 track on --bg-selected, the figure in 11px mono primary. */
-.usage-chip-label {
-  color: var(--text-muted);
-  font: var(--type-small);
-  white-space: nowrap;
+.usage-popover__label {
+  font-size: var(--font-size-12-5);
+  color: var(--text-bright);
+  min-width: 0;
 }
-
-.usage-track {
-  width: 40px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--bg-selected);
-  overflow: hidden;
-  flex: 0 0 auto;
-}
-
-.usage-fill {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-}
-
-/* The FILL carries the severity colour (green → amber → red); the figure
-   itself stays neutral, as in the mock — colouring both double-encoded it. */
-.usage-percent {
+.usage-popover__percent {
   font: var(--type-mono-small);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+  flex-shrink: 0;
 }
-
-.usage-fresh {
+/* the track/fill itself is src/ui/Meter.tsx (`meter--flex`) — same primitive
+   the accounts credential meters use, not a bespoke track here. */
+.usage-popover__reset {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
   color: var(--text-faint);
-  font: var(--type-mono-small);
-  flex: 0 0 auto;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.usage-fresh--hover {
+.usage-popover__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-10);
+  padding: var(--space-7) var(--space-11) 0;
+}
+.usage-popover__freshness {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-9-5);
+  color: var(--text-faint);
+}
+.usage-popover__refresh {
+  background: transparent;
+  border: 0;
+  padding: 0;
   color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--font-size-10-5);
+  cursor: pointer;
 }
-
-/* ── split-session (specs/split-session.md §8 / design brief §Titlebar) ────── */
-
-/* Names the session the quota cluster is reading — the meters follow the
-   focused pane, so while split they must say which one. */
-.usage-focused-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-11);
-  max-width: 160px;
-  flex: 0 1 auto;
+.usage-popover__refresh:hover {
+  color: var(--text-bright);
 }
 
 /* 9a: the gap between the quota cluster and the layout control — no hairline,

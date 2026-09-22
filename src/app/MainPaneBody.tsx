@@ -10,7 +10,7 @@ import WorkflowView from '../features/workflows/WorkflowView';
 import OverviewView from '../features/overview/OverviewView';
 import GitHubView from '../features/github/GitHubView';
 import type { MainTab } from '../lib/store';
-import { LoaderPane } from '../ui/Loader';
+import { LoaderPane } from '../ui/Loaders';
 import { hostedTab, mainPaneBranch, type MainPaneBranch } from './appShell';
 import EmptyPaneMessage from './EmptyPaneMessage';
 import SessionViewHost from './SessionViewHost';

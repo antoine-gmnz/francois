@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import type { RefObject } from 'react';
 import type { AppError } from '../../../contract/common';
 import type { DiffFileSummary, DiffHunk, DiffLine, DiffSummary, FileDiff } from '../../../contract/diff-view';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { Icon } from '../../ui/Icon';
-import { LoaderPane, LoaderStitch } from '../../ui/Loader';
+import { LoaderPane, Slabs } from '../../ui/Loaders';
 import { DiffTree } from './DiffTree';
 import { computeIntralineSpans, type IntralineSpan } from './intraline';
 import { isReviewed } from './review-state';
@@ -32,10 +33,6 @@ export interface DiffListBodyProps {
   notRepo: boolean;
   summaryError: AppError | null;
   summary: DiffSummary | null;
-  /** loaders: true while `diff_get_summary` is in flight — the first hydrate
-   *  (summary still null) owns the pane with `LoaderPane`; a later refresh
-   *  (summary already shown) gets a `LoaderStitch` instead. */
-  summaryLoading: boolean;
   fileDiff: FileDiff | null;
   fileDiffError: AppError | null;
   fileDiffLoading: boolean;
@@ -60,7 +57,6 @@ export function DiffListBody({
   notRepo,
   summaryError,
   summary,
-  summaryLoading,
   fileDiff,
   fileDiffError,
   fileDiffLoading,
@@ -99,10 +95,6 @@ export function DiffListBody({
 
       {/* diff pane — the selected file's header (Figma 135:5238) over the body */}
       <div className="diff-pane">
-        {/* loaders: a refresh while the list is already on screen (stage,
-            commit, an external diff.changed) — a hairline over content that
-            stays usable, never the full-pane loader below. */}
-        {summaryLoading && summary !== null && <LoaderStitch edge="top" label="Refreshing changes" />}
         {selectedFile && !notRepo && !summaryError && (
           <FileHeader
             file={selectedFile}
@@ -202,6 +194,9 @@ function DiffBody({
 
   const [win, setWin] = useState({ start: 0, end: WINDOW_INITIAL });
 
+  // Nothing under 300ms — a loader that flashes is worse than a beat of silence.
+  const showLoadingSlabs = useDelayedFlag(loading && !diff, 300);
+
   // Recompute the visible window on scroll / resize.
   useEffect(() => {
     const el = scrollRef.current;
@@ -230,9 +225,7 @@ function DiffBody({
   }, [diff, scrollRef]);
 
   if (error) return <Placeholder text={error.message} error />;
-  // loaders: switching to a file whose diff is not cached yet — nothing to
-  // show in the body until it lands.
-  if (loading && !diff) return <LoaderPane label="Reading changes…" />;
+  if (loading && !diff) return showLoadingSlabs ? <Placeholder loading /> : null;
   if (!diff) return null;
   if (diff.binary) return <Placeholder text="Binary file" />;
   if (rows.length === 0) return <Placeholder text="No content changes" />;
@@ -287,6 +280,11 @@ function IntralineText({ text, spans }: { text: string; spans: IntralineSpan[] }
   );
 }
 
-function Placeholder({ text, error }: { text: string; error?: boolean }) {
+function Placeholder({ text, error, loading }: { text?: string; error?: boolean; loading?: boolean }) {
+  if (loading) return (
+    <div className="diff-placeholder diff-placeholder--loading">
+      <Slabs size={16} />
+    </div>
+  );
   return <div className={error ? 'diff-placeholder diff-placeholder--error' : 'diff-placeholder'}>{text}</div>;
 }

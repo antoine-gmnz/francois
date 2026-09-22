@@ -14,7 +14,7 @@
 import { useEffect, useRef } from 'react';
 import type { Account } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import { Meter } from '../../ui/Meter';
 import {
   accountDisplayLabel,

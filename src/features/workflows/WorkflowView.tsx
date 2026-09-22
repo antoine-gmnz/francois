@@ -17,7 +17,7 @@ import type { WorkflowAgentInfo, WorkflowPendingAsk } from '../../../contract/wo
 import { workflowsScript } from '../../lib/api';
 import { Chip } from '../../ui/Chip';
 import { Icon } from '../../ui/Icon';
-import { LoaderOrbit, LoaderPane } from '../../ui/Loader';
+import { Orbit, LoaderPane } from '../../ui/Loaders';
 import { StateIcon } from '../../ui/StateIcon';
 import { AgentBlockRow } from '../agents/AgentView';
 import { isAtBottom } from '../agents/agent-trail';
@@ -246,7 +246,7 @@ function RunHeader({
     <div className="wfd-run">
       <div className="wfd-run__row">
         {status === 'running' ? (
-          <LoaderOrbit size={14} title={run?.name ?? 'workflow'} />
+          <Orbit size={14} label={run?.name ?? 'workflow'} />
         ) : (
           <StateIcon kind={workflowStateKind(status)} size={13} />
         )}
@@ -301,7 +301,7 @@ function TranscriptHeader({ agent, now }: { agent: WorkflowAgentInfo; now: numbe
     <div className="wfd-col__head">
       <div className="wfd-col__head-row">
         {agent.status === 'running' ? (
-          <LoaderOrbit size={14} title={agent.agentType} />
+          <Orbit size={14} label={agent.agentType} />
         ) : (
           <StateIcon kind={workflowStateKind(agent.status)} size={13} />
         )}

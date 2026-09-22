@@ -15,7 +15,7 @@ import { displayWslCwd } from '../../../contract/wsl-filesystem';
 import { sessionSwitchModel } from '../../lib/api';
 import { CARD_KIND_COMMAND, cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
 import { useStore } from '../../lib/store';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import './commands.css';
 
 // The token mirror of contract/fleet-board.ts's STATUS_COLOR — same assignments,

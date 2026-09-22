@@ -8,7 +8,7 @@ import { githubListBranches, githubListCommits } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
 import { Icon } from '../../ui/Icon';
-import { LoaderPane } from '../../ui/Loader';
+import { LoaderPane } from '../../ui/Loaders';
 import { CommitDetail } from './CommitDetail';
 import { commitChecksIcon, commitOrigin, commitTimeLabel, filterCommits, groupCommitsByDay } from './commits';
 import { sessionForBranch } from './linkage';

@@ -11,7 +11,7 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
-import { LoaderOrbit, LoaderPane } from '../../ui/Loader';
+import { Orbit, LoaderPane } from '../../ui/Loaders';
 import { openOnGithub, openSession, startSessionAtCommit } from './actions';
 import { commitAuthorLabel, commitChecksChip, commitTimeLabel, otherCommitFiles } from './commits';
 import { sessionForBranch } from './linkage';
@@ -221,7 +221,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
               {detail.checkRuns.map((run) => (
                 <div className="pull-kv" key={run.name}>
                   {run.state === 'pending' ? (
-                    <LoaderOrbit size={14} title={`${run.name} running`} />
+                    <Orbit size={14} label={`${run.name} running`} />
                   ) : (
                     <Icon name={run.state === 'failed' ? 'x' : 'check'} size={12} />
                   )}

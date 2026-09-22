@@ -8,7 +8,7 @@ import { useStore } from '../../lib/store';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { HintBar } from '../../ui/HintBar';
 import { Icon } from '../../ui/Icon';
-import { LoaderPane } from '../../ui/Loader';
+import { LoaderPane } from '../../ui/Loaders';
 import { consumePendingPull } from './github-tab-state';
 import { sessionForBranch } from './linkage';
 import { PullDetail } from './PullDetail';

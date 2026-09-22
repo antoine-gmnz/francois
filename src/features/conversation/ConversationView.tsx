@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { isBusyStatus } from '../../../contract/fleet-board';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { Stitch } from '../../ui/Loaders';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { hasPendingQuestionBlock } from '../questions/question-card';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
@@ -13,13 +14,13 @@ import EarlierBlocksRow from './EarlierBlocksRow';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
 import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
+import TranscriptSkeleton from './TranscriptSkeleton';
 import Turn from './Turn';
 import UsageLimitBanner from './UsageLimitBanner';
 import { useConversationTranscript } from './useConversationTranscript';
 import WelcomeBlock from './WelcomeBlock';
 import WorktreeNotice from './WorktreeNotice';
 import { sessionIsRetired } from '../../lib/runtimeCapability';
-import { LoaderPane } from '../../ui/Loader';
 
 // transcript-perf: this component now owns ONLY the transcript's own state
 // (the reducer, hydration, the worktree/resume/limit banners) plus the
@@ -165,6 +166,15 @@ export default function ConversationView({
       {/* plan usage-limit notice — the session stays live behind it */}
       {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}
 
+      {/* session-switch-loader FR-7: the ONLY motion in the pane besides the
+          composer caret — mounts/unmounts with the skeleton below (same gate,
+          same suppression). Indeterminate: no aria-valuenow. */}
+      {showSkeleton && (
+        <div className="conv-hydrating-bar" role="progressbar" aria-label="restoring transcript">
+          <Stitch />
+        </div>
+      )}
+
       {/* transcript */}
       <div className="conv-transcript-wrap">
         <div
@@ -181,13 +191,11 @@ export default function ConversationView({
               <span className="conv-error-text">{hydrationError}</span>
             </Centered>
           ) : showSkeleton ? (
-            // Figma "33 · Loaders" LoaderPane: the transcript has nothing to
-            // show yet — ordered after the error branch and before the
-            // welcome branch, so a session that later resolves EMPTY still
-            // shows the welcome header, not a frozen loader. `delay={0}`:
-            // `showSkeleton` already carries useConversationTranscript's own
-            // 140ms gate, so this would otherwise double the wait.
-            <LoaderPane label="Opening session…" delay={0} />
+            // session-switch-loader FR-1: the third branch — ordered after the
+            // error branch and before the welcome branch (FR-1's literal
+            // ordering), so a session that later resolves EMPTY still shows
+            // the welcome header, not a frozen skeleton.
+            <TranscriptSkeleton />
           ) : hydrated && state.blocks.length === 0 ? (
             // design 7a: the framed welcome block stands in for the transcript
             // until the first turn — see WelcomeBlock for what it states.

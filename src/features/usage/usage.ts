@@ -27,7 +27,7 @@ export const USAGE_ERROR = 'var(--error)';
 
 /** Everything one meter chip needs to render. Order/labels are never touched (FR-23). */
 export interface MeterChipView {
-  /** Verbatim UsageMeter.label. */
+  /** Verbatim UsageMeter.label (the app bar renders it through shortMeterLabel). */
   label: string;
   /** 0–100, clamped for the fill width only (§7 #11). */
   fillPercent: number;
@@ -42,12 +42,8 @@ export interface MeterChipView {
 /** What the bar shows for one snapshot. Pure — `now` is passed in, never read here. */
 export interface UsageBarView {
   chips: MeterChipView[];
-  /** Loading WITH data → the old numbers stay put; the container gets a
-   *  `LoaderStitch` hairline instead of dimming (Figma "33 · Loaders"). */
-  refreshing: boolean;
-  /** The very first probe, before any meter has ever arrived → a `LoaderCaret`
-   *  reading "reading usage" takes the meters' place. */
-  loadingEmpty: boolean;
+  /** Loading WITH data → the meter region dims to 0.45 (FR-25). No spinner, no motion. */
+  dimmed: boolean;
   /** No meters and no error → the `usage —` placeholder (§8). */
   empty: boolean;
   /** status === 'error'; `compact` when stale meters survive and must stay readable (FR-26). */
@@ -151,6 +147,19 @@ export function formatCountdown(ms: number): string {
 }
 
 /**
+ * FR-30 wording for ONE meter: `resets in 4h 12m`, degrading to the verbatim
+ * `resetsAt` text (`resets soon`) when it cannot be parsed. Shared by the
+ * trailing slot's session-only reading (sessionResetLabel) and the popover's
+ * per-meter row (every meter, not just the session one).
+ */
+export function meterResetLine(meter: UsageMeter, now: number): string {
+  const at = parseResetAt(meter.resetsAt, now);
+  if (at === null) return `resets ${meter.resetsAt}`;
+  const countdown = formatCountdown(at - now);
+  return countdown === 'now' ? 'resets now' : `resets in ${countdown}`;
+}
+
+/**
  * FR-30: the SESSION meter's reset, since that is the limit that actually gates
  * the next turn. Matches the first label containing 'session' and falls back to
  * the first meter, so a renamed or single-meter plan still reads sensibly.
@@ -159,10 +168,22 @@ export function formatCountdown(ms: number): string {
 export function sessionResetLabel(meters: UsageMeter[], now: number): string | null {
   const meter = meters.find((m) => /session/i.test(m.label)) ?? meters[0];
   if (!meter) return null;
-  const at = parseResetAt(meter.resetsAt, now);
-  if (at === null) return `resets ${meter.resetsAt}`;
-  const countdown = formatCountdown(at - now);
-  return countdown === 'now' ? 'resets now' : `resets in ${countdown}`;
+  return meterResetLine(meter, now);
+}
+
+/**
+ * The app bar's name for a meter. The CLI's wording ("Current week (all models)",
+ * "Current week (Sonnet only)") made Claude's row of meters wider than the rest of
+ * the bar, so the chip drops the "Current" prefix and keeps only the model a
+ * week-scoped meter is limited to. Anything unrecognised passes through; the
+ * verbatim label stays in the chip's tooltip.
+ */
+export function shortMeterLabel(label: string): string {
+  const m = /^current\s+(session|week)\b\s*(?:\((.+?)\))?\s*$/i.exec(label.trim());
+  if (!m) return label;
+  const scope = m[2]?.replace(/\s+only$/i, '').trim();
+  if (scope && !/^all models$/i.test(scope)) return scope;
+  return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
 }
 
 export function meterChipView(meter: UsageMeter): MeterChipView {
@@ -192,8 +213,7 @@ export function usageBarView(snapshot: UsageSnapshot, now: number, accountLabel?
   const parts = [snapshot.fetchedAt === null ? null : freshness, reset].filter(Boolean);
   return {
     chips,
-    refreshing: snapshot.status === 'loading' && chips.length > 0,
-    loadingEmpty: snapshot.status === 'loading' && chips.length === 0,
+    dimmed: snapshot.status === 'loading' && chips.length > 0,
     empty: !isError && chips.length === 0,
     error: isError ? { compact: chips.length > 0, message: snapshot.error?.message ?? 'usage unavailable' } : null,
     freshness,
@@ -207,6 +227,27 @@ export function usageBarView(snapshot: UsageSnapshot, now: number, accountLabel?
       .filter(Boolean)
       .join(' · '),
   };
+}
+
+/**
+ * The app-bar icon button's `title` — a compact one-line summary standing in
+ * for the meters the icon replaces. A full error (no stale data at all) is the
+ * error message itself; otherwise every chip, short-labelled, in core order.
+ */
+export function usageIconSummary(view: UsageBarView): string {
+  if (view.error && !view.error.compact) return view.error.message;
+  if (view.empty) return 'Plan usage — no usage data yet';
+  const parts = view.chips.map((c) => `${shortMeterLabel(c.label)} ${c.percentText}`);
+  return `Plan usage · ${parts.join(' · ')}`;
+}
+
+/**
+ * The icon's signal-without-text state (danger tint + dot): true once any
+ * meter is at/over the FR-24 threshold, or the snapshot is a full error with
+ * nothing to show in its place — both read as "something needs a look".
+ */
+export function usageIconAttention(view: UsageBarView): boolean {
+  return view.chips.some((c) => c.color === USAGE_ERROR) || (view.error !== null && !view.error.compact);
 }
 
 /**

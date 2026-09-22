@@ -10,7 +10,7 @@
 // a <pre>, never as HTML and never as markdown (FR-10).
 
 import { useEffect, useRef, useState } from 'react';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';

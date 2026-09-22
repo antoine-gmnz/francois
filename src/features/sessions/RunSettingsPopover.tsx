@@ -24,7 +24,7 @@ import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { useStore } from '../../lib/store';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import { Radio } from '../../ui/Radio';
 import { Tab, TabGroup } from '../../ui/Tab';
 import { effortLevels } from './run-chip';

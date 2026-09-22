@@ -21,7 +21,7 @@ import { permissionActions, writesRule } from '../../lib/permission-actions';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
 import { tabClassName } from '../../ui/Tab';

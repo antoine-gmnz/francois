@@ -11,7 +11,7 @@
 
 import type { ColumnDef, TableRow } from '../../../contract/extensions';
 import { ListRow } from '../../ui/ListRow';
-import { LoaderCaret } from '../../ui/Loader';
+import { LoaderCaret } from '../../ui/Loaders';
 import {
   LOAD_MORE_COPY,
   PAGE_CAP_NOTICE,
