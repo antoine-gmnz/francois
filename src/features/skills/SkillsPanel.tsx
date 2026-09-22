@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import type { SessionStatus, SkillInfo } from '../../../contract/common';
+import type { SkillInfo } from '../../../contract/common';
 import { skillsInstall, skillsRun } from '../../lib/api';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
-import { sessionCapability } from '../../lib/runtimeCapability';
+import { sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { HintBar } from '../../ui/HintBar';
 import { Modal, ModalHeader } from '../../ui/Modal';
 import { PanelHeader } from '../../ui/PanelHeader';
 import { isSkillRunnable } from './skills-loaded';
-import { buildSkillsRunRequest, piSkillDelivery } from './skills-run';
+import { buildSkillsRunRequest } from './skills-run';
+import './skills.css';
 import { SkillsListBody } from './SkillsListBody';
 import { useSkillsFeed } from './useSkillsFeed';
 import { useSkillsKeyboard } from './useSkillsKeyboard';
-import './skills.css';
 
 // design 7a: a MAIN TAB, never a collapsible right-column card.
 export default function SkillsPanel({ sessionId }: { sessionId: string | null }) {
@@ -31,9 +31,7 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
   // regardless of whether the installed set is visible/injected.
   const installCapability = sessionCapability(meta, 'skillsInstall');
 
-  // pr-142 §6: carries `invocation` (not just `name`) so RunModal sends the
-  // LISTED entry's own exact invocation — never rebuilt from the derived name.
-  const [runModal, setRunModal] = useState<Pick<SkillInfo, 'name' | 'invocation'> | null>(null);
+  const [runModal, setRunModal] = useState<Pick<SkillInfo, 'name'> | null>(null);
   const [installModal, setInstallModal] = useState<{ name: string; description: string; pluginId?: string } | null>(null);
   const modalOpen = runModal !== null || installModal !== null;
 
@@ -52,8 +50,8 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
 
   const activate = (row: SkillInfo) => {
     // pi-skills-capabilities FR-1: `loaded: false` is visible, never runnable.
-    if (!isSkillRunnable(row)) return;
-    if (row.installed) setRunModal({ name: row.name, invocation: row.invocation });
+    if (!capability.available || !isSkillRunnable(row)) return;
+    if (row.installed) setRunModal({ name: row.name });
     else if (installCapability.available)
       setInstallModal({ name: row.name, description: row.description, pluginId: row.pluginId });
     // else: install is gated off for this session's runtime (FR-26) — the
@@ -94,15 +92,12 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
             setSelected(i);
             activate(skill);
           }}
-          resourcePolicy={meta?.resourcePolicy}
       />
 
       {runModal && sessionId && (
         <RunModal
           sessionId={sessionId}
           name={runModal.name}
-          invocation={runModal.invocation}
-          status={meta?.status ?? 'idle'}
           onRefetch={() => refetch(sessionId)}
           onClose={() => setRunModal(null)}
         />
@@ -123,8 +118,6 @@ export default function SkillsPanel({ sessionId }: { sessionId: string | null })
 function RunModal({
   sessionId,
   name,
-  invocation,
-  status,
   onRefetch,
   onClose,
 }: {
@@ -132,9 +125,7 @@ function RunModal({
   name: string;
   /** pr-142 §6: the LISTED entry's own invocation, sent verbatim — undefined
    *  for every non-Pi entry, unchanged from before this fix. */
-  invocation: string | undefined;
   /** pi-skills-capabilities §5: idle/busy decides the delivery mode a Pi run needs. */
-  status: SessionStatus;
   /** pi-skills-capabilities FR-2: a RUNTIME_UNSUPPORTED run (the command vanished
    *  on reconnect) refreshes the listing — `skills.changed` also does this, but
    *  the run's OWN failure must not wait for that event to arrive. */
@@ -151,17 +142,14 @@ function RunModal({
   }, []);
 
   const run = async () => {
-    if (pending) return;
+    if (pending || sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sessionId))) return;
     setPending(true);
     setError(null);
     // pi-skills-capabilities §5: every caller mints its own clientMessageId and
     // delivery — ignored by every runtime but Pi, so sending them unconditionally
     // is safe and keeps this the ONLY call for the run (never also session_submit).
     const res = await skillsRun(
-      buildSkillsRunRequest(sessionId, { name, invocation }, args, {
-        clientMessageId: crypto.randomUUID(),
-        delivery: piSkillDelivery(status),
-      }),
+      buildSkillsRunRequest(sessionId, { name }, args),
     );
     setPending(false);
     if (res.ok) {
@@ -249,7 +237,7 @@ function InstallModal({
   const [error, setError] = useState<string | null>(null);
 
   const confirm = async (c: 'install' | 'cancel' = choice) => {
-    if (pending) return;
+    if (pending || sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sessionId))) return;
     if (c === 'cancel') {
       onClose();
       return;
@@ -264,7 +252,7 @@ function InstallModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (pending) return;
+      if (pending || sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sessionId))) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         onClose();

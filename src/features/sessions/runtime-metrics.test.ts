@@ -1,15 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { RuntimeMetrics, SessionMeta } from '../../../contract/common';
 import {
-  UNKNOWN_METRIC,
-  contextReadout,
-  costReadout,
-  formatMetricTokens,
-  formatUsd,
-  modelSwitchUnavailableReason,
-  piModelSwitchBlockedReason,
-  submitModelSwitch,
+    UNKNOWN_METRIC,
+    contextReadout,
+    costReadout,
+    formatMetricTokens,
+    formatUsd,
+    modelSwitchUnavailableReason
 } from './runtime-metrics';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
+import { CAPABILITY_INVALID } from '../../lib/runtimeCapability';
 
 function metrics(over: Partial<RuntimeMetrics> = {}): RuntimeMetrics {
   return {
@@ -124,68 +124,19 @@ describe('modelSwitchUnavailableReason (FR-5)', () => {
   it('is null once the core reports the session CAN switch', () => {
     // Pi's static fallback is fully disabled until it connects (multi-provider-seam) —
     // a live snapshot saying otherwise is what turns the picker on.
-    const s = session({ effectiveCapabilities: { modelSwitching: { available: true } } as never });
+    const s = session({ agentRuntime: 'claude-code', effectiveCapabilities: { ...runtimeCapabilities('claude-code'), modelSwitching: { available: true } } });
     expect(modelSwitchUnavailableReason(s)).toBeNull();
   });
 
   it('surfaces the core-supplied reason when one narrows the capability', () => {
-    const s = session({ effectiveCapabilities: { modelSwitching: { available: false, reason: 'Compaction is running.' } } as never });
+    const s = session({ agentRuntime: 'claude-code', effectiveCapabilities: { ...runtimeCapabilities('claude-code'), modelSwitching: { available: false, reason: 'Compaction is running.' } } });
     expect(modelSwitchUnavailableReason(s)).toBe('Compaction is running.');
   });
 
-  it('falls back to the spec copy before any live snapshot has landed', () => {
-    // No effectiveCapabilities at all — Pi's baseline ("Runtime is not connected.")
-    // still carries a reason, so this exercises the ?? fallback via a capability
-    // state that narrows availability without saying why.
-    const s = session({ effectiveCapabilities: { modelSwitching: { available: false } } as never });
-    expect(modelSwitchUnavailableReason(s)).toBe('Available when this run finishes.');
-  });
-});
-
-describe('piModelSwitchBlockedReason (FR-5, the run chip live switch)', () => {
-  it('blocks on a busy session status even when the capability table has not caught up', () => {
-    const s = session({ status: 'running', effectiveCapabilities: { modelSwitching: { available: true } } as never });
-    expect(piModelSwitchBlockedReason(s)).toBe('Available when this run finishes.');
-  });
-
-  it('falls through to the core-reported reason once the session is settled', () => {
-    const s = session({
-      status: 'idle',
-      effectiveCapabilities: { modelSwitching: { available: false, reason: 'Compaction is running.' } } as never,
-    });
-    expect(piModelSwitchBlockedReason(s)).toBe('Compaction is running.');
-  });
-
-  it('is null when idle and the capability is available', () => {
-    const s = session({ status: 'idle', effectiveCapabilities: { modelSwitching: { available: true } } as never });
-    expect(piModelSwitchBlockedReason(s)).toBeNull();
-  });
-});
-
-describe('submitModelSwitch (PiRunModelSwitch, unmount-guard extraction)', () => {
-  function harness() {
-    return { setSwitching: vi.fn(), setError: vi.fn(), schedule: vi.fn() };
-  }
-
-  it('marks switching, clears any stale error, then clears switching again on success', async () => {
-    const h = harness();
-    const res = await submitModelSwitch({ call: () => Promise.resolve({ ok: true, data: {} as never }), ...h });
-    expect(h.setSwitching).toHaveBeenNthCalledWith(1, true);
-    expect(h.setError).toHaveBeenNthCalledWith(1, null);
-    expect(h.setSwitching).toHaveBeenNthCalledWith(2, false);
-    expect(h.setError).toHaveBeenCalledTimes(1); // no failure to show
-    expect(h.schedule).not.toHaveBeenCalled();
-    expect(res).toEqual({ ok: true, data: {} });
-  });
-
-  it('clears switching AND surfaces the message on a domain failure, scheduling its auto-clear', async () => {
-    const h = harness();
-    await submitModelSwitch({
-      call: () => Promise.resolve({ ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'Pi is not connected' } }),
-      ...h,
-    });
-    expect(h.setSwitching).toHaveBeenLastCalledWith(false);
-    expect(h.setError).toHaveBeenLastCalledWith('Pi is not connected');
-    expect(h.schedule).toHaveBeenCalledWith(expect.any(Function), 4000);
+  it('reads an incomplete snapshot as an invalid report, never as switchable', () => {
+    // process-native-capabilities FR-6: the core guard rejects a snapshot that
+    // lacks a key or a reason; the picker agrees rather than guessing.
+    const s = session({ agentRuntime: 'claude-code', effectiveCapabilities: { modelSwitching: { available: false } } as never });
+    expect(modelSwitchUnavailableReason(s)).toBe(CAPABILITY_INVALID);
   });
 });

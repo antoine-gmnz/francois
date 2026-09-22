@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AppError, SkillInfo } from '../../../contract/common';
 import { onSkillsEvent, skillsList } from '../../lib/api';
+import { useStore } from '../../lib/store';
 import { setPaletteSkills } from '../palette/paletteData';
+import { sessionIsRetired } from '../../lib/runtimeCapability';
 
 export interface SkillsFeed {
   skills: SkillInfo[];
@@ -19,6 +21,9 @@ export function useSkillsFeed(sessionId: string | null): SkillsFeed {
 
   const refetch = useMemo(
     () => (sid: string, mountedRef?: { current: boolean }) => {
+      if (sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sid))) {
+        setSkills([]); setStatus('loaded'); setListError(null); return;
+      }
       setStatus('loading');
       void skillsList(sid).then((res) => {
         if (mountedRef && !mountedRef.current) return;

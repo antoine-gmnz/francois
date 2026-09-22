@@ -37,6 +37,12 @@ fn is_false(b: &bool) -> bool {
 /// when absent (FR-7); everything renders verbatim.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SessionQuestion {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) id: Option<String>,
+    #[serde(rename = "isOther", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) is_other: Option<bool>,
+    #[serde(rename = "isSecret", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) is_secret: Option<bool>,
     #[serde(default)]
     pub(crate) question: String,
     #[serde(default)]

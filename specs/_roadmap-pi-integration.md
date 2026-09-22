@@ -1,5 +1,11 @@
 # Pi integration — task map and specification review
 
+> **Paused / direction superseded — 2026-09-21.** The user requested a Pi rollback
+> and a native Claude/Codex process architecture, with task planning only for now.
+> See [_roadmap-process-runtimes](_roadmap-process-runtimes.md). The historical
+> decisions and frozen specs below remain as evidence; this note does not mean
+> the rollback has been implemented or authorize further Pi implementation.
+
 Created 2026-09-18 from `francois-pi-integration-spec-brief.md` supplied by the user.
 Scope: François product only. This is a specification programme, not implementation.
 

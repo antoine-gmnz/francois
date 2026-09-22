@@ -82,78 +82,6 @@ pub fn merge_commands(
     out
 }
 
-// ---------- pi-skills-capabilities: Pi routing ----------
-//
-// A Pi session's slash menu is NEVER the Claude-shaped merge above: it is
-// the runtime's own loaded commands (FR-1's `get_commands`, via
-// `RuntimeSessionControl::list_commands`), augmented with exactly the three
-// François-owned actions this build actually implements for Pi — never a
-// TUI-only command such as `/login` advertised as if it were an RPC verb.
-
-/// The François-owned actions implemented for a Pi session (model switching,
-/// manual compaction, clearing the queue) — everything else runs through the
-/// runtime's own commands.
-fn pi_owned_actions() -> [SlashCommandInfo; 3] {
-    [
-        SlashCommandInfo {
-            name: "model".into(),
-            description: "Switch the model for this session".into(),
-            source: "builtin",
-            scope: None,
-            invocation: None,
-        },
-        SlashCommandInfo {
-            name: "compact".into(),
-            description: "Compact this conversation".into(),
-            source: "builtin",
-            scope: None,
-            invocation: None,
-        },
-        SlashCommandInfo {
-            name: "clear-queue".into(),
-            description: "Clear this session's queued messages".into(),
-            source: "builtin",
-            scope: None,
-            invocation: None,
-        },
-    ]
-}
-
-/// FR-2 / contract §5: the runtime's own commands (in their reported order,
-/// exact `invocation` spelling preserved), augmented — never replaced — with
-/// the François-owned actions above.
-///
-/// The three owned names are RESERVED (pr-142 §6): a runtime command that
-/// derives one of them is dropped, and the action keeps the name. This is the
-/// `builtin > skill` precedence `merge_commands` already applies to the Claude
-/// registry, and here it is load-bearing rather than cosmetic — `/compact` in
-/// the menu has to reach `session_compact_pi`, whereas a runtime entry of that
-/// name would submit the literal text as an ordinary turn. Everything else
-/// dedups by bare name, first occurrence wins, in the runtime's own order.
-pub fn merge_pi_commands(runtime: &[adapter::RuntimeCommandInfo]) -> Vec<SlashCommandInfo> {
-    let actions = pi_owned_actions();
-    // Seeding `seen` with the reserved names is what drops a shadowing
-    // runtime entry; the actions themselves are three distinct names by
-    // construction, so they need no dedup pass of their own.
-    let mut seen: std::collections::HashSet<String> =
-        actions.iter().map(|a| a.name.clone()).collect();
-    let mut out = Vec::new();
-    for c in runtime {
-        let name = adapter::pi::skill_name_from_invocation(&c.invocation);
-        if seen.insert(name.clone()) {
-            out.push(SlashCommandInfo {
-                name,
-                description: c.description.clone(),
-                source: "skill",
-                scope: Some("path".into()),
-                invocation: Some(c.invocation.clone()),
-            });
-        }
-    }
-    out.extend(actions);
-    out
-}
-
 /// FR-2: an init event's slash_commands, normalized to bare names (a leading
 /// '/' is stripped — FR-3 stores without it; non-strings skipped). None when
 /// the array is absent (→ no change to the capture).
@@ -194,16 +122,7 @@ pub fn session_list_commands(
     // commands plus François-owned actions only — never the Claude-shaped
     // merge below.
     if agent_runtime == AgentRuntime::Pi {
-        let Some(connection) = engine.runtime_connection_for(&session_id) else {
-            return err(
-                ErrorCode::RuntimeExited,
-                "this session has no live Pi connection",
-            );
-        };
-        return match connection.list_commands() {
-            Ok(commands) => ok(merge_pi_commands(&commands)),
-            Err(error) => IpcResult::Err { ok: false, error },
-        };
+        return ok(Vec::new());
     }
     if agent_runtime == AgentRuntime::Codex {
         return ok(merge_commands(
@@ -331,68 +250,5 @@ mod tests {
         ));
         assert!(capture_cli_commands(&mut s, vec!["compact".into()]));
         assert_eq!(s.cli_commands, vec!["compact".to_string()]);
-    }
-
-    // ---------- pi-skills-capabilities ----------
-
-    fn pi_command(invocation: &str, description: &str) -> adapter::RuntimeCommandInfo {
-        adapter::RuntimeCommandInfo {
-            invocation: invocation.into(),
-            description: description.into(),
-            source: adapter::RuntimeCommandSource::Skill,
-            source_path: None,
-            loaded: true,
-            unavailable_reason: None,
-        }
-    }
-
-    #[test]
-    fn merge_pi_commands_lists_the_runtime_commands_first_with_invocation_preserved() {
-        let runtime = vec![pi_command("/skill:review", "review a diff")];
-        let merged = merge_pi_commands(&runtime);
-        assert_eq!(merged[0].name, "review");
-        assert_eq!(merged[0].invocation.as_deref(), Some("/skill:review"));
-        assert_eq!(merged[0].source, "skill");
-        assert_eq!(merged[0].scope.as_deref(), Some("path"));
-    }
-
-    #[test]
-    fn merge_pi_commands_augments_with_exactly_the_three_owned_actions() {
-        let merged = merge_pi_commands(&[]);
-        let names: Vec<&str> = merged.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, vec!["model", "compact", "clear-queue"]);
-        for c in &merged {
-            assert_eq!(c.source, "builtin");
-            assert_eq!(c.invocation, None);
-        }
-    }
-
-    #[test]
-    fn merge_pi_commands_never_advertises_a_tui_only_login_command() {
-        let merged = merge_pi_commands(&[pi_command("/login", "authenticate")]);
-        // The runtime NAMING a command does not, on its own, make it one of
-        // the three implemented actions — but this test's real point is that
-        // nothing here invents a `/login` entry when the runtime list is
-        // empty; a runtime-reported one is passed through verbatim, since
-        // `get_commands` "omits TUI-only commands" per the audit (FR-1) and
-        // this function trusts that boundary rather than re-filtering it.
-        assert!(merged.iter().any(|c| c.name == "login"));
-        let bare = merge_pi_commands(&[]);
-        assert!(!bare.iter().any(|c| c.name == "login"));
-    }
-
-    /// pr-142 §6: a runtime-reported command may NOT shadow one of the three
-    /// François-owned actions. `/compact` in the menu has to run
-    /// `session_compact_pi`; a runtime entry of the same bare name would
-    /// instead submit the literal text as a turn. Same `builtin > skill`
-    /// precedence `merge_commands` applies to the Claude registry.
-    #[test]
-    fn merge_pi_commands_never_lets_a_runtime_command_shadow_an_owned_action() {
-        let runtime = vec![pi_command("/compact", "runtime-owned compaction")];
-        let merged = merge_pi_commands(&runtime);
-        let compact_entries: Vec<_> = merged.iter().filter(|c| c.name == "compact").collect();
-        assert_eq!(compact_entries.len(), 1);
-        assert_eq!(compact_entries[0].source, "builtin");
-        assert_eq!(compact_entries[0].invocation, None);
     }
 }

@@ -1,3 +1,4 @@
+import { requestReplyAvailable, requestReplyPending, submitRequestReply } from '../../lib/request-replies';
 // permission-guardrails — approval card renderer for the SESSION transcript
 // (spec §8), under design 9b. Compact by design: a legend row, the CODE SURFACE
 // (what is being approved, set as code rather than stated as prose), and the
@@ -8,31 +9,31 @@
 // is pure in ./permission-card (unit-tested); this file is DOM assembly +
 // card-local UI state (chosen tier, disclosure, in-flight flag, inline error).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  PermissionConversationBlock,
-  PermissionDecision,
-  PermissionTier,
+    PermissionConversationBlock,
+    PermissionDecision,
+    PermissionTier,
 } from '../../../contract/permission-guardrails';
 import { permissionsDecide } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
-import { askCodeSurface, cardLegend } from './permission-code';
+import { permissionActions, writesRule } from '../../lib/permission-actions';
 import CodeSurfaceView from './CodeSurface';
 import {
-  cardClass,
-  hasDetail,
-  PERMISSION_ACTIONS,
-  relativeAge,
-  ruleSentence,
-  stateNote,
-  submitDecision,
-  tierControlDimmed,
-  tierLabel,
-  writtenRuleSentence,
+    cardClass,
+    hasDetail,
+    relativeAge,
+    ruleSentence,
+    stateNote,
+    submitDecision,
+    tierControlDimmed,
+    tierLabel,
+    writtenRuleSentence,
 } from './permission-card';
+import { askCodeSurface, cardLegend } from './permission-code';
 import './permissions.css';
 
 const TIERS: PermissionTier[] = ['local', 'global'];
@@ -58,7 +59,7 @@ export default function PermissionCard({
   // already resolved. Ref, so the async submit sees the CURRENT block state.
   const pending = block.state === 'pending';
   const resolvedRef = useRef(!pending);
-  resolvedRef.current = !pending;
+  resolvedRef.current = !pending || !requestReplyPending(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId);
 
   // §8.2: the transcript carries no timestamp, so the age is measured from the
   // card's first render and only claimed while the ask is still waiting.
@@ -67,7 +68,11 @@ export default function PermissionCard({
   const rootRef = useRef<HTMLDivElement>(null);
   const now = useElapsedClock(pending, 30_000);
 
-  const interactive = pending && !inFlight;
+  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId));
+  const writable = requestReplyPending(meta, block.blockId);
+  const actions = useMemo(() => permissionActions(block.ask.allowedDecisions), [block.ask.allowedDecisions]);
+  const offersRules = actions.some(a => writesRule(a.decision));
+  const interactive = writable && pending && !inFlight && actions.length > 0;
   const note = stateNote(block.state);
   const detail = hasDetail(block.ask, pending);
   // 9b: the ask, parsed into the surface that sets it — a tokenized command, a
@@ -75,18 +80,18 @@ export default function PermissionCard({
   // while the card lives, so it is derived once per block rather than per key.
   const surface = useMemo(() => askCodeSurface(block.ask), [block.ask]);
 
-  const decide = (decision: PermissionDecision) => {
-    if (!interactive) return;
+  const decide = useCallback((decision: PermissionDecision) => {
+    if (!interactive || !actions.some(a => a.decision === decision) || !requestReplyAvailable(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId)) return;
     void submitDecision({
       decision,
       tier,
-      decide: (d, t) => permissionsDecide(sessionId, block.blockId, d, t),
+      decide: (d, t) => submitRequestReply(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId, () => permissionsDecide(sessionId, block.blockId, d, t)),
       setInFlight,
       setError,
       isResolved: () => resolvedRef.current,
       schedule,
     });
-  };
+  }, [interactive, actions, sessionId, block.blockId, tier, setError, schedule]);
 
   // design 7a: the numbered rows are answerable from the keyboard, exactly as
   // the mock's composer promises. Capture phase + stopPropagation so `1`–`4`
@@ -98,7 +103,7 @@ export default function PermissionCard({
     if (!interactive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const idx = PERMISSION_ACTIONS.findIndex((_, i) => String(i + 1) === e.key);
+      const idx = actions.findIndex((_, i) => String(i + 1) === e.key);
       if (idx === -1) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
@@ -114,12 +119,12 @@ export default function PermissionCard({
       if (!rootRef.current || rootRef.current.offsetParent === null) return;
       e.preventDefault();
       e.stopPropagation();
-      decide(PERMISSION_ACTIONS[idx].decision);
+      decide(actions[idx].decision);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
     // `decide` closes over the CURRENT tier/interactive, so it belongs in the deps.
-  }, [interactive, sessionId, tier]);
+  }, [interactive, sessionId, actions, decide]);
 
   return (
     <div ref={rootRef} className={cardClass(block.state, inFlight)}>
@@ -157,7 +162,7 @@ export default function PermissionCard({
           {/* FR-20: the rule an "always" decision WOULD write — visible before
               the user commits to it. The tier that scopes it sits in the action
               row, where it stays in view whether or not this is expanded. */}
-          {pending && (
+          {pending && offersRules && (
             <div className="pcard__rule">
               <span className="pcard__rule-label">writes rule:</span>
               <span className="pcard__rule-text">{ruleSentence(block.ask, tier)}</span>
@@ -179,14 +184,15 @@ export default function PermissionCard({
               answer without hunting for a target. Order is unchanged, so the
               number of each decision is stable across every ask. */}
           <div className="pcard__choices">
-            {PERMISSION_ACTIONS.map((a, i) => (
+            {actions.map((a, i) => (
               <div
                 key={a.decision}
                 className={i === 0 ? 'pcard__choice pcard__choice--lead' : 'pcard__choice'}
                 title={a.label}
-                onClick={() => decide(a.decision)}
-                onMouseEnter={() => setHovered(a.decision)}
-                onMouseLeave={() => setHovered(null)}
+                aria-disabled={!interactive}
+                onClick={interactive ? () => decide(a.decision) : undefined}
+                onMouseEnter={interactive ? () => setHovered(a.decision) : undefined}
+                onMouseLeave={interactive ? () => setHovered(null) : undefined}
               >
                 <span className={`pcard__choice-key pcard__choice-key--${a.variant}`}>{i + 1}</span>
                 <span className="pcard__choice-label">{a.label}</span>
@@ -197,13 +203,14 @@ export default function PermissionCard({
           {/* The tier only scopes the two `*Always` lines, so it sits under them
               rather than beside a specific one (§8.6/8.7). */}
           <div className="pcard__actions">
-            <span className={'pcard__tiers' + (tierControlDimmed(hovered) ? ' pcard__tiers--inert' : '')}>
+            {offersRules && <span className={'pcard__tiers' + (tierControlDimmed(hovered) ? ' pcard__tiers--inert' : '')}>
               <span className="pcard__tiers-label">always applies to</span>
               {TIERS.map((t) => (
                 <button
                   type="button"
                   key={t}
                   className={'pcard__tier' + (t === tier ? ' pcard__tier--on' : '')}
+                  disabled={!interactive}
                   onClick={() => {
                     if (interactive) setTier(t);
                   }}
@@ -211,8 +218,9 @@ export default function PermissionCard({
                   {tierLabel(t)}
                 </button>
               ))}
-            </span>
-            <span className="pcard__hint">press 1–{PERMISSION_ACTIONS.length}, or click a line</span>
+            </span>}
+            {actions.length === 0 && <span className="pcard__hint">No reply choices are available.</span>}
+            {writable && actions.length > 0 && <span className="pcard__hint">press 1–{actions.length}, or click a line</span>}
           </div>
         </>
       )}

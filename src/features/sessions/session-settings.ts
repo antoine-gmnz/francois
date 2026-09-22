@@ -1,4 +1,4 @@
-import { sandboxSelectionCapability, sessionCapability } from '../../lib/runtimeCapability';
+import { sandboxSelectionCapability, sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
 // session-settings-sheet — the pure half of the sheet: the working draft, what
 // counts as "changed" against the session's current values (FR-14), the patch
 // Apply sends (FR-16), the foot's change count + timing sentence (FR-15), the
@@ -13,11 +13,11 @@ import { sandboxSelectionCapability, sessionCapability } from '../../lib/runtime
 // session's last-persisted ones.
 
 import type { AccountId, ClaudeRuntime, PermissionMode, ProjectDefaults, ProjectId, ResponseMode, SessionMeta } from '../../../contract/common';
-import { NEXT_TURN_KEYS, SETTING_LABELS, type SessionSettingsPatch } from '../../../contract/session-settings-sheet';
 import type { Account } from '../../../contract/multi-account';
 import type { ProjectMeta } from '../../../contract/projects';
 import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
+import { NEXT_TURN_KEYS, SETTING_LABELS, type SessionSettingsPatch } from '../../../contract/session-settings-sheet';
 import { wslUncToLinux } from '../../../contract/wsl-filesystem';
 import type { ChipOption } from '../../ui/ChipGroup';
 import { accountDisplayLabel, findAccount, middleTruncate } from '../accounts/accounts';
@@ -239,7 +239,7 @@ export const SET_PROJECT_DEFAULT_TITLE =
 
 /** The foot's second action needs somewhere to write to. */
 export function canSetProjectDefault(session: SessionMeta): boolean {
-  return typeof session.projectId === 'string' && session.projectId.length > 0;
+  return !sessionIsRetired(session) && typeof session.projectId === 'string' && session.projectId.length > 0;
 }
 
 /**
@@ -248,27 +248,19 @@ export function canSetProjectDefault(session: SessionMeta): boolean {
  * including unapplied edits — not from the session's last-persisted meta. An
  * absent effort DELETES the key rather than leaving the project's old level behind.
  *
- * pi-models-metrics FR-4: `session` is the live session this action reads
- * `runtimeModel` off (`draft.modelId` is the Pi picker's own composite
- * (accountId, providerId, modelId) key — never a real modelId, so it can never
- * be the value this writes for a Pi session). `runtimeModel`/`modelId` are
- * mutually exclusive on `ProjectDefaults`, so picking one always clears the other.
+ * Retired history cannot propagate settings. An explicit native selection clears
+ * the historical runtime model reference.
  */
 export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDraft, session?: SessionMeta): ProjectDefaults {
+  if (sessionIsRetired(session)) return current;
   const next: ProjectDefaults = {
     ...current,
     permissionMode: draft.permissionMode,
     responseMode: draft.responseMode,
     allowGit: draft.allowGit,
   };
-  if (session?.agentRuntime === 'pi') {
-    delete next.modelId;
-    if (session.runtimeModel) next.runtimeModel = session.runtimeModel;
-    else delete next.runtimeModel;
-  } else {
-    next.modelId = draft.modelId;
-    delete next.runtimeModel;
-  }
+  next.modelId = draft.modelId;
+  delete next.runtimeModel;
   if (draft.effort) next.effort = draft.effort;
   else delete next.effort;
   return next;
@@ -276,6 +268,7 @@ export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDra
 
 /** The same guards apply to field interaction and the atomic Apply payload. */
 export function settingCapability(session: SessionMeta, key: keyof SettingsDraft) {
+  if (sessionIsRetired(session)) return sessionCapability(session, 'modelSwitching');
   if (key === 'modelId' || key === 'effort') return sessionCapability(session, 'modelSwitching');
   if (key === 'allowGit') return sessionCapability(session, 'permissions');
   if (key === 'permissionMode') return sandboxSelectionCapability(session);

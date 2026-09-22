@@ -16,6 +16,7 @@
 //!   `-s` is sugar for, and the cwd comes from the spawned child's own working
 //!   directory rather than a flag.
 
+#[cfg(test)]
 use crate::session::adapter::codex::codex_program;
 
 /// FR-9: Codex's sandbox vocabulary. Mirrors `CodexSandbox` in
@@ -66,6 +67,7 @@ pub(super) fn sandbox_for(permission_mode: &str) -> Sandbox {
 /// positional prompt is given, and the caller writes them there — which keeps
 /// multi-line text, quotes and shell metacharacters out of argv entirely. Same
 /// reasoning `claude -p` with no positional prompt already follows.
+#[cfg(test)]
 pub(super) fn turn_args(
     model_id: &str,
     resume: Option<&str>,
@@ -117,6 +119,7 @@ pub(super) fn turn_args(
 /// The full invocation, program included. Split from `turn_args` so the argv
 /// tests do not have to know the program name, and so a future WSL/wrapper
 /// variant has one place to change — mirroring `claude_invocation`.
+#[cfg(test)]
 pub(super) fn codex_invocation(
     model_id: &str,
     resume: Option<&str>,

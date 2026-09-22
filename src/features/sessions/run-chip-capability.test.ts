@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 import { settingCapability } from './session-settings';
-const session = { agentRuntime: 'claude-code', effectiveCapabilities: { modelSwitching: { available: false, reason: 'Model is locked.' }, permissions: { available: false, reason: 'Git is locked.' } } } as SessionMeta;
+const session = { agentRuntime: 'claude-code', effectiveCapabilities: { ...runtimeCapabilities('claude-code'), modelSwitching: { available: false, reason: 'Model is locked.' }, permissions: { available: false, reason: 'Git is locked.' } } } as SessionMeta;
 describe('settings capability enforcement', () => {
   it('guards model and effort with the live capability', () => {
     expect(settingCapability(session, 'modelId')).toEqual({ available: false, reason: 'Model is locked.' });

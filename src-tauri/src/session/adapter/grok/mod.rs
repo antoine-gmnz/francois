@@ -79,6 +79,7 @@ impl TurnControl for GrokTurnHandle {
     fn interrupt(&self) {
         self.interrupted
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.kill();
     }
 
     fn kill(&self) {

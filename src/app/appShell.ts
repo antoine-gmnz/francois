@@ -7,7 +7,7 @@
 
 import type { CapabilityState } from '../../contract/common';
 import { displayWslCwd } from '../../contract/wsl-filesystem';
-import { agentIdFromTab, workflowIdFromTab } from '../features/agents/agent-tab';
+import { agentIdFromTab, workflowIdFromTab } from '../lib/agent-tab';
 import { extIdFromTab } from '../features/extensions/extensions';
 import type { LayoutRegime } from '../lib/layoutStore';
 import { abbreviate } from '../lib/path';

@@ -21,10 +21,11 @@
     "lint:deps": "eslint . --rule \"{'react-hooks/exhaustive-deps':'error'}\" --format stylish",
     "lint:rust": "cd src-tauri && cargo clippy --all-targets",
     "lint:conventions": "node scripts/quality/check.mjs",
+    "lint:boundaries": "vitest run --reporter=dot src/lib/frontend-boundaries.test.ts src/lib/pi-retirement.test.ts scripts/quality/native-boundary",
     "format": "cd src-tauri && cargo fmt",
     "format:check": "cd src-tauri && cargo fmt --check",
     "typecheck": "tsc --noEmit",
-    "quality": "npm run typecheck && npm run lint && npm run lint:conventions && npm run format:check && npm run lint:rust",
+    "quality": "npm run typecheck && npm run lint && npm run lint:conventions && npm run lint:boundaries && npm run format:check && npm run lint:rust",
     "quality:report": "node scripts/quality/report.mjs"
   },
   "dependencies": {

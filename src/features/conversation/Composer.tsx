@@ -1,16 +1,11 @@
 import type { RefObject } from 'react';
-import type { RuntimeQueueEntry, SessionStatus, SlashCommandInfo } from '../../../contract/common';
+import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus } from '../../../contract/fleet-board';
-import { PI_UNRESTRICTED_TOOLS_NOTICE } from '../../../contract/pi-skills-capabilities';
 import type { Attachment } from '../../../contract/session-attachments';
 import SlashMenu from '../commands/SlashMenu';
 import AttachmentChip from './AttachmentChip';
 import { composerErrorBanners } from './attachments';
-import DeliveryModeControl from './DeliveryModeControl';
-import type { DeliveryChoice } from './delivery-mode';
 import { firstLine, type PendingPrompt } from './pending-queue';
-import './pi-turn-controls.css';
-import QueueStrip from './QueueStrip';
 
 // The SESSION tab input bar: slash-menu popup (FR-5) anchored above it, the
 // transient send-error banner, the pending-queue strip (transcript-perf §6..8),
@@ -93,58 +88,6 @@ export interface ComposerProps {
   pending: readonly PendingPrompt[];
   /** A row's `✕` (FR-17/18). Inert on an unfocused pane (no control renders at all). */
   onRetractPending: (blockId: string, text: string) => void;
-
-  // ── pi-turn-controls: null for every non-Pi session (existing runtimes'
-  //    composer is otherwise byte-identical to before this feature). ────────
-  pi: PiComposerProps | null;
-}
-
-/** pi-turn-controls §5/§6/FR-1..FR-8 — everything ComposerPane derives for a
- *  Pi session's composer surface: delivery mode, the admissions ledger,
- *  Stop, and compaction/retry progress. Grouped into one prop so the plain
- *  (non-Pi) ComposerProps list above stays exactly as it was. */
-export interface PiComposerProps {
-  busy: boolean;
-  deliveryChoice: DeliveryChoice;
-  canSteer: boolean;
-  canFollowUp: boolean;
-  onChangeDelivery: (choice: DeliveryChoice) => void;
-  /** This session's visible ledger rows (pi-queue's useQueueEntries). */
-  queue: readonly RuntimeQueueEntry[];
-  /**
-   * FR-5 (amended): a local ('admitting') row's ✕, or a terminal row's
-   * "Discard" — both resolve to the SAME `session_unqueue` call, so this is
-   * one handler rather than two.
-   */
-  onUnqueue: (clientMessageId: string) => void;
-  onResend: (entry: RuntimeQueueEntry) => void;
-  onClearQueue: () => void;
-  /**
-   * frontend fix loop (double-Resend defect): clientMessageIds whose Resend
-   * or Discard is currently awaiting its round trip — QueueStrip disables
-   * BOTH actions for that row while its id is a member (a Discard racing a
-   * Resend of the same row is the same double-submit bug from the other
-   * side).
-   */
-  resendingIds: ReadonlySet<string>;
-  /** FR-6/FR-7: Stop stays visible (and disabled) until session_interrupt confirms. */
-  stopping: boolean;
-  onStop: () => void;
-  /** FR-8: null ⇒ no banner. */
-  compactionNotice: string | null;
-  compactionFailed: boolean;
-  onDismissCompaction: () => void;
-  /** FR-8: null ⇒ no banner. */
-  retryNotice: string | null;
-  /**
-   * pi-skills-capabilities FR-5: true after a send was refused with
-   * RUNTIME_POLICY_REQUIRED — the unrestricted-tools acknowledgment prompt
-   * replaces the plain send-error banner (the failed text is already restored
-   * to the composer by ComposerPane's ordinary failure path; this is only the
-   * "how do I unblock this" affordance). Never auto-acknowledged.
-   */
-  policyRequired: boolean;
-  onAcknowledgePolicy: () => void;
 }
 
 export default function Composer({
@@ -174,7 +117,6 @@ export default function Composer({
   onInertClick,
   pending,
   onRetractPending,
-  pi,
 }: ComposerProps) {
   const banners = composerErrorBanners(sendError, attachError);
   // One gate for every interactive part of the bar: while inert the pane does
@@ -205,46 +147,20 @@ export default function Composer({
             overlapping it). pi-turn-controls FR-8: compaction/retry progress
             share the same stacked slot — they are progress inside the current
             run, never a turn-finished notice. */}
-        {(banners.length > 0 || pi?.compactionNotice || pi?.retryNotice || pi?.policyRequired) && (
+        {banners.length > 0 && (
           <div className="composer-banners">
             {banners.map((line) => (
               <div key={line} className="send-error-banner">
                 {line}
               </div>
             ))}
-            {pi?.compactionNotice && (
-              <div className={pi.compactionFailed ? 'composer-progress-banner composer-progress-banner--error' : 'composer-progress-banner'}>
-                <span>{pi.compactionNotice}</span>
-                {pi.compactionFailed && (
-                  <button
-                    type="button"
-                    onClick={pi.onDismissCompaction}
-                    className="composer-progress-banner__dismiss"
-                    title="dismiss"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            )}
-            {pi?.retryNotice && <div className="composer-progress-banner">{pi.retryNotice}</div>}
+
+
             {/* pi-skills-capabilities FR-5: the retry prompt for a send refused
                 with RUNTIME_POLICY_REQUIRED — acknowledging never resends by
                 itself, it only clears the block; the text stayed in the
                 composer for the user's own Enter/Send. */}
-            {pi?.policyRequired && (
-              <div className="composer-progress-banner composer-progress-banner--attn">
-                <span>{PI_UNRESTRICTED_TOOLS_NOTICE}</span>
-                <button
-                  type="button"
-                  onClick={pi.onAcknowledgePolicy}
-                  className="composer-progress-banner__dismiss"
-                  title="acknowledge and retry"
-                >
-                  Acknowledge
-                </button>
-              </div>
-            )}
+
           </div>
         )}
         {/* transcript-perf design brief: the pending strip sits in the SAME
@@ -278,24 +194,8 @@ export default function Composer({
         )}
         {/* pi-turn-controls design brief: the Pi admissions ledger's own
             strip + "Steer now / Follow up" toggle, busy-only for the latter. */}
-        {pi && (
-          <QueueStrip
-            entries={pi.queue}
-            inert={inert}
-            onUnqueue={pi.onUnqueue}
-            onResend={pi.onResend}
-            onClearAll={pi.onClearQueue}
-            resendingIds={pi.resendingIds}
-          />
-        )}
-        {pi && pi.busy && !inert && (
-          <DeliveryModeControl
-            value={pi.deliveryChoice}
-            canSteer={pi.canSteer}
-            canFollowUp={pi.canFollowUp}
-            onChange={pi.onChangeDelivery}
-          />
-        )}
+
+
         {/* The click target that focuses an inert pane is the WHOLE bar, so the
             gesture is the same wherever in it you aim (the buttons inside are
             inert while it is, so none of them swallows the click). */}
@@ -351,16 +251,7 @@ export default function Composer({
           {/* pi-turn-controls FR-6/FR-7: persistent while busy — stays up
               (disabled, "Stopping…") until session_interrupt confirms the
               cancel, rather than optimistically vanishing. */}
-          {pi && pi.busy && !inert && (
-            <button
-              type="button"
-              onClick={pi.onStop}
-              disabled={pi.stopping}
-              className={pi.stopping ? 'composer-stop is-disabled' : 'composer-stop'}
-            >
-              {pi.stopping ? 'Stopping…' : 'Stop'}
-            </button>
-          )}
+
         </div>
         {/* session-attachments (design §1): chips for staged images, derived from
             the prompt text — never stored, so they cannot desync from it (FR-12).
@@ -390,11 +281,7 @@ export default function Composer({
           )}
           {/* pi-turn-controls: the one shortcut with no on-screen control —
               Alt+Enter always submits a follow-up, whatever the toggle reads. */}
-          {pi && pi.busy && (
-            <span>
-              <span className="composer-hint__key">⌥⏎</span> follow up
-            </span>
-          )}
+
           <span>
             <span className="composer-hint__key">@</span> for files
           </span>

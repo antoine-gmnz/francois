@@ -30,7 +30,7 @@ import type { SessionMeta } from '../../contract/common';
 import { formatContextTokens, formatElapsed } from '../../contract/conversation-view';
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';
 import type { ExtensionId } from '../../contract/extensions';
-import { agentTabLabel, tabIdFor, type AgentTabRef } from '../features/agents/agent-tab';
+import { agentTabLabel, tabIdFor, type AgentTabRef } from '../lib/agent-tab';
 import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import ExtensionsBarMenu from '../features/extensions/ExtensionsBarMenu';
 import ProjectSwitcher from '../features/projects/ProjectSwitcher';
@@ -39,7 +39,7 @@ import RunChip from '../features/sessions/RunChip';
 import { UNKNOWN_METRIC, contextReadout } from '../features/sessions/runtime-metrics';
 import { truncateBranchLeft, worktreeChipLabel } from '../features/sessions/worktree';
 import LayoutToggle from '../features/usage/LayoutToggle';
-import { sessionCapability } from '../lib/runtimeCapability';
+import { sessionCapability, sessionIsRetired } from '../lib/runtimeCapability';
 import { sessionInterrupt } from '../lib/api';
 import { useElapsedClock } from '../lib/hooks/useElapsedClock';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
@@ -124,14 +124,14 @@ export default function SessionRow({
   // populated, so this row reads `session.metrics` through the same pure
   // selector the roster already uses (runtime-metrics.ts `contextReadout`),
   // never the legacy fields. `null` ⇒ no bar at all, not a false empty one.
-  const piContext = active?.agentRuntime === 'pi' ? contextReadout(active.metrics) : null;
+  const piContext = active && sessionIsRetired(active) ? contextReadout(active.metrics) : null;
   const contextFigure = active
-    ? active.agentRuntime === 'pi'
+    ? sessionIsRetired(active)
       ? (piContext?.label ?? UNKNOWN_METRIC)
       : `${formatContextTokens(active.contextUsedTokens)}${active.contextLimitTokens > 0 ? `/${formatContextTokens(active.contextLimitTokens)}` : ''}`
     : '';
   const contextFraction = active
-    ? active.agentRuntime === 'pi'
+    ? sessionIsRetired(active)
       ? piContext?.fraction ?? null
       : active.contextLimitTokens > 0
         ? Math.min(1, Math.max(0, active.contextUsedTokens / active.contextLimitTokens))

@@ -22,14 +22,16 @@ export interface QuestionConversationBlock {
   /** true iff state === 'pending' (FR-15). */
   isStreaming: boolean;
   questions: SessionQuestion[];
+  /** Absent means blocking (legacy); false allows native progress while displayed. */
+  blocking?: boolean;
   state: QuestionState;
-  /** Present iff state === 'answered': question text → answer string (verbatim, FR-12). */
+  /** Answer key (question.id or legacy question text) → answer; secrets are [redacted]. */
   answers?: Record<string, string>;
 }
 
 export interface AnswerQuestionRequest {
   sessionId: SessionId;
   blockId: BlockId;
-  /** question text → chosen label / free text / ', '-joined multi-select labels. */
+  /** question.id when present, otherwise question text → label/free text/legacy multi-select. */
   answers: Record<string, string>;
 }

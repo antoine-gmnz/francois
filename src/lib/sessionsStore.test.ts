@@ -5,9 +5,7 @@
 // never swapped out of it or dropped from it.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { RuntimeEventPayload, RuntimeQueueEntry, SessionMeta } from '../../contract/common';
-import { clearQueueState, getQueueEntries, subscribeQueueEntries } from './pi-queue';
-import { clearTurnProgress, getCompactionProgress, getRetryProgress } from './pi-turn-progress';
+import type { RuntimeEventPayload, SessionMeta } from '../../contract/common';
 import { useStore } from './store';
 
 function meta(id: string): SessionMeta {
@@ -172,9 +170,9 @@ describe('SessionMeta.agentRuntime/protocol are carried through the cache (multi
   });
 });
 
-describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
+describe('runtime events (normalized process events)', () => {
   it('applies a matching-generation capability snapshot and sanitized failure', () => {
-    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    const session = { ...meta('s1'), agentRuntime: 'claude-code' as const, protocol: null, runtimeGeneration: 'g1' };
     useStore.getState().setSessions([session]);
     useStore.getState().applyRuntimeEvent({
       type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
@@ -189,7 +187,7 @@ describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
   });
 
   it('does not let an old child generation mutate a reconnected session', () => {
-    useStore.getState().setSessions([{ ...meta('s1'), agentRuntime: 'pi', protocol: null, runtimeGeneration: 'g2' }]);
+    useStore.getState().setSessions([{ ...meta('s1'), agentRuntime: 'claude-code', protocol: null, runtimeGeneration: 'g2' }]);
     useStore.getState().applyRuntimeEvent({
       type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 9, at: 1,
       event: { kind: 'run.state', state: 'failed' },
@@ -204,7 +202,7 @@ describe('runtime events (pi-runtime-boundary FR-4/FR-5/FR-6)', () => {
     { kind: 'tool.update', blockId: 'b1', tool: { id: 't1', name: 'Read', status: 'pending', inputText: '', outputText: '', inputTruncated: false, outputTruncated: false } },
     { kind: 'notice', blockId: 'b1', tone: 'info', text: 'hi' },
   ])('preserves the sessions array reference for transcript kind $kind', (event) => {
-    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    const session = { ...meta('s1'), agentRuntime: 'claude-code' as const, protocol: null, runtimeGeneration: 'g1' };
     useStore.getState().setSessions([session]);
     const before = useStore.getState().sessions;
     useStore.getState().applyRuntimeEvent({
@@ -240,7 +238,7 @@ describe('applyRuntimeEvent — an unrecognised future event kind (defect: bare 
   });
 });
 
-describe('runtime events — model.changed / metrics (pi-models-metrics)', () => {
+describe('runtime events — model.changed / metrics (normalized process events)', () => {
   const descriptor = {
     ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
     displayName: 'Sonnet 5',
@@ -267,7 +265,7 @@ describe('runtime events — model.changed / metrics (pi-models-metrics)', () =>
   };
 
   it('model.changed replaces model/runtimeModel/effort with the ACCEPTED values', () => {
-    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    const session = { ...meta('s1'), agentRuntime: 'claude-code' as const, protocol: null, runtimeGeneration: 'g1' };
     useStore.getState().setSessions([session]);
     useStore.getState().applyRuntimeEvent({
       type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
@@ -281,7 +279,7 @@ describe('runtime events — model.changed / metrics (pi-models-metrics)', () =>
   });
 
   it('model.changed with no effort CLEARS a previously set one', () => {
-    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1', effort: 'high' };
+    const session = { ...meta('s1'), agentRuntime: 'claude-code' as const, protocol: null, runtimeGeneration: 'g1', effort: 'high' };
     useStore.getState().setSessions([session]);
     useStore.getState().applyRuntimeEvent({
       type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
@@ -291,7 +289,7 @@ describe('runtime events — model.changed / metrics (pi-models-metrics)', () =>
   });
 
   it('metrics lands the runtime snapshot verbatim, never synthesized from contextUsedTokens', () => {
-    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g1' };
+    const session = { ...meta('s1'), agentRuntime: 'claude-code' as const, protocol: null, runtimeGeneration: 'g1' };
     useStore.getState().setSessions([session]);
     useStore.getState().applyRuntimeEvent({
       type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
@@ -301,94 +299,13 @@ describe('runtime events — model.changed / metrics (pi-models-metrics)', () =>
   });
 
   it('an old generation cannot repaint a reconnected session with either kind', () => {
-    const session = { ...meta('s1'), agentRuntime: 'pi' as const, protocol: null, runtimeGeneration: 'g2' };
+    const session = { ...meta('s1'), agentRuntime: 'claude-code' as const, protocol: null, runtimeGeneration: 'g2' };
     useStore.getState().setSessions([session]);
     useStore.getState().applyRuntimeEvent({
       type: 'runtime.event', sessionId: 's1', generation: 'g1', sequence: 1, at: 1,
       event: { kind: 'metrics', metrics },
     });
     expect(useStore.getState().sessions[0].metrics).toBeUndefined();
-  });
-});
-
-// pi-turn-controls: `queue.changed` / `compaction` / `retry` never touch the
-// `sessions` array — they route to their own per-session stores. Those are
-// EXTERNAL stores with their own subscribers, so the write may not happen
-// inside the zustand updater (an updater must be pure: it is allowed to run
-// more than once, and it runs BEFORE the new state is committed).
-describe('applyRuntimeEvent — control events route to their own stores (pi-turn-controls)', () => {
-  const piSession = (generation: string | undefined = 'g1'): SessionMeta => ({
-    ...meta('s1'),
-    agentRuntime: 'pi',
-    protocol: null,
-    runtimeGeneration: generation,
-  });
-
-  const entries: RuntimeQueueEntry[] = [
-    { clientMessageId: 'c1', state: 'queued', delivery: 'normal', text: 'hi', attachmentIds: [], createdAt: 1 },
-  ];
-
-  const control = (event: RuntimeEventPayload, generation = 'g1') =>
-    useStore.getState().applyRuntimeEvent({
-      type: 'runtime.event', sessionId: 's1', generation, sequence: 1, at: 1, event,
-    });
-
-  beforeEach(() => {
-    clearQueueState('s1');
-    clearTurnProgress('s1');
-  });
-
-  it('mirrors the ledger and both progress records on a matching generation', () => {
-    useStore.getState().setSessions([piSession()]);
-    const before = useStore.getState().sessions;
-    control({ kind: 'queue.changed', entries });
-    control({ kind: 'compaction', state: 'started', automatic: false });
-    control({ kind: 'retry', state: 'waiting', attempt: 2 });
-    expect(getQueueEntries('s1')).toEqual(entries);
-    expect(getCompactionProgress('s1')?.state).toBe('started');
-    expect(getRetryProgress('s1')?.attempt).toBe(2);
-    // …without invalidating the fleet cache for every other subscriber.
-    expect(useStore.getState().sessions).toBe(before);
-  });
-
-  it('refuses a stale generation — an old child must never repaint a reconnected session', () => {
-    useStore.getState().setSessions([piSession('g2')]);
-    control({ kind: 'queue.changed', entries }, 'g1');
-    control({ kind: 'compaction', state: 'started', automatic: false }, 'g1');
-    control({ kind: 'retry', state: 'waiting', attempt: 2 }, 'g1');
-    expect(getQueueEntries('s1')).toEqual([]);
-    expect(getCompactionProgress('s1')).toBeNull();
-    expect(getRetryProgress('s1')).toBeNull();
-  });
-
-  // The generation-unknown guard, previously untested: a session the fleet
-  // cache does not hold (removed, or never hydrated) has no generation to
-  // check the event against, and there is nothing that would ever clear a
-  // ledger written under an id the cache never knew.
-  it('writes nothing for a session the cache does not hold', () => {
-    useStore.getState().setSessions([]);
-    control({ kind: 'queue.changed', entries });
-    control({ kind: 'compaction', state: 'started', automatic: false });
-    control({ kind: 'retry', state: 'waiting', attempt: 2 });
-    expect(getQueueEntries('s1')).toEqual([]);
-    expect(getCompactionProgress('s1')).toBeNull();
-    expect(getRetryProgress('s1')).toBeNull();
-  });
-
-  // removeSession cleared the ledger from INSIDE the updater, so a queue
-  // subscriber ran while zustand still held the pre-removal state and saw the
-  // session it was being told to forget.
-  it('removeSession clears the ledger only after the session is gone from the cache', () => {
-    useStore.getState().setSessions([piSession()]);
-    control({ kind: 'queue.changed', entries });
-    let sessionsSeenByLedgerSubscriber: string[] | null = null;
-    const unsubscribe = subscribeQueueEntries('s1', () => {
-      sessionsSeenByLedgerSubscriber = useStore.getState().sessions.map((s) => s.id);
-    });
-    useStore.getState().removeSession('s1');
-    unsubscribe();
-    expect(getQueueEntries('s1')).toEqual([]);
-    expect(sessionsSeenByLedgerSubscriber).toEqual([]);
   });
 });
 
@@ -424,15 +341,15 @@ describe('upsertSession and RuntimeRecovery (pi-session-durability)', () => {
     expect(useStore.getState().sessions[0].recovery).toEqual({ state: 'ready' });
   });
 
-  it('a successful newFrom appends a DISTINCT session, leaving the source session untouched', () => {
+  it('distinct historical rows remain listable with settled display status', () => {
     const source = withRecovery('s1', { state: 'missing', message: 'native session file is missing' });
     useStore.getState().setSessions([source]);
     const created = withRecovery('s2', { state: 'ready' });
     useStore.getState().upsertSession(created);
     const sessions = useStore.getState().sessions;
     expect(sessions).toHaveLength(2);
-    expect(sessions[0]).toEqual(source);
-    expect(sessions[1]).toEqual(created);
+    expect(sessions[0]).toEqual({ ...source, status: 'done' });
+    expect(sessions[1]).toEqual({ ...created, status: 'done' });
   });
 });
 

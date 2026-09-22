@@ -50,12 +50,6 @@
 /* pi-skills-capabilities FR-8: the status line that keeps "no skills" from
    being read as "project resources are disabled" — text only, no new surface
    or border (design brief "Notes / constraints"). */
-.skills-resources-note {
-  padding: var(--space-4) var(--space-6) var(--space-8);
-  font-size: var(--font-size-9-5);
-  color: var(--text-faint);
-}
-
 .skills-error-row {
   display: flex;
   align-items: center;

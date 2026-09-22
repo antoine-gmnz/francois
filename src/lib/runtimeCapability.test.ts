@@ -5,8 +5,18 @@
 
 import { describe, expect, it } from 'vitest';
 import type { RuntimeCapabilities, SessionMeta } from '../../contract/common';
-import { PI_BASELINE_UNAVAILABLE, PI_UNRESTRICTED_TOOLS_NOTICE } from '../../contract/pi-skills-capabilities';
-import { sandboxSelectionCapability, sessionCapability } from './runtimeCapability';
+import { runtimeCapabilities } from '../../contract/multi-provider-seam';
+import type { SessionProfile } from '../../contract/session-profiles';
+import {
+  PI_UNAVAILABLE,
+  accountIsRetired,
+  profileIsRetired,
+  requestNeedsLiveGeneration,
+  sandboxSelectionCapability,
+  sessionCapability,
+  sessionIsRetired,
+} from './runtimeCapability';
+const PI_BASELINE_UNAVAILABLE = Object.keys(runtimeCapabilities('pi')) as (keyof RuntimeCapabilities)[];
 
 function meta(overrides: Partial<SessionMeta>): SessionMeta {
   return {
@@ -84,16 +94,16 @@ describe('sessionCapability (FR-20)', () => {
       skills: { available: false, reason: 'Disabled by this model.' },
     };
     const pi = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: effective });
-    expect(sessionCapability(pi, 'skills')).toEqual({ available: false, reason: 'Disabled by this model.' });
+    expect(sessionCapability(pi, 'skills')).toEqual({ available: false, reason: PI_UNAVAILABLE });
     // `steering`, not `mcp`: outside the FR-3 clamp, Pi's static row is a
     // DISCONNECTED placeholder rather than a ceiling, so the connected
     // snapshot is what grants the capability.
-    expect(sessionCapability(pi, 'steering')).toEqual({ available: true });
+    expect(sessionCapability(pi, 'steering')).toEqual({ available: false, reason: PI_UNAVAILABLE });
   });
 
   it('keeps a Pi session disabled until the core sends its live snapshot', () => {
     const pi = meta({ agentRuntime: 'pi', protocol: null });
-    expect(sessionCapability(pi, 'steering')).toEqual({ available: false, reason: 'Runtime is not connected.' });
+    expect(sessionCapability(pi, 'steering')).toEqual({ available: false, reason: PI_UNAVAILABLE });
   });
 
   // pi-skills-capabilities FR-4/FR-3: nothing in the baseline the spec pins
@@ -133,21 +143,21 @@ describe('sessionCapability (FR-20)', () => {
       expect((state.reason?.length ?? 0) > 0).toBe(true);
     }
     // and skills — the one baseline capability the spec turns ON — stays reachable.
-    expect(sessionCapability(connected, 'skills').available).toBe(true);
+    expect(sessionCapability(connected, 'skills').available).toBe(false);
     // …as does everything outside the clamped list, which the snapshot still owns.
-    expect(sessionCapability(connected, 'steering')).toEqual({ available: true });
+    expect(sessionCapability(connected, 'steering')).toEqual({ available: false, reason: PI_UNAVAILABLE });
   });
 
   // A snapshot that narrows a clamped capability keeps its OWN sentence — the
   // core knows why (auth, config, model) and the clamp does not.
   it('prefers the core’s reason over the clamp’s when the snapshot already disables the capability', () => {
     const snapshot = {
-      mcp: { available: false, reason: 'Pi was started with --no-extensions.' },
+      mcp: { available: false, reason: PI_UNAVAILABLE },
     } as unknown as RuntimeCapabilities;
     const pi = meta({ agentRuntime: 'pi', protocol: null, effectiveCapabilities: snapshot });
     expect(sessionCapability(pi, 'mcp')).toEqual({
       available: false,
-      reason: 'Pi was started with --no-extensions.',
+      reason: PI_UNAVAILABLE,
     });
   });
 });
@@ -162,7 +172,52 @@ describe('sandboxSelectionCapability (pi-skills-capabilities FR-5)', () => {
   it('reads the FR-5 notice verbatim for a Pi session — not a generic "unavailable" line', () => {
     expect(sandboxSelectionCapability(meta({ agentRuntime: 'pi' }))).toEqual({
       available: false,
-      reason: PI_UNRESTRICTED_TOOLS_NOTICE,
+      reason: PI_UNAVAILABLE,
     });
+  });
+});
+
+
+it('enables Codex request replies only from a negotiated generation snapshot', () => {
+  const native = { agentRuntime: 'codex', effectiveCapabilities: { ...runtimeCapabilities('codex'), permissions: { available: true } } } as import('../../contract/common').SessionMeta;
+  expect(sessionCapability(native, 'permissions').available).toBe(false);
+  expect(sessionCapability({ ...native, runtimeGeneration: 'live' }, 'permissions').available).toBe(true);
+  expect(sessionCapability({ ...native, runtimeGeneration: 'live', effectiveCapabilities: undefined }, 'permissions').available).toBe(false);
+  expect(sessionCapability({ ...native, runtimeGeneration: 'live', effectiveCapabilities: { ...native.effectiveCapabilities!, permissions: { available: false, reason: 'Disconnected' } } }, 'permissions')).toEqual({ available: false, reason: 'Disconnected' });
+  expect(sessionCapability({ ...native, agentRuntime: 'pi', runtimeGeneration: 'live' }, 'permissions').available).toBe(false);
+});
+
+// process-frontend-boundaries: the retired-runtime and live-request predicates
+// are the ONE mapping from runtime/kind names to UI behaviour — components and
+// stores ask these instead of comparing `agentRuntime`/`kind` to a literal.
+describe('runtime-name mapping predicates (process-frontend-boundaries)', () => {
+  it('marks only retired Pi sessions read-only', () => {
+    expect(sessionIsRetired(meta({ agentRuntime: 'pi' }))).toBe(true);
+    for (const agentRuntime of ['claude-code', 'codex', 'grok', 'francois'] as const) {
+      expect(sessionIsRetired(meta({ agentRuntime }))).toBe(false);
+    }
+    expect(sessionIsRetired(null)).toBe(false);
+    expect(sessionIsRetired(undefined)).toBe(false);
+  });
+
+  it('marks only retired Pi accounts and profiles, narrowing the profile union', () => {
+    expect(accountIsRetired({ kind: 'pi' })).toBe(true);
+    expect(accountIsRetired({ kind: 'claude-code-oauth' })).toBe(false);
+    expect(accountIsRetired({ kind: 'codex-cli' })).toBe(false);
+    expect(accountIsRetired(null)).toBe(false);
+    const pi: SessionProfile = { kind: 'pi', settings: { tools: [] } } as unknown as SessionProfile;
+    const legacy = { kind: 'legacy', name: 'x' } as unknown as SessionProfile;
+    expect(profileIsRetired(pi)).toBe(true);
+    expect(profileIsRetired(legacy)).toBe(false);
+    expect(profileIsRetired(undefined)).toBe(false);
+    if (profileIsRetired(pi)) expect(pi.settings.tools).toEqual([]);
+  });
+
+  it('derives live-generation request authority from the capability table, not a runtime name', () => {
+    expect(requestNeedsLiveGeneration(meta({ agentRuntime: 'codex' }))).toBe(true);
+    for (const agentRuntime of ['claude-code', 'grok', 'francois', 'pi'] as const) {
+      expect(requestNeedsLiveGeneration(meta({ agentRuntime }))).toBe(false);
+    }
+    expect(requestNeedsLiveGeneration(null)).toBe(false);
   });
 });

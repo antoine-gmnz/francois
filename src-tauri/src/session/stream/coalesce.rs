@@ -36,12 +36,6 @@ use crate::session::*;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-/// How long a run of deltas accumulates before the next one flushes it — long
-/// enough to fold a fast stream into a handful of events per second, short
-/// enough that the answer still reads as typing. Same figure and same reasoning
-/// as the shell's `SHELL_EMIT_COALESCE`.
-pub(crate) const ASSISTANT_DELTA_COALESCE: Duration = Duration::from_millis(8);
-
 /// One run of deltas: consecutive chunks of the same block that will go out as
 /// a single `assistant.delta`.
 struct PendingDelta {
@@ -195,6 +189,15 @@ impl SessionEnv for CoalescingEnv<'_> {
 
     fn persist(&self) {
         self.inner.persist();
+    }
+
+    fn publish_meta(&self, session_id: &str) {
+        self.flush();
+        self.inner.publish_meta(session_id);
+    }
+
+    fn commit_anchor(&self, session_id: &str, anchor: &str) -> Result<(), AppError> {
+        self.inner.commit_anchor(session_id, anchor)
     }
 
     fn append_transcript(&self, session_id: &str, block: &BufBlock) {
@@ -400,5 +403,32 @@ mod tests {
         );
         env.flush();
         assert_eq!(seen(&inner), vec!["delta b1 0 buffered"]);
+    }
+
+    /// process-runtime-events FR-4: the decorator must forward the storage
+    /// port, not fall back to the trait's "storage unavailable" default — and
+    /// a meta publication is an emission, so it settles the run first.
+    #[test]
+    fn anchor_commits_and_meta_publication_reach_the_inner_env() {
+        let inner = TestEnv {
+            engine: crate::session::testutil::test_engine_with(
+                crate::session::testutil::test_session(),
+            ),
+            ..Default::default()
+        };
+        let env = CoalescingEnv::new(&inner, Duration::MAX);
+        env.emit_session(delta("b1", "buffered", 0));
+        env.commit_anchor("s1", "thread-1").unwrap();
+        assert_eq!(
+            inner
+                .engine
+                .with_session("s1", |s| s.claude_session_id.clone())
+                .flatten()
+                .as_deref(),
+            Some("thread-1")
+        );
+        assert!(seen(&inner).is_empty(), "storage is not an emission");
+        env.publish_meta("s1");
+        assert_eq!(seen(&inner), vec!["delta b1 0 buffered", "session.meta"]);
     }
 }

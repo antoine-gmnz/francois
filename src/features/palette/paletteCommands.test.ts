@@ -224,7 +224,7 @@ describe('run-skill palette command (pr-142 §6, frontend half)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('gives two entries that derive the same bare name distinct item ids, and sends the picked one\'s own invocation', async () => {
+  it('refuses retired Pi skill execution even with a saved true capability', async () => {
     const { useStore, byId } = await freshModules();
     const { setPaletteSkills } = await import('./paletteData');
     const api = await import('../../lib/api');
@@ -238,12 +238,33 @@ describe('run-skill palette command (pr-142 §6, frontend half)', () => {
     ]);
 
     const step = byId('run-skill').run({ activeSessionId: 's1', runningAgentCount: 0 });
-    const ids = step!.items.map((i) => i.id);
-    expect(new Set(ids).size).toBe(2); // no key collision, unlike a plain `name`
-
-    step!.onPick(ids[1]);
-    expect(api.skillsRun).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 's1', name: 'deploy', invocation: '/deploy' }),
-    );
+    expect(step).toBeUndefined();
+    expect(api.skillsRun).not.toHaveBeenCalled();
   });
+});
+
+
+it('excludes retired profiles and rejects stale profile creation picks', async () => {
+  mockStorage();
+  const { useStore, byId } = await freshModules();
+  const retired = { id: 'pi', kind: 'pi', name: 'Saved Pi', createdAt: 0, updatedAt: 0, settings: {} } as import('../../../contract/session-profiles').SessionProfile;
+  const legacy = { ...retired, id: 'legacy', kind: 'legacy', name: 'Claude' } as import('../../../contract/session-profiles').SessionProfile;
+  useStore.setState({ profiles: [retired], pendingNewSessionProfileId: null, newSessionOpen: false });
+  const command = byId('new-session-with-profile');
+  expect(command.enabled?.(ctx)).toBe(false);
+  useStore.setState({ profiles: [retired, legacy] });
+  const step = await command.run(ctx);
+  expect(step).toBeDefined();
+  if (!step) throw new Error('Expected profile selection');
+  expect(step.items.map(item => item.id)).toEqual(['legacy']);
+  step.onPick('pi');
+  expect(useStore.getState().newSessionOpen).toBe(false);
+  useStore.setState({ profiles: [retired] });
+  step.onPick('legacy');
+  expect(useStore.getState().pendingNewSessionProfileId).toBeNull();
+  useStore.setState({ profiles: [legacy] });
+  step.onPick('legacy');
+  expect(useStore.getState().pendingNewSessionProfileId).toBe('legacy');
+  expect(useStore.getState().newSessionOpen).toBe(true);
+  vi.unstubAllGlobals();
 });

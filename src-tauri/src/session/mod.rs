@@ -16,18 +16,15 @@
 //    matching FR-19's lazy-error path rather than failing `create`.
 
 mod adapter;
-/// pi-turn-controls: the per-session admissions ledger (specs/
-/// pi-turn-controls.md FR-1..FR-5, FR-9) — `DeliveryMode`/`RuntimeMessageReceipt`/
-/// `RuntimeQueueEntry` mirrors, the pure `AdmissionLedger` state machine, its
-/// atomic app-data sidecar, and the ONE internal admission entry point
-/// (`admit_and_deliver`) `session_submit` and a later wave's `skills_run` both
-/// route through.
-mod admission;
 mod agent_transcript;
 mod agents;
+mod application;
 mod attachments;
 mod blocks;
-mod blocks_pi;
+/// Inert saved Pi records and historical wire vocabulary.
+mod retired_pi;
+mod runtime_bridge;
+
 /// cloud-sessions: adopting a Claude Code on the web session. A CHILD of this
 /// module on purpose — it constructs a `Session` (FR-10), and Rust lets a child
 /// read its ancestor's private fields, so nothing here needs widened visibility.
@@ -102,19 +99,10 @@ mod worktree;
 // two children is a compile error here — resolve by qualifying at the use
 // site, not by re-adding the glob).
 // ---------------------------------------------------------------------------
-/// pi-turn-controls FR-6/FR-7: `session_interrupt`'s Pi branch (session/
-/// commands/lifecycle.rs) calls this for the whole Stop sequence.
-pub(crate) use adapter::pi::run_stop_sequence;
-/// pi-runtime-distribution §5: `francois:runtime:installation` — installation
-/// discovery only, independent of `adapter::pi`'s (still-stub) RPC transport.
-pub use adapter::pi::{
-    __cmd__runtime_installation, __tauri_command_name_runtime_installation, installation_preflight,
-    runtime_installation, InstallState, Provenance, RuntimeInstallStatus,
-};
 pub(crate) use adapter::{
-    adapter_for, child_stdout_lines, openai_context_tokens_for, spawn_claude, AgentRuntime,
-    ControlAck, PendingCounts, PermissionDecision, ProviderProtocol, RuntimeCapabilities,
-    RuntimeModelRef, SessionAdapter, TurnContext, TurnControl, TurnMode,
+    adapter_for, openai_context_tokens_for, run_compact, AgentRuntime, ContextTracker, ControlAck,
+    PendingCounts, PermissionDecision, ProviderProtocol, RuntimeCapabilities, RuntimeModelRef,
+    SessionAdapter, TurnContext, TurnControl, TurnMode,
 };
 pub use agent_transcript::{
     __cmd__agents_transcript, __tauri_command_name_agents_transcript, agents_transcript,
@@ -159,35 +147,27 @@ pub use cloud::{
 pub(crate) use commands::switch_permission_mode_in_engine;
 pub(crate) use commands::validate_catalog_selection;
 pub use commands::{
-    __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__runtime_models,
-    __cmd__session_acknowledge_policy, __cmd__session_answer_question, __cmd__session_clear,
-    __cmd__session_clear_queue, __cmd__session_compact, __cmd__session_create,
-    __cmd__session_interrupt, __cmd__session_list, __cmd__session_metrics, __cmd__session_new_from,
-    __cmd__session_pick_directory, __cmd__session_reconnect, __cmd__session_remove,
-    __cmd__session_rename, __cmd__session_send, __cmd__session_submit,
-    __cmd__session_switch_effort, __cmd__session_switch_model,
-    __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
-    __cmd__session_unqueue, __cmd__session_update_settings,
+    __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__session_answer_question,
+    __cmd__session_clear, __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt,
+    __cmd__session_list, __cmd__session_pick_directory, __cmd__session_remove,
+    __cmd__session_rename, __cmd__session_send, __cmd__session_switch_effort,
+    __cmd__session_switch_model, __cmd__session_switch_permission_mode,
+    __cmd__session_switch_response_mode, __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
-    __tauri_command_name_runtime_models, __tauri_command_name_session_acknowledge_policy,
     __tauri_command_name_session_answer_question, __tauri_command_name_session_clear,
-    __tauri_command_name_session_clear_queue, __tauri_command_name_session_compact,
-    __tauri_command_name_session_create, __tauri_command_name_session_interrupt,
-    __tauri_command_name_session_list, __tauri_command_name_session_metrics,
-    __tauri_command_name_session_new_from, __tauri_command_name_session_pick_directory,
-    __tauri_command_name_session_reconnect, __tauri_command_name_session_remove,
+    __tauri_command_name_session_compact, __tauri_command_name_session_create,
+    __tauri_command_name_session_interrupt, __tauri_command_name_session_list,
+    __tauri_command_name_session_pick_directory, __tauri_command_name_session_remove,
     __tauri_command_name_session_rename, __tauri_command_name_session_send,
-    __tauri_command_name_session_submit, __tauri_command_name_session_switch_effort,
-    __tauri_command_name_session_switch_model, __tauri_command_name_session_switch_permission_mode,
+    __tauri_command_name_session_switch_effort, __tauri_command_name_session_switch_model,
+    __tauri_command_name_session_switch_permission_mode,
     __tauri_command_name_session_switch_response_mode, __tauri_command_name_session_unqueue,
     __tauri_command_name_session_update_settings, apply_model_switch, conversation_get_transcript,
-    do_send, permissions_decide, runtime_models, session_acknowledge_policy,
-    session_answer_question, session_clear, session_clear_queue, session_compact, session_create,
-    session_interrupt, session_list, session_metrics, session_new_from, session_pick_directory,
-    session_reconnect, session_remove, session_rename, session_send, session_submit,
-    session_switch_effort, session_switch_model, session_switch_permission_mode,
-    session_switch_response_mode, session_unqueue, session_update_settings, RuntimeModelCatalogOut,
-    SendSource, SessionSettingsPatch,
+    do_send, permissions_decide, session_answer_question, session_clear, session_compact,
+    session_create, session_interrupt, session_list, session_pick_directory, session_remove,
+    session_rename, session_send, session_switch_effort, session_switch_model,
+    session_switch_permission_mode, session_switch_response_mode, session_unqueue,
+    session_update_settings, SendSource, SessionSettingsPatch,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -254,6 +234,7 @@ pub use remote_discovery::{
     feed, normalize_pty, project_slug, sanitize_name, scan_dir_for_url, tail_for_url, ReaderAction,
 };
 pub(crate) use response_mode::{mark_sent, pending_prefix, prefixed_prompt, ResponseMode};
+pub(crate) use runtime_bridge::{finalize_text_block, resolve_permission, resolve_question};
 #[cfg(test)]
 pub(crate) use skills::skill_entry;
 pub use skills::{
@@ -271,8 +252,7 @@ pub(crate) use spawn::{
     valid_effort, valid_permission_mode, valid_runtime,
 };
 pub(crate) use stdio::{
-    claim_pending, close_or_hold_channel, handle_control_request, resolve_permission,
-    resolve_question, write_control_line,
+    claim_pending, close_or_hold_channel, handle_control_request, write_control_line,
 };
 pub(crate) use step_detail::{
     append_step_detail, build_step_detail, remove_step_detail_sidecar,
@@ -293,16 +273,17 @@ pub use step_detail::{
     __cmd__conversation_step_detail, __tauri_command_name_conversation_step_detail,
     conversation_step_detail,
 };
-pub(crate) use stream::{extract_result_text, finalize_text_block, run_reader};
+pub(crate) use stream::extract_result_text;
 // core-architecture-wave3 FR-3: the turn-orchestration entry point the
 // integration target drives. Already `pub` in `stream`; this is the re-export
 // that makes it reachable as `francois::session::parse_stream`.
+#[cfg(any(test, feature = "harness"))]
 pub use stream::parse_stream;
 pub(crate) use tools::{line_count, tool_meta, tool_summary, truncate};
 pub(crate) use transcript_cap::{trim_transcript, TRANSCRIPT_BUFFER_CAP};
 pub(crate) use turn::{
     begin_turn, fail_session, finish_turn, is_resume_fail, mark_stream_live, refresh_parked_status,
-    update_used, ContextTracker,
+    update_used,
 };
 pub use usage_probe::start_usage_probe;
 pub use workflow_details::{
@@ -315,9 +296,8 @@ pub use workflow_details::{
 #[cfg(test)]
 pub(crate) use workflow_details::{build_detail, ScanState};
 pub(crate) use workflow_watch::{
-    attribute_workflow_ask, emit_workflow_event, flush_workflow_detail, remove_workflow_ask,
-    start_workflow_watch, stop_all_workflow_watches, unwatch_session_workflows,
-    WorkflowDetailEvent,
+    emit_workflow_event, flush_workflow_detail, remove_workflow_ask, start_workflow_watch,
+    stop_all_workflow_watches, unwatch_session_workflows, WorkflowDetailEvent,
 };
 pub use workflows::{
     __cmd__workflows_list, __tauri_command_name_workflows_list, emit_workflow_updates,
@@ -477,7 +457,7 @@ pub struct SessionMeta {
     /// pi-skills-capabilities: present for Pi sessions only; the pinned
     /// launch policy. Never converts into an allow/deny tool rule.
     #[serde(rename = "resourcePolicy", skip_serializing_if = "Option::is_none")]
-    resource_policy: Option<adapter::pi::RuntimeResourcePolicy>,
+    resource_policy: Option<retired_pi::RuntimeResourcePolicy>,
 }
 
 #[derive(Serialize, Clone)]
@@ -560,23 +540,6 @@ pub enum AgentEmission {
 /// some harnesses expose it as `Agent`. Mirrored in classifyToolStart (TS).
 fn is_subagent_tool(tool: &str) -> bool {
     matches!(tool, "Task" | "Agent")
-}
-
-/// pi-transcript-events review round 3 (MEDIUM): `tool_summary` wants a
-/// parsed `Value`, but Pi's own `RuntimeToolCall::input_text` is a raw JSON
-/// preview that is only guaranteed complete/valid at `toolcall_end` — a
-/// `toolcall_delta` mid-stream may carry a truncated or not-yet-valid
-/// fragment. Best-effort parse; a non-JSON (or still-empty) preview falls
-/// back to a bounded raw-text preview rather than losing the summary or
-/// failing the update.
-fn tool_summary_from_input_text(tool: &str, input_text: &str, cwd: &str) -> String {
-    if input_text.is_empty() {
-        return tool_summary(tool, &Value::Null, cwd);
-    }
-    match serde_json::from_str::<Value>(input_text) {
-        Ok(value) => tool_summary(tool, &value, cwd),
-        Err(_) => truncate(input_text, 60),
-    }
 }
 
 /// contract WorkflowRun (workflow-panel §5) — one dispatch of the harness's
@@ -756,6 +719,7 @@ impl BufBlock {
 
 /// The single in-flight /usage-/cost side-spawn of a session (interactive-commands
 /// FR-11). The child slot is filled once spawned; killed on session remove & app exit.
+#[derive(Clone)]
 pub struct ProbeHandle {
     block_id: String,
     child: Arc<Mutex<Option<Child>>>,
@@ -878,13 +842,13 @@ pub struct Session {
     /// re-reading the instruction files off disk. `None` whenever
     /// `pi_profile_settings` is `None` too, or (transiently, on a pre-fix
     /// record) until the lazy resolve above has run.
-    pi_launch_prompt: Option<crate::session::adapter::pi::PiLaunchPrompt>,
+    pi_launch_prompt: Option<crate::session::retired_pi::PiLaunchPrompt>,
     /// pi-skills-capabilities FR-5/FR-6/FR-7: the session's pinned resource
     /// policy — `None` for every non-Pi session. Coordination note (core-10b):
     /// this field/constructor slot exists so `session_create`'s
     /// `resourcePolicy` branch (pi-skills-capabilities, a concurrent wave)
     /// compiles; that wave owns its shape, validation and every other read site.
-    resource_policy: Option<crate::session::adapter::pi::RuntimeResourcePolicy>,
+    resource_policy: Option<crate::session::retired_pi::RuntimeResourcePolicy>,
     /// response-mode FR-1/FR-4: the mode the NEXT turn spawns with. Changing it
     /// signals no process and writes nothing to a running child — a turn keeps
     /// the mode it was snapshotted with (`TurnContext.response_mode`).
@@ -906,6 +870,12 @@ pub struct Session {
     /// `Engine.sessions` BEFORE writing to the control channel — a blocking
     /// pipe write must never happen while the sessions lock is held.
     current: Option<Arc<dyn TurnControl>>,
+    runtime_owner: Option<Arc<application::RuntimeOwner>>,
+    session_runtime: Option<application::SessionRuntimeBinding>,
+    runtime_gate: Arc<Mutex<()>>,
+    next_generation: u64,
+    settings_revision: u64,
+    running_context: Option<TurnContext>,
     pending_probe: Option<ProbeHandle>, // interactive-commands FR-11: single in-flight side-spawn
     agents: HashMap<String, AgentInfo>,
     agent_order: Vec<String>, // first-seen order for agents_list (FR-7)
@@ -970,27 +940,8 @@ pub struct Session {
     /// accidentally pre-set it, and a reload starts false again (a fresh
     /// reminder after a restart is honest, not a bug).
     grok_sandbox_notice_emitted: bool,
-    /// pi-session-durability: presentation state for the recovery banner —
-    /// meaningful for Pi sessions only (`meta()` omits it for every other
-    /// runtime). Starts `disconnected` (no live connection, history is
-    /// readable) and is updated by `adapter::pi::recovery`'s validate-then-
-    /// connect flow. NOT persisted: a reload always starts `disconnected`
-    /// again, matching "Quit and reopen: old transcript is visible
-    /// immediately" — there is no live connection to report ready.
-    recovery: events::RuntimeRecovery,
-    /// pi-session-durability: `SESSION_BUSY` guard — claimed for the whole
-    /// span of a `session_reconnect`/`session_new_from` call touching this
-    /// session, so two overlapping calls (or a reconnect racing a newFrom
-    /// reading the same source) can never interleave their filesystem/RPC
-    /// work. In-memory only, always `false` after a restart.
-    recovery_busy: bool,
-    /// pi-session-durability FR-1/FR-2: the persisted resume anchor + cursor
-    /// for a Pi session's native conversation. `None` ⇔ never successfully
-    /// connected. Written by `adapter::pi::recovery` after a successful
-    /// connection and BEFORE any first prompt (FR-2's "Pi owns messages/tree/
-    /// context" — this is François's OWN ownership/cursor record, never
-    /// replayed as a prompt).
-    pi_resume: Option<adapter::pi::PiResumeRecord>,
+    /// Saved native-history anchor; retained without reading or resuming it.
+    pi_resume: Option<retired_pi::PiResumeRecord>,
     /// pi-models-metrics: the most recent runtime-reported usage. Persisted
     /// alongside the rest of the record, loaded `stale: true` until an
     /// explicit or automatic refresh lands. `None` for a runtime that has
@@ -1042,8 +993,8 @@ impl Session {
         profile: Option<SessionProfileRef>,
         response_mode: ResponseMode,
         pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
-        pi_launch_prompt: Option<crate::session::adapter::pi::PiLaunchPrompt>,
-        resource_policy: Option<crate::session::adapter::pi::RuntimeResourcePolicy>,
+        pi_launch_prompt: Option<crate::session::retired_pi::PiLaunchPrompt>,
+        resource_policy: Option<crate::session::retired_pi::RuntimeResourcePolicy>,
     ) -> Session {
         Session {
             id,
@@ -1086,6 +1037,12 @@ impl Session {
             queue: VecDeque::new(),
             claude_session_id,
             current: None,
+            runtime_owner: None,
+            session_runtime: None,
+            runtime_gate: Arc::new(Mutex::new(())),
+            next_generation: 0,
+            settings_revision: 0,
+            running_context: None,
             pending_probe: None,
             agents: HashMap::new(),
             agent_order: Vec::new(),
@@ -1110,8 +1067,6 @@ impl Session {
             workflow_scripts: HashMap::new(),
             cli_commands: Vec::new(),
             grok_sandbox_notice_emitted: false,
-            recovery: events::RuntimeRecovery::disconnected(),
-            recovery_busy: false,
             pi_resume: None,
             metrics: None,
             model_efforts: Vec::new(),
@@ -1141,6 +1096,12 @@ impl Session {
         // session keeps its stored runtime (and its null protocol, FR-2).
         let (agent_runtime, protocol) = if self.agent_runtime == AgentRuntime::Pi {
             (AgentRuntime::Pi, ProviderProtocol::Pi)
+        } else if matches!(
+            self.agent_runtime,
+            AgentRuntime::ClaudeCode | AgentRuntime::Codex
+        ) && !accounts.exists(&self.account_id)
+        {
+            (self.agent_runtime, self.protocol)
         } else {
             AgentRuntime::from_account_kind(accounts.kind_of(&self.account_id))
         };
@@ -1162,7 +1123,11 @@ impl Session {
             } else {
                 model(&self.model_id, &self.model_label)
             },
-            status: self.status.clone(),
+            status: if agent_runtime == AgentRuntime::Pi {
+                status::IDLE.into()
+            } else {
+                self.status.clone()
+            },
             context_used_tokens: self.context_used_tokens,
             context_limit_tokens: self.context_limit_tokens,
             started_at: self.started_at,
@@ -1179,15 +1144,24 @@ impl Session {
             agent_runtime,
             protocol,
             runtime_model: self.runtime_model.clone(),
-            effective_capabilities: self.effective_capabilities.clone(),
-            runtime_generation: self.runtime_generation.clone(),
+            effective_capabilities: if agent_runtime == AgentRuntime::Pi {
+                None
+            } else {
+                self.effective_capabilities.clone()
+            },
+            runtime_generation: if agent_runtime == AgentRuntime::Pi {
+                None
+            } else {
+                self.runtime_generation.clone()
+            },
             profile: self.profile.clone(),
             response_mode: self.response_mode,
             allow_git: self.allow_git,
             // pi-session-durability: presentation only for Pi sessions — every
             // other runtime omits the key entirely (contract: "Present for Pi
             // sessions only").
-            recovery: (agent_runtime == AgentRuntime::Pi).then(|| self.recovery.clone()),
+            recovery: (agent_runtime == AgentRuntime::Pi)
+                .then(events::RuntimeRecovery::disconnected),
             metrics: self.metrics.clone(),
             resource_policy: self.resource_policy,
         }
@@ -1485,14 +1459,9 @@ impl Session {
 
 #[derive(Default)]
 pub struct Engine {
-    runtime_events: Mutex<HashMap<String, events::RuntimeEventSequence>>,
+    retired_runtime_records: Mutex<HashMap<String, Value>>,
     unsupported_runtime_records: Mutex<HashMap<String, Value>>,
-    runtime_connections: Mutex<HashMap<String, Arc<dyn adapter::RuntimeSessionControl>>>,
     sessions: Mutex<HashMap<String, Session>>,
-    /// pi-turn-controls: one admissions ledger per session — a sibling map to
-    /// `sessions`, not a `Session` field, so nothing here widens the
-    /// already-oversized `Session` struct/constructor.
-    admissions: Mutex<HashMap<String, admission::AdmissionLedger>>,
     /// workflow-details §6: run id → the incremental scan state of its run
     /// directory (per-file byte offsets + running aggregates, FR-5) and the
     /// `notify` watcher keeping it live (FR-6). Dropping an entry stops the
@@ -1553,7 +1522,9 @@ impl Engine {
     ) -> Vec<SessionMeta> {
         let mut map = self.sessions.lock().unwrap();
         map.values_mut()
-            .filter(|s| s.project_id.as_deref() == Some(project_id))
+            .filter(|s| {
+                s.agent_runtime != AgentRuntime::Pi && s.project_id.as_deref() == Some(project_id)
+            })
             .map(|s| {
                 s.project_id = None;
                 s.meta(accounts)
@@ -1617,7 +1588,7 @@ impl Engine {
     ) -> Vec<SessionMeta> {
         let mut map = self.sessions.lock().unwrap();
         map.values_mut()
-            .filter(|s| s.account_id == account_id)
+            .filter(|s| s.agent_runtime != AgentRuntime::Pi && s.account_id == account_id)
             .map(|s| {
                 s.account_id = crate::account::DEFAULT_ACCOUNT_ID.to_string();
                 // core-architecture-wave3 FR-11: the parent wave resynced
@@ -1626,20 +1597,6 @@ impl Engine {
                 // left to resync — moving the account is the whole change.
                 s.meta(accounts)
             })
-            .collect()
-    }
-
-    /// pi-provider-auth FR-4/FR-6/FR-8: every session currently pinned to
-    /// `account_id`, regardless of status — the read-only counterpart of
-    /// `clear_account`, used to answer "is this account in use?" before
-    /// `trustPi`/Pi removal refuse rather than after they mutate anything.
-    pub(crate) fn sessions_for_account(&self, account_id: &str) -> Vec<String> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|s| s.account_id == account_id)
-            .map(|s| s.id.clone())
             .collect()
     }
 
@@ -1678,37 +1635,38 @@ pub fn kill_all(app: &AppHandle) {
     let Some(engine) = app.try_state::<Engine>() else {
         return;
     };
-    engine.shutdown_runtimes();
-    // session-questions FR-13 (app-exit teardown, §7#5): drain every parked
-    // question BEFORE killing its child, so the cancelled state is persisted
-    // synchronously here — the reader threads may never get to run again. The
-    // drain is the exactly-once claim; a reader that does run finds nothing.
-    let mut orphaned: Vec<(String, String)> = Vec::new(); // (session_id, block_id)
-    let mut orphaned_perms: Vec<(String, String)> = Vec::new(); // permission-guardrails FR-10
-    {
-        let map = engine.sessions.lock().unwrap();
-        for s in map.values() {
-            if let Some(turn) = &s.current {
-                // multi-provider-seam FR-2/FR-8: reached only through
-                // TurnControl — `drain_pending` is the exactly-once claim,
-                // synchronous and under this same lock, exactly as the direct
-                // map drains used to be.
-                turn.interrupt();
-                let (qs, perms) = turn.drain_pending();
-                orphaned.extend(qs.into_iter().map(|bid| (s.id.clone(), bid)));
-                orphaned_perms.extend(perms.into_iter().map(|bid| (s.id.clone(), bid)));
-                turn.kill();
+
+    let sessions: Vec<_> = engine
+        .sessions
+        .lock()
+        .unwrap()
+        .values()
+        .map(|s| {
+            (
+                s.id.clone(),
+                s.runtime_owner.is_some() || s.session_runtime.is_some(),
+                s.current.clone(),
+                s.pending_probe.clone(),
+            )
+        })
+        .collect();
+    for (id, owned, turn, probe) in sessions {
+        if owned {
+            let _ = runtime_bridge::close_session(app, &engine, &id);
+        } else if let Some(turn) = turn {
+            let (questions, permissions) = turn.drain_pending();
+            turn.interrupt();
+            turn.kill();
+            for block in questions {
+                resolve_question(app, &id, &block, "cancelled", None);
             }
-            if let Some(p) = &s.pending_probe {
-                p.kill(); // interactive-commands: probes die with the app
+            for block in permissions {
+                resolve_permission(app, &id, &block, "cancelled", None);
             }
         }
-    }
-    for (sid, bid) in orphaned {
-        resolve_question(app, &sid, &bid, "cancelled", None);
-    }
-    for (sid, bid) in orphaned_perms {
-        resolve_permission(app, &sid, &bid, "cancelled", None);
+        if let Some(probe) = probe {
+            probe.kill();
+        }
     }
     // workflow-details FR-6: no watch outlives the app. Dropped AFTER the drains
     // above, so their `workflow.detail` flushes still find their run.
@@ -1829,76 +1787,6 @@ mod tests {
         assert!(is_subagent_tool("Agent")); // this harness's subagent tool name
         assert!(!is_subagent_tool("Read"));
         assert!(!is_subagent_tool("Bash"));
-    }
-
-    /// MEDIUM (review round 3): `buf_tool_update_pi` must derive `summary`
-    /// from the tool's own input the same way every other adapter does
-    /// (`tool_summary`), and recompute it as the input settles — not leave
-    /// the bare tool name standing from `toolcall_start` through
-    /// `toolcall_end`.
-    #[test]
-    fn buf_tool_update_pi_derives_and_updates_summary_from_input_text() {
-        let mut s = test_session(); // cwd "/x"
-        let block_id = "b1";
-        let pending = events::RuntimeToolCall {
-            id: "t1".into(),
-            name: "Read".into(),
-            status: "pending".into(),
-            input_text: String::new(),
-            output_text: String::new(),
-            input_truncated: false,
-            output_truncated: false,
-            started_at: None,
-            completed_at: None,
-        };
-        assert!(s.buf_tool_update_pi(block_id, pending).is_none());
-        let inserted = s
-            .block_buffer
-            .iter()
-            .find(|b| b.block_id == block_id)
-            .unwrap();
-        assert_eq!(inserted.tool, "Read");
-        // No args are known yet at toolcall_start — the summary must reflect
-        // that honestly rather than stand in the bare tool name for it.
-        assert_ne!(inserted.summary, "Read");
-
-        let settled_call = events::RuntimeToolCall {
-            id: "t1".into(),
-            name: "Read".into(),
-            status: "succeeded".into(),
-            input_text: serde_json::json!({ "file_path": "/x/src/y.ts" }).to_string(),
-            output_text: "ok".into(),
-            input_truncated: false,
-            output_truncated: false,
-            started_at: None,
-            completed_at: None,
-        };
-        let settled = s
-            .buf_tool_update_pi(block_id, settled_call)
-            .expect("a non-streaming status settles the block");
-        assert_eq!(settled.summary, "src/y.ts");
-    }
-
-    /// The out-of-scope fallback: an unparsable (or still-partial) input
-    /// preview still produces a bounded, non-empty summary rather than an
-    /// error or a lost update.
-    #[test]
-    fn buf_tool_update_pi_falls_back_to_a_bounded_raw_preview_for_non_json_input() {
-        let mut s = test_session();
-        let call = events::RuntimeToolCall {
-            id: "t1".into(),
-            name: "Bash".into(),
-            status: "running".into(),
-            input_text: "{\"command\":\"echo hi".repeat(10), // deliberately not valid JSON
-            output_text: String::new(),
-            input_truncated: false,
-            output_truncated: false,
-            started_at: None,
-            completed_at: None,
-        };
-        s.buf_tool_update_pi("b1", call.clone());
-        let b = s.block_buffer.iter().find(|b| b.block_id == "b1").unwrap();
-        assert_eq!(b.summary, truncate(&call.input_text, 60));
     }
 
     #[test]

@@ -39,13 +39,26 @@ mod parse;
 /// mode/prompt rule, path shape/bounds, and the certified built-in tool
 /// allowlist. A sibling of `parse.rs` (Pi settings vs. legacy extraArgs) —
 /// same "one concern per child" split this domain already uses.
-mod pi_settings;
 mod registry;
 
 pub use commands::*;
 pub use migration::{migrate_registry, MigrationOutcome, PROFILE_SCHEMA_VERSION};
 pub(crate) use parse::*;
-pub use pi_settings::*;
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct PiProfileSettingsInput {
+    #[serde(rename = "systemPromptMode", default)]
+    pub system_prompt_mode: String,
+    #[serde(rename = "systemPrompt", default)]
+    pub system_prompt: Option<String>,
+    #[serde(rename = "instructionPaths", default)]
+    pub instruction_paths: Vec<String>,
+    #[serde(rename = "skillPaths", default)]
+    pub skill_paths: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(rename = "projectResources", default)]
+    pub project_resources: String,
+}
 pub use registry::*;
 
 #[cfg(test)]
@@ -119,35 +132,6 @@ pub enum PiBuiltinTool {
     Grep,
     Find,
     Ls,
-}
-
-impl PiBuiltinTool {
-    /// Same order as `PI_BUILTIN_TOOLS` — `parse`/`as_str` are built directly
-    /// off that pairing so the two can never silently drift apart.
-    const ALL: [PiBuiltinTool; 7] = [
-        Self::Read,
-        Self::Write,
-        Self::Edit,
-        Self::Bash,
-        Self::Grep,
-        Self::Find,
-        Self::Ls,
-    ];
-
-    pub(crate) fn parse(raw: &str) -> Option<Self> {
-        PI_BUILTIN_TOOLS
-            .iter()
-            .position(|&name| name == raw)
-            .map(|i| Self::ALL[i])
-    }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        let i = Self::ALL
-            .iter()
-            .position(|&t| t == self)
-            .expect("PiBuiltinTool::ALL lists every variant");
-        PI_BUILTIN_TOOLS[i]
-    }
 }
 
 /// Mirrors `PiProfileSettings.systemPromptMode`.
@@ -266,9 +250,8 @@ pub struct SessionProfileRef {
 /// after the one load at startup (`load_profiles`).
 pub struct ProfileRegistry {
     profiles: Mutex<Vec<SessionProfile>>,
-    /// pi-migration-rollout FR-6: entries whose `kind` this build does not
-    /// understand — preserved verbatim across every future write, never
-    /// surfaced to `profiles_list`, never reinterpreted.
+    /// Original retired Pi rows and entries whose kind is unknown. Writes
+    /// preserve these verbatim; valid Pi rows also have read-only projections.
     unknown: Mutex<Vec<serde_json::Value>>,
     /// pi-migration-rollout FR-6: `false` when the on-disk schema could not
     /// be safely migrated — a newer schema version than this build
@@ -355,20 +338,6 @@ pub const UNREADABLE_SESSIONS_MSG: &str =
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_builtin_tool_round_trips_through_parse_and_as_str() {
-        for &name in PI_BUILTIN_TOOLS {
-            let tool = PiBuiltinTool::parse(name).unwrap_or_else(|| panic!("{name} must parse"));
-            assert_eq!(tool.as_str(), name);
-        }
-        assert_eq!(PiBuiltinTool::ALL.len(), PI_BUILTIN_TOOLS.len());
-    }
-
-    #[test]
-    fn an_unknown_tool_name_does_not_parse() {
-        assert_eq!(PiBuiltinTool::parse("exec"), None);
-    }
 
     /// The seam itself, without an `AppHandle`: registration is the only piece
     /// with state, and the only piece that can silently be forgotten.

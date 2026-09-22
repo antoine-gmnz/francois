@@ -163,11 +163,8 @@ pub struct ParsedRegistry {
     pub unknown: Vec<Value>,
 }
 
-/// An entry is only ever placed in `unknown` when it EXPLICITLY carries a
-/// `kind` this build does not recognize — a missing `kind` still means
-/// `legacy` (FR-2), and a genuinely malformed entry (no `id`, not even an
-/// object) is skipped exactly as before this feature: it is not recoverable
-/// data, so there is nothing to preserve.
+/// Legacy rows retain existing parsing. Retired Pi rows are kept verbatim
+/// alongside any readable projection; unknown tagged rows also pass through.
 pub fn parse_registry(bytes: &[u8]) -> ParsedRegistry {
     let Ok(doc) = serde_json::from_slice::<Value>(bytes) else {
         return ParsedRegistry::default();
@@ -184,7 +181,12 @@ pub fn parse_registry(bytes: &[u8]) -> ParsedRegistry {
             None | Some("legacy") | Some("pi") => {
                 let normalized = normalize_entry_kind_for_parse(entry.clone());
                 match serde_json::from_value::<SessionProfile>(normalized) {
-                    Ok(p) => profiles.push(p),
+                    Ok(p) => {
+                        if kind == Some("pi") {
+                            unknown.push(entry.clone());
+                        }
+                        profiles.push(p);
+                    }
                     // A recognized (or absent) kind this build still cannot
                     // deserialize. "One bad entry does not sink the registry"
                     // holds either way — but it is PRESERVED, not skipped:
@@ -230,8 +232,14 @@ pub fn save_to(
     profiles: &[SessionProfile],
     unknown: &[Value],
 ) -> Result<(), AppError> {
+    let retained_ids: std::collections::HashSet<&str> = unknown
+        .iter()
+        .filter(|row| row.get("kind").and_then(Value::as_str) == Some("pi"))
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .collect();
     let mut entries: Vec<Value> = profiles
         .iter()
+        .filter(|p| !(p.kind() == "pi" && retained_ids.contains(p.id())))
         .map(|p| serde_json::to_value(p).unwrap_or(Value::Null))
         .collect();
     entries.extend(unknown.iter().cloned());
@@ -740,4 +748,56 @@ mod tests {
         assert_eq!(parsed.unknown, unknown);
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+    use crate::profiles::testutil::*;
+    #[test]
+    fn retired_pi_profile_preserves_unknown_settings_during_legacy_save() {
+        let mut raw = serde_json::to_value(pi_fixture("retired", "Saved")).unwrap();
+        raw["future"] = serde_json::json!({"keep":[1,2]});
+        raw["settings"]["future"] = serde_json::json!({"opaque":true});
+        let input = serde_json::json!({"version":2,"profiles":[raw.clone()]});
+        let mut parsed = parse_registry(&serde_json::to_vec(&input).unwrap());
+        parsed.profiles.push(legacy_fixture("new", "New"));
+        let dir =
+            std::env::temp_dir().join(format!("francois-profile-retired-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("profiles.json");
+        save_to(&path, &parsed.profiles, &parsed.unknown).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let rows: Vec<_> = saved["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["id"] == "retired")
+            .collect();
+        assert_eq!(rows, vec![&raw]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// Identifies retired profiles without resolving instruction paths or settings.
+pub(crate) fn reject_retired_profile(state: &ProfileRegistry, id: &str) -> Result<(), AppError> {
+    let typed = state
+        .profiles
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|p| p.id() == id && p.kind() == "pi");
+    let raw = state.unknown.lock().unwrap().iter().any(|p| {
+        p.get("id").and_then(Value::as_str) == Some(id)
+            && p.get("kind").and_then(Value::as_str) == Some("pi")
+    });
+    if typed || raw {
+        Err(crate::ipc::retired_pi_error())
+    } else {
+        Ok(())
+    }
+}
+pub(crate) fn is_retired_profile(app: &AppHandle, id: &str) -> bool {
+    app.try_state::<ProfileRegistry>()
+        .is_some_and(|state| reject_retired_profile(&state, id).is_err())
 }

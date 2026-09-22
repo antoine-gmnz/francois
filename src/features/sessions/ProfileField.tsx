@@ -6,12 +6,12 @@
 // until at least one profile exists — the pre-feature form is untouched until
 // one is authored.
 
-import { newSessionProfileOptions } from '../profiles/profiles';
-import type { Account } from '../../../contract/multi-account';
 import type { AccountId } from '../../../contract/common';
+import type { Account } from '../../../contract/multi-account';
 import type { SessionProfile } from '../../../contract/session-profiles';
+import { newSessionProfileOptions } from '../profiles/profiles';
 import { profileRuntimeMismatch } from './new-session-form';
-import { Action } from '../../ui/Action';
+import { profileIsRetired } from '../../lib/runtimeCapability';
 
 export interface ProfileFieldProps {
   profiles: SessionProfile[];
@@ -21,11 +21,10 @@ export interface ProfileFieldProps {
   accounts?: Account[];
   accountId?: AccountId;
   /** Legacy profile + Pi account only (§7's one documented recovery). */
-  onCreatePiCopy?: () => void;
 }
 
-export function ProfileField({ profiles, profileId, onChange, accounts, accountId, onCreatePiCopy }: ProfileFieldProps): JSX.Element | null {
-  if (profiles.length === 0) return null;
+export function ProfileField({ profiles, profileId, onChange, accounts, accountId }: ProfileFieldProps): JSX.Element | null {
+  if (profiles.length === 0 && !profileId) return null;
   const selected = profiles.find((p) => p.id === profileId) ?? null;
   const account = accounts && accountId ? (accounts.find((a) => a.id === accountId) ?? null) : null;
   const mismatch = profileRuntimeMismatch(selected, account);
@@ -39,9 +38,10 @@ export function ProfileField({ profiles, profileId, onChange, accounts, accountI
           value={profileId}
           onChange={(e) => onChange(e.target.value)}
         >
+          {!selected && profileId && <option value={profileId} disabled>{profileId} · Unavailable</option>}
           {newSessionProfileOptions(profiles).map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
+            <option key={opt.value} value={opt.value} disabled={profileIsRetired(profiles.find((p) => p.id === opt.value))}>
+              {opt.label}{profileIsRetired(profiles.find((p) => p.id === opt.value)) ? ' · Unavailable' : ''}
             </option>
           ))}
         </select>
@@ -54,9 +54,6 @@ export function ProfileField({ profiles, profileId, onChange, accounts, accountI
       {selected?.kind === 'legacy' && selected.systemPrompt && selected.systemPrompt.trim() !== '' && (
         <div className="new-session-modal__hint">replaces the system prompt — the controls below are unaffected</div>
       )}
-      {selected?.kind === 'pi' && !mismatch && (
-        <div className="new-session-modal__hint">runs with its own Pi prompt/tool/skill settings — no system prompt override here</div>
-      )}
       {/* §7: a legacy profile on a Pi account (or the reverse) is refused by
           the core as PROFILE_RUNTIME_MISMATCH — named here before the round
           trip, in the same words the submit banner falls back to if the user
@@ -64,14 +61,6 @@ export function ProfileField({ profiles, profileId, onChange, accounts, accountI
       {mismatch && (
         <div className="new-session-modal__hint new-session-modal__hint--error">
           {mismatch.reason}
-          {mismatch.offerCreatePiCopy && onCreatePiCopy && (
-            <>
-              {' — '}
-              <Action color="var(--text)" hoverColor="var(--accent)" onClick={onCreatePiCopy}>
-                Create Pi copy…
-              </Action>
-            </>
-          )}
         </div>
       )}
     </div>

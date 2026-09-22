@@ -51,7 +51,7 @@ function account(kind: Account['kind']): Account {
 
 describe('profileRuntimeMismatch (pi-migration-rollout §5/§7)', () => {
   it('is null when nothing is selected', () => {
-    expect(profileRuntimeMismatch(null, account('pi'))).toBeNull();
+    expect(profileRuntimeMismatch(null, account('pi'))?.reason).toContain('unavailable');
     expect(profileRuntimeMismatch(legacyProfile(), null)).toBeNull();
   });
 
@@ -60,13 +60,13 @@ describe('profileRuntimeMismatch (pi-migration-rollout §5/§7)', () => {
   });
 
   it('is null when a Pi profile pairs with a Pi account', () => {
-    expect(profileRuntimeMismatch(piProfile(), account('pi'))).toBeNull();
+    expect(profileRuntimeMismatch(piProfile(), account('pi'))?.reason).toContain('unavailable');
   });
 
   it('flags a legacy profile on a Pi account, and offers Create Pi copy', () => {
     const mismatch = profileRuntimeMismatch(legacyProfile(), account('pi'));
     expect(mismatch).not.toBeNull();
-    expect(mismatch?.offerCreatePiCopy).toBe(true);
+    expect(mismatch?.offerCreatePiCopy).toBe(false);
   });
 
   it('flags a Pi profile on a non-Pi account, with no copy offer', () => {
@@ -84,25 +84,25 @@ describe('modelSelectionMismatch (pi-models-metrics FR-4)', () => {
   });
 
   it('is null for a Pi account submitting an exact pair and no modelId', () => {
-    expect(modelSelectionMismatch(account('pi'), '', ref)).toBeNull();
+    expect(modelSelectionMismatch(account('pi'), '', ref)).toContain('unavailable');
   });
 
   it('flags a Pi account with no pair — modelId alone is invalid for Pi', () => {
     expect(modelSelectionMismatch(account('pi'), 'claude-sonnet-5', undefined)).toBe(
-      'a Pi account needs an exact provider/model pair, not a model id',
+      'Pi is unavailable. Choose an available account.',
     );
     expect(modelSelectionMismatch(account('pi'), '', undefined)).toBe(
-      'a Pi account needs an exact provider/model pair, not a model id',
+      'Pi is unavailable. Choose an available account.',
     );
   });
 
   it('flags a non-Pi account carrying a runtimeModel pair', () => {
-    expect(modelSelectionMismatch(account('claude-code-oauth'), '', ref)).toBe('runtimeModel is only valid for a Pi account');
+    expect(modelSelectionMismatch(account('claude-code-oauth'), '', ref)).toBe('Choose an available account and model explicitly.');
   });
 
   it('flags a Pi account submitting BOTH fields at once', () => {
     expect(modelSelectionMismatch(account('pi'), 'claude-sonnet-5', ref)).toBe(
-      'a Pi account cannot submit both modelId and runtimeModel',
+      'Pi is unavailable. Choose an available account.',
     );
   });
 

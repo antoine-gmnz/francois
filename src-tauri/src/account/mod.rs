@@ -25,15 +25,8 @@
 // ever takes `session::Engine.sessions` WHILE `AccountState` IS HELD. FR-9's
 // session repointing (an account was removed) is driven from commands.rs AFTER
 // the registry write returns, by calling into `session::reassign_account_sessions`
-// with no account lock held. pi-provider-auth's `sessions_pinned_to` (via the
-// `AccountSessionQuery` hook) is the same shape: `session::Session::meta()`
-// already locks `AccountState` FROM INSIDE an `Engine.sessions`-locked closure
-// (`kind_of`, called by every `with_session(_mut)` that builds a `SessionMeta`),
-// so the established order is `Engine.sessions` → `AccountState`. Calling
-// `sessions_pinned_to` with `AccountState` already held would take the two in
-// the OPPOSITE order — see pi/mod.rs's `sessions_currently_use` doc comment and
-// `account_trust_pi`/`account_remove` (pi_commands.rs/commands.rs) for the
-// two-phase (check unlocked, mutate separately) shape this requires.
+// with no account lock held. Session metadata takes the account lock while
+// holding the session lock, so account mutation callbacks run after unlocking.
 
 /// The vendor CLIs the login routes are driven by (`claude`, `codex`, `grok`):
 /// is one installed on this machine, and `npm i -g` it if not. A CHILD here
@@ -59,14 +52,6 @@ mod environment;
 mod grok;
 mod login;
 mod mirror;
-/// pi-provider-auth: `pi` accounts — a reference to an existing, user-owned
-/// `PI_CODING_AGENT_DIR` rather than a Francois-owned config dir (see the
-/// module doc there for why that makes this child unlike every other one).
-mod pi;
-/// pi-provider-auth: the `francois:account:addPi/trustPi/piSetup/piRefresh`
-/// Tauri command surface — a SIBLING of commands.rs rather than a section
-/// inside it, purely for CLAUDE.md's ~1000-line file cap (see its module doc).
-mod pi_commands;
 mod registry;
 
 pub(crate) use cli_tools::*;
@@ -77,16 +62,6 @@ pub use environment::*;
 pub(crate) use grok::*;
 pub use login::*;
 pub(crate) use mirror::*;
-// `pub` for the three types `pi::refresh` declares `pub` — `account_pi_refresh`
-// (pi_commands.rs) answers with `PiProviderAuthObservation`/`PiAuthState`, and
-// `main.rs` manages a `PiInstallProbe`; like `AccountLoginStarted`, a type
-// `main.rs` must name has to be reachable from an external crate
-// (core-architecture-wave3 FR-2). The rest of `pi`'s surface is declared
-// `pub(crate)` at its definition and stays that way through this glob — see
-// pi/mod.rs for why this is one glob and not a `pub(crate)` glob plus an
-// explicit `pub use`.
-pub use pi::*;
-pub use pi_commands::*;
 pub use registry::*;
 
 #[cfg(test)]
@@ -411,6 +386,7 @@ pub struct LoginHandle {
 pub struct AccountState(Mutex<AccountInner>, AtomicBool);
 
 pub struct AccountInner {
+    retired_records: HashMap<String, serde_json::Value>,
     records: Vec<AccountRecord>,
     /// "default" or a live record id — ALWAYS resolves (FR-4).
     default_account_id: String,
@@ -421,27 +397,19 @@ pub struct AccountInner {
     default_organization: Option<String>,
     /// FR-16: at most one login in flight, app-wide.
     login: Option<LoginHandle>,
-    /// pi-provider-auth FR-3: open Pi setup PTYs, keyed by `login_id`. A
-    /// SEPARATE collection from `login` (rather than sharing its single slot)
-    /// because `piSetup`'s own error list (contract/multi-account.ts) carries
-    /// no "a login is already in progress" code — an unrelated Claude login
-    /// and a Pi setup, or two Pi setups, must not collide with one another.
-    /// `pi::setup_pty_open_for` is what still caps ONE PER ACCOUNT for the
-    /// FR-4/FR-8 trust/remove gate.
-    pi_setups: HashMap<String, LoginHandle>,
 }
 
 impl Default for AccountState {
     fn default() -> Self {
         AccountState(
             Mutex::new(AccountInner {
+                retired_records: HashMap::new(),
                 records: Vec::new(),
                 default_account_id: DEFAULT_ACCOUNT_ID.to_string(),
                 auth_failed_at: HashMap::new(),
                 default_email: None,
                 default_organization: None,
                 login: None,
-                pi_setups: HashMap::new(),
             }),
             AtomicBool::new(false),
         )
@@ -563,39 +531,17 @@ pub fn notify_credentials_changing(account_id: &str) {
     }
 }
 
-/// pi-provider-auth FR-4/FR-6/FR-8: whether the given account currently has
-/// any LIVE session pinned to it — checked before `trustPi`/Pi removal refuse
-/// with `ACCOUNT_IN_USE`. Same inversion as `AccountRemovalObserver`: this
-/// domain only declares that it needs the answer; `session` (the domain that
-/// actually owns the registry the answer comes from) supplies it, wired once
-/// in the crate root's `.setup()`, so `account` still never names `session`.
-pub trait AccountSessionQuery: Send + Sync {
-    fn sessions_pinned_to(&self, app: &AppHandle, account_id: &str) -> Vec<String>;
-}
-
-static SESSION_QUERY: std::sync::OnceLock<Box<dyn AccountSessionQuery>> =
-    std::sync::OnceLock::new();
-
-/// Called ONCE, from the crate root's `.setup()`. A second call is ignored —
-/// see `session::register_teardown` for why that is not a panic.
-pub fn register_session_query(query: Box<dyn AccountSessionQuery>) {
-    let _ = SESSION_QUERY.set(query);
-}
-
-/// Empty when nothing is registered (every unit test): a test with no session
-/// registry has no session to report, so "in use" reads `false` there.
-pub(crate) fn sessions_pinned_to(app: &AppHandle, account_id: &str) -> Vec<String> {
-    SESSION_QUERY
-        .get()
-        .map(|q| q.sessions_pinned_to(app, account_id))
-        .unwrap_or_default()
-}
-
 pub trait AccountKinds {
     fn kind_of(&self, account_id: &str) -> AccountKind;
+    fn exists(&self, _account_id: &str) -> bool {
+        true
+    }
 }
 
 impl AccountKinds for AppHandle {
+    fn exists(&self, id: &str) -> bool {
+        known_ids(self).contains(id)
+    }
     fn kind_of(&self, account_id: &str) -> AccountKind {
         kind_of(self, account_id)
     }
@@ -657,50 +603,6 @@ pub fn endpoint_of(app: &AppHandle, account_id: &str) -> Option<(EndpointRecord,
     })
 }
 
-/// pi-session-durability HIGH remediation (pi-provider-auth FR-5 wiring):
-/// `session::adapter::pi::recovery`'s entry point into FR-4's execution gate
-/// (`pi_execution_preflight`, this module's `pi` child) — the exact
-/// lock → reconcile-drift → persist → gate sequence `account_pi_setup`/
-/// `account_pi_refresh` (pi_commands.rs) already run inline, factored out
-/// here so a caller OUTSIDE this domain never reaches into `AccountState`'s
-/// own lock directly (only this module ever touches its private `.0` field —
-/// same reason `config_dir_of`/`kind_of` are the accessors they are).
-/// Returns the SAME `(configDir, runtime, distro,
-/// inheritEnvironmentCredentials)` tuple `pi_execution_preflight` does, so a
-/// reconnect's `RuntimeConnectContext` can be built straight from it.
-pub(crate) fn pi_execution_preflight_for(
-    app: &AppHandle,
-    account_id: &str,
-    blocked_action: &str,
-) -> Result<(String, String, Option<String>, bool), AppError> {
-    let Some(state) = app.try_state::<AccountState>() else {
-        return Err(AppError::new(
-            ErrorCode::Internal,
-            "account state is unavailable",
-        ));
-    };
-    let Ok(mut inner) = state.0.lock() else {
-        return Err(AppError::new(
-            ErrorCode::Internal,
-            "account state is unavailable",
-        ));
-    };
-    if find_pi_record(&inner, account_id).is_err() {
-        return Err(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG));
-    }
-    let drifted = reconcile_trust_drift(&mut inner, account_id);
-    if drifted {
-        if let Err(msg) = persist(app, &inner) {
-            eprintln!("accounts: could not persist accounts.json: {msg}");
-        }
-        // pi-models-metrics FR-2/FR-9: the configuration this account's models
-        // were probed under just changed — its cached catalogue must not be
-        // served back by the keep-the-last-snapshot fallback.
-        notify_credentials_changing(account_id);
-    }
-    pi_execution_preflight(&inner, account_id, blocked_action, drifted)
-}
-
 /// FR-10: every account id a persisted `SessionMeta.accountId` may resolve
 /// against — the built-in id plus every registered one.
 pub fn known_ids(app: &AppHandle) -> std::collections::HashSet<String> {
@@ -734,11 +636,12 @@ pub fn resolve_new_session_account(
             "account state is unavailable",
         ));
     };
-    match requested.map(str::trim).filter(|s| !s.is_empty()) {
-        None => Ok(inner.default_account_id.clone()),
-        Some(id) if exists(&inner, id) => Ok(id.to_string()),
-        Some(_) => Err(AppError::new(ErrorCode::AccountNotFound, "no such account")),
-    }
+    let id = requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&inner.default_account_id);
+    ensure_account_available(&inner, id)?;
+    Ok(id.to_string())
 }
 
 /// The current isDefault account id (usage-bar §5: `accountId` omitted ⇒ this).
@@ -816,6 +719,57 @@ pub fn is_credential_failure(message: &str) -> bool {
     ]
     .iter()
     .any(|needle| m.contains(needle))
+}
+
+pub(crate) fn ensure_account_available(inner: &AccountInner, id: &str) -> Result<(), AppError> {
+    if id == DEFAULT_ACCOUNT_ID {
+        return Ok(());
+    }
+    let record = inner
+        .records
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| AppError::new(ErrorCode::AccountNotFound, "no such account"))?;
+    if record.kind == AccountKind::Pi {
+        return Err(crate::ipc::retired_pi_error());
+    }
+    Ok(())
+}
+
+/// process-settings-and-metrics FR-1: the account half of a native start's
+/// execution snapshot — its kind and home, read under ONE lock so a start can
+/// never pair a kind with a home from a different registry state. `None` home
+/// only for the built-in account (whose home IS the ambient one); an unknown id
+/// is `ACCOUNT_NOT_FOUND` and a retired Pi row the retired error — never a
+/// `None` that a spawn would read as "use the ambient home".
+pub(crate) fn execution_account_in(
+    inner: &AccountInner,
+    id: &str,
+) -> Result<(AccountKind, Option<String>), AppError> {
+    ensure_account_available(inner, id)?;
+    Ok(inner
+        .records
+        .iter()
+        .find(|r| r.id == id && id != DEFAULT_ACCOUNT_ID)
+        .map_or((AccountKind::ClaudeCodeOauth, None), |r| {
+            (r.kind, Some(r.config_dir.clone()))
+        }))
+}
+
+/// `execution_account_in` against the live registry.
+pub(crate) fn execution_account(
+    app: &AppHandle,
+    id: &str,
+) -> Result<(AccountKind, Option<String>), AppError> {
+    let Some(state) = app.try_state::<AccountState>() else {
+        let empty = AccountState::default().0.into_inner();
+        return execution_account_in(&empty.unwrap_or_else(|p| p.into_inner()), id);
+    };
+    let inner = state
+        .0
+        .lock()
+        .map_err(|_| AppError::new(ErrorCode::Internal, "account state is unavailable"))?;
+    execution_account_in(&inner, id)
 }
 
 #[cfg(test)]
@@ -904,5 +858,42 @@ mod tests {
         assert!(!is_credential_failure(
             "could not start claude: No such file or directory"
         ));
+    }
+
+    /// process-settings-and-metrics FR-1: a native start reads kind and home in
+    /// ONE lookup. Only the built-in account runs on the ambient home; an
+    /// unknown or retired id is a typed error, never a quiet `None` home.
+    #[test]
+    fn execution_account_resolves_kind_and_home_together_without_ambient_fallback() {
+        let mut inner = inner_fixture(&["work"], "work");
+        let mut codex = record_fixture("codex-a", "Codex A");
+        codex.kind = AccountKind::CodexCli;
+        let mut pi = record_fixture("saved-pi", "Saved Pi");
+        pi.kind = AccountKind::Pi;
+        inner.records.extend([codex, pi]);
+
+        assert_eq!(
+            execution_account_in(&inner, DEFAULT_ACCOUNT_ID).unwrap(),
+            (AccountKind::ClaudeCodeOauth, None)
+        );
+        assert_eq!(
+            execution_account_in(&inner, "work").unwrap(),
+            (
+                AccountKind::ClaudeCodeOauth,
+                Some("/tmp/accounts/work".into())
+            )
+        );
+        assert_eq!(
+            execution_account_in(&inner, "codex-a").unwrap(),
+            (AccountKind::CodexCli, Some("/tmp/accounts/codex-a".into()))
+        );
+        assert_eq!(
+            execution_account_in(&inner, "removed").unwrap_err().code,
+            ErrorCode::AccountNotFound
+        );
+        assert_eq!(
+            execution_account_in(&inner, "saved-pi").unwrap_err().code,
+            ErrorCode::RuntimeUnsupported
+        );
     }
 }

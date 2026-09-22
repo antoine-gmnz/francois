@@ -11,6 +11,7 @@
 // nothing the response does not (the projects §5 preamble reasoning, verbatim).
 
 import type { ProfileId, SessionProfileRef } from './common';
+// Pi profiles are read-only retained data; shared Pi mutations return RUNTIME_UNSUPPORTED.
 
 export type { ProfileId, SessionProfileRef };
 
@@ -143,22 +144,7 @@ export type ProfileUpdateInput = ProfileCreateInput & { id: ProfileId };
 // errors: 'PROFILE_NOT_FOUND' · 'INVALID_INPUT' · 'PROFILE_ARG_DENIED' ·
 //   'PROFILE_RUNTIME_MISMATCH' (an update may not change a stored profile's kind) · 'INTERNAL'
 
-// ---------- francois:profiles:copyToPi (NEW, pi-migration-rollout FR-4) ----------
-
-/**
- * "Create Pi copy" of a LEGACY profile. `id` is the source. Only the name and the
- * user-authored system prompt carry over — the caller sends them back inside the reviewed
- * `name` / `settings`; the source's `extraArgs` are never translated (no `--mcp-config`,
- * no `--allowedTools`). The source profile is kept unchanged.
- */
-export interface ProfileCopyToPiInput {
-  id: ProfileId;
-  name: string;
-  settings: PiProfileSettings;
-}
-// invoke('profiles_copy_to_pi', req: ProfileCopyToPiInput): Promise<Result<PiSessionProfile>>
-// errors: 'PROFILE_NOT_FOUND' · 'PROFILE_RUNTIME_MISMATCH' (the source is already a Pi
-//   profile) · 'INVALID_INPUT' · 'INTERNAL'
+// Pi profiles remain read-only compatibility data; copy-to-Pi is retired.
 
 // ---------- francois:profiles:remove ----------
 
@@ -167,3 +153,4 @@ export interface ProfileRemoveInput {
 }
 // invoke('profiles_remove', req: ProfileRemoveInput): Promise<Result<null>>
 // errors: 'PROFILE_NOT_FOUND' · 'INTERNAL'
+

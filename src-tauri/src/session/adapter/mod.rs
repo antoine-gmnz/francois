@@ -13,26 +13,20 @@
 //! the one real implementation — same "model in mod.rs, one concern per
 //! child" shape the rest of this domain follows.
 
+pub(crate) mod capabilities;
 mod claude_code;
 pub(crate) mod codex;
 mod grok;
 mod openai;
-/// pi-runtime-distribution: installation discovery only (§5's
-/// `francois:runtime:installation`) — NOT the RPC transport below, which
-/// stays a deliberate stub.
-pub(crate) mod pi;
-
-/// The Pi transport is intentionally unavailable until the production runtime
-/// is introduced. Keeping this adapter explicit makes dispatch exhaustive and
-/// prevents an unknown runtime from falling back to Claude.
+/// Retired Pi dispatch rejects execution; saved runtime identities stay exact.
 struct PiAdapter;
 
+/// claude-process-adapter FR-7: Claude-shaped context decoding lives with the adapter.
+pub(crate) use claude_code::context::ContextTracker;
 pub(crate) use claude_code::ClaudeCodeAdapter;
-// `session_compact` (a synchronous side-spawn, not a full turn) and the
-// argv-shaped unit tests still reach these directly — same "turn-shaped, not
-// engine-shaped" reasoning `spawn.rs`'s module doc gives for keeping them out
-// of the pure argv/env helpers.
-pub(crate) use claude_code::{child_stdout_lines, spawn_claude};
+// `session_compact` is a synchronous side-run, not a full turn: its spawn and
+// decoding stay behind the adapter too (claude-process-adapter FR-6/FR-7).
+pub(crate) use claude_code::run_compact;
 /// multi-provider-codex FR-3: the `AgentRuntime::Codex` adapter.
 pub(crate) use codex::CodexAdapter;
 /// multi-provider-grok FR-3: the `AgentRuntime::Grok` adapter.
@@ -50,7 +44,10 @@ use super::*;
 
 use crate::ipc::AppError;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+
+pub(crate) use crate::session::application::{
+    ControlAck, PendingCounts, PermissionDecision, TurnContext, TurnControl, TurnMode,
+};
 use std::collections::BTreeMap;
 use tauri::AppHandle;
 
@@ -172,91 +169,6 @@ impl AgentRuntime {
 /// FR-1: what a turn spawn/connect reads off its session — snapshotted BEFORE
 /// any I/O (under `Engine.sessions`, released immediately after), so no
 /// adapter ever reaches back into the registry mid-spawn.
-pub struct TurnContext {
-    pub(crate) session_id: String,
-    pub(crate) block_id: String,
-    pub(crate) text: String,
-    pub(crate) mode: TurnMode,
-    pub(crate) cwd: String,
-    pub(crate) model_id: String,
-    pub(crate) effort: Option<String>,
-    pub(crate) permission_mode: String,
-    pub(crate) runtime: String,
-    pub(crate) worktree_distro: Option<String>,
-    pub(crate) account_id: String,
-    /// Carried per FR-1's field list, even though `ClaudeCodeAdapter` does not
-    /// read it directly today: the allowGit auto-approve fast path is decided
-    /// deeper, in the control-channel handler, which still reads it live off
-    /// `Session` (unchanged) rather than off this snapshot.
-    #[allow(dead_code)]
-    pub(crate) allow_git: bool,
-    /// The resume anchor, already resolved per `mode` — `ResumeRetry` forces
-    /// this `None` regardless of what `Session.claude_session_id` holds, so a
-    /// still-good id is never dropped preemptively (a fresh init overwrites
-    /// it on success).
-    pub(crate) resume: Option<String>,
-    /// session-profiles FR-13: the REPLACE-mode prompt, snapshotted at session
-    /// creation and carried on EVERY turn — never re-read from the profile.
-    pub(crate) system_prompt: Option<String>,
-    /// session-profiles FR-12: raw extra argv tokens, appended last to the
-    /// runtime's own argv. Empty when the session carries none.
-    pub(crate) extra_args: Vec<String>,
-    /// response-mode FR-5: the mode this turn was SPAWNED with, snapshotted with
-    /// the rest. No adapter re-reads the session mid-turn, which is what makes
-    /// FR-4's next-turn semantics uniform across runtimes.
-    pub(crate) response_mode: crate::session::ResponseMode,
-}
-
-/// Immutable, lock-free snapshot used to establish a session-scoped runtime
-/// connection. It deliberately carries no registry guard or credential.
-#[allow(dead_code)]
-#[derive(Clone)]
-pub(crate) struct RuntimeConnectContext {
-    pub(crate) session_id: String,
-    pub(crate) cwd: String,
-    pub(crate) runtime: String,
-    pub(crate) worktree_distro: Option<String>,
-    pub(crate) account_id: String,
-    pub(crate) launch_policy: RuntimeLaunchPolicy,
-    pub(crate) profile_snapshot: RuntimeProfileSnapshot,
-    pub(crate) model: RuntimeModelRef,
-    pub(crate) resume: Option<String>,
-    /// pi-session-durability HIGH remediation (pi-provider-auth FR-5 wiring):
-    /// the pinned Pi account's own config dir (`PI_CODING_AGENT_DIR`) —
-    /// `process::spawn` needs it to build the child's environment through
-    /// `crate::account::pi_account_env`. `None` only in a test that builds a
-    /// context with no real Pi account behind it; a production connect
-    /// always populates it — the gate that supplies it
-    /// (`crate::account::pi_execution_preflight_for`) is what a missing
-    /// account fails on, before a context is ever built.
-    pub(crate) config_dir: Option<String>,
-    /// Mirrors `PiAccountConfig.inheritEnvironmentCredentials` — whether this
-    /// account opted into inheriting ambient provider credentials (FR-5).
-    pub(crate) inherit_environment_credentials: bool,
-    /// pi-migration-rollout FR-3/FR-5: the session's OWN creation-time
-    /// snapshot of its Pi profile settings, if it carries one — never
-    /// re-resolved from the profile registry (FR-3's "editing a profile
-    /// never retroactively changes a session"). `None` means the session
-    /// was created with no profile override at all, in which case Pi
-    /// launches with its own defaults. `process::spawn` is the ONE call
-    /// site that spends this (`profile_args::build_pi_profile_args`).
-    pub(crate) pi_profile_settings: Option<crate::profiles::PiProfileSettings>,
-    /// pi-migration-rollout FR-3 (read-once fix): the ALREADY-RESOLVED launch
-    /// prompt snapshot that pairs with `pi_profile_settings` above — resolved
-    /// exactly once (`pi::resolve_launch_prompt`, at session creation, or
-    /// lazily once for a session persisted before this fix) and carried
-    /// through unchanged from then on. `process::full_pi_args` reads this
-    /// directly and performs NO filesystem read of its own; `None` whenever
-    /// `pi_profile_settings` is `None` too.
-    pub(crate) pi_launch_prompt: Option<pi::PiLaunchPrompt>,
-    /// pi-skills-capabilities FR-6/FR-7: the session's pinned launch policy —
-    /// REQUIRED for a real Pi connect (`process::pi_args` refuses with
-    /// `Internal` otherwise, the same defensive shape `config_dir` already
-    /// follows). `None` only in a test that builds a context with no real Pi
-    /// session behind it.
-    pub(crate) resource_policy: Option<pi::RuntimeResourcePolicy>,
-}
-
 /// pi-models-metrics: widened from `pub(crate)` to `pub` — `session_create`/
 /// `session_switch_model` (both `pub fn`, required for Tauri's command
 /// registration) now take this directly as a `runtimeModel` parameter, and a
@@ -281,180 +193,6 @@ pub struct CapabilityState {
 
 pub type RuntimeCapabilities = BTreeMap<String, CapabilityState>;
 
-/// pi-skills-capabilities §5: one command the runtime reports as actually
-/// loaded (Pi's `get_commands`), pre-policy-labelled — neutral vocabulary.
-/// `session::skills`/`session::slash` (which own `SkillInfo`/
-/// `SlashCommandInfo`) project this onto their own contract-mirroring
-/// shapes; this module knows nothing about either.
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RuntimeCommandInfo {
-    /// The exact command text, spelling preserved (e.g. `/skill:review` or
-    /// `/summarize`) — never rebuilt from a derived name (FR-1).
-    pub(crate) invocation: String,
-    pub(crate) description: String,
-    pub(crate) source: RuntimeCommandSource,
-    pub(crate) source_path: Option<String>,
-    /// false ⇒ listed but not runnable under the session's policy; see
-    /// `unavailable_reason`.
-    pub(crate) loaded: bool,
-    pub(crate) unavailable_reason: Option<String>,
-}
-
-/// A skill vs. a prompt template — mirrors contract `SkillInfo.source`.
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RuntimeCommandSource {
-    Skill,
-    Prompt,
-}
-
-/// Task 08 expands this message vocabulary further. pi-transcript-events FR-7
-/// adds the one already-validated multimodal shape every session-scoped
-/// runtime needs: the session's OWN attachment records, so an adapter can
-/// resolve whichever ones its text actually references into its own wire
-/// content — never a base64 blob built in the frontend and handed across IPC.
-#[allow(dead_code)]
-pub(crate) struct RuntimeSubmission {
-    pub(crate) text: String,
-    pub(crate) attachments: Vec<crate::session::attachments::Attachment>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) struct SubmissionReceipt {
-    pub(crate) request_id: String,
-}
-
-#[allow(dead_code)]
-pub(crate) trait RuntimeSessionControl: Send + Sync {
-    fn submit(&self, input: RuntimeSubmission) -> Result<SubmissionReceipt, AppError>;
-    fn capabilities(&self) -> RuntimeCapabilities;
-    fn cancel(&self) -> Result<(), AppError>;
-    fn shutdown(&self) -> Result<(), AppError>;
-    /// pi-models-metrics FR-5/FR-6: send a model/effort change, then READ BACK
-    /// the accepted values before returning — an implementer must never
-    /// report success without confirming what the runtime actually applied.
-    /// The second tuple member is the READ-BACK level (never the requested
-    /// one echoed back unconfirmed); the third is the FULL set of levels the
-    /// runtime reports for this model (lead clarification: the descriptor
-    /// carries only `reasoning: boolean` — the caller projects this list onto
-    /// `SessionMeta.model.efforts`, never the descriptor). Default:
-    /// unsupported, for every runtime that has no live model-switching
-    /// connection.
-    fn switch_model(
-        &self,
-        _model: RuntimeModelRef,
-        _effort: Option<String>,
-    ) -> Result<(events::RuntimeModelDescriptor, Option<String>, Vec<String>), AppError> {
-        Err(runtime_unsupported())
-    }
-    /// pi-models-metrics FR-7: read current usage/cost off the runtime.
-    fn read_metrics(&self) -> Result<events::RuntimeMetrics, AppError> {
-        Err(runtime_unsupported())
-    }
-    /// pi-turn-controls FR-5/FR-6: clear whatever the runtime is currently
-    /// holding in its OWN queue — part of the Stop sequence
-    /// (`adapter::pi::controls::stop_sequence`), and the sole cancellation
-    /// path for a Pi-owned message once `session_unqueue` can no longer
-    /// remove it individually. Default: unsupported.
-    fn clear_queue(&self) -> Result<(), AppError> {
-        Err(runtime_unsupported())
-    }
-    /// pi-turn-controls FR-6: abort the in-flight turn — distinct from
-    /// `cancel` (the audit: "clear_queue and abort are separate"; `cancel`
-    /// stays the generic single-verb path every other runtime's simple
-    /// interrupt uses). Default: unsupported.
-    fn abort(&self) -> Result<(), AppError> {
-        Err(runtime_unsupported())
-    }
-    /// pi-turn-controls FR-8: manual compaction over THIS connection — never
-    /// a side-spawn. Blocks up to the 180s deadline. Default: unsupported.
-    fn compact(&self) -> Result<(), AppError> {
-        Err(runtime_unsupported())
-    }
-    /// pi-skills-capabilities FR-1/FR-2: the runtime's OWN currently-loaded
-    /// commands (Pi's `get_commands`) — never a `.claude/` scan. Default:
-    /// unsupported, for every runtime with no live command listing.
-    fn list_commands(&self) -> Result<Vec<RuntimeCommandInfo>, AppError> {
-        Err(runtime_unsupported())
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum TurnMode {
-    Normal,
-    #[allow(dead_code)]
-    Compact,
-    /// Re-run of a turn whose `--resume` was rejected: skip re-buffering the
-    /// user message; the caller has already cleared `claude_session_id` so it
-    /// runs fresh (session-engine FR-9).
-    ResumeRetry,
-}
-
-/// FR-2: pending-state introspection. `refresh_parked_status` derives
-/// `awaiting_approval`/`awaiting_input` from this without knowing which
-/// adapter it is talking to.
-#[derive(Clone, Copy, Default)]
-pub struct PendingCounts {
-    pub(crate) questions: usize,
-    pub(crate) permissions: usize,
-}
-
-/// FR-2: what `permissions_decide` hands to `TurnControl::decide_permission`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PermissionDecision {
-    Allow,
-    Deny,
-}
-
-/// The result of a `TurnControl::answer_question`/`decide_permission` call.
-///
-/// Richer than the bare `bool` the spec's FR-2 sketches, because the caller
-/// (`session_answer_question`/`permissions_decide`) must tell "never pending"
-/// (no event at all) apart from "pending, but the channel died between park
-/// and decision" (a `cancelled` resolution is still owed, matching the
-/// pre-refactor behavior). Both call sites match all three variants: the two
-/// failure variants return the SAME `*_NOT_PENDING` error, and only
-/// `ChannelClosed` resolves the card `cancelled` on its way out.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ControlAck {
-    /// The id was never pending (unknown, or already resolved by a race).
-    NotPending,
-    /// The id was pending and the decision reached the control channel.
-    Applied,
-    /// The id was pending, but the channel is gone (the child died between
-    /// park and decision) — the caller resolves it `cancelled`.
-    ChannelClosed,
-}
-
-/// FR-2: replaces direct field access on the concrete turn handle, which
-/// moves into `claude_code.rs` and is `pub(crate)` to it only. No command may
-/// name a `Child`, a `ChildStdin`, or a pending map (FR-8) — everything reaches
-/// the live turn through this trait.
-pub(crate) trait TurnControl: Send + Sync {
-    fn interrupt(&self);
-    fn kill(&self);
-    /// `id` is the caller's own tracking key for the ask — `blockId` at every
-    /// call site today. The CLI's own `request_id` is an adapter-internal
-    /// implementation detail the engine never sees.
-    fn answer_question(&self, id: &str, answers: &Value) -> ControlAck;
-    fn decide_permission(&self, id: &str, decision: PermissionDecision) -> ControlAck;
-    /// permission-guardrails FR-7: the rule pattern a STILL-PENDING permission
-    /// ask was parked with. A peek — it claims nothing, so `permissions_decide`
-    /// can write an `*Always` rule before claiming (the spec'd order) without
-    /// consuming the ask. `None` once the ask is resolved, or if it never was
-    /// pending: that is the authorization gate on the rule write, and it must
-    /// never be answered from the transcript buffer, whose resolved permission
-    /// cards keep their `ask` (pattern included) for the life of the session.
-    fn pending_permission_pattern(&self, id: &str) -> Option<String>;
-    fn pending_counts(&self) -> PendingCounts;
-    /// App-exit teardown only (`kill_all`): synchronously claim every pending
-    /// ask so it can be resolved `cancelled` before the process is killed.
-    /// Returns `(question block ids, permission block ids)`.
-    fn drain_pending(&self) -> (Vec<String>, Vec<String>);
-}
-
 /// FR-1: the whole runner contract — turn start, the live control channel,
 /// pending-state introspection, and the runtime's model catalog.
 pub(crate) trait SessionAdapter: Send + Sync {
@@ -473,28 +211,8 @@ pub(crate) trait SessionAdapter: Send + Sync {
         app: &AppHandle,
         ctx: TurnContext,
     ) -> Result<std::sync::Arc<dyn TurnControl>, AppError>;
-    /// pi-rpc-sessions FR-1: `app` is threaded through (unlike `begin_turn`'s
-    /// per-turn seam, which the engine already holds a lock-free snapshot
-    /// for) because a session-scoped connection's own background reader must
-    /// keep publishing `francois://session/event` runtime envelopes for the
-    /// rest of its life, long after this call returns.
-    #[allow(dead_code)]
-    fn connect_session(
-        &self,
-        _app: &AppHandle,
-        _ctx: RuntimeConnectContext,
-    ) -> Result<std::sync::Arc<dyn RuntimeSessionControl>, AppError> {
-        Err(runtime_unsupported())
-    }
-    fn models(&self, app: &AppHandle, account_id: &str) -> Vec<ModelInfo>;
-}
 
-#[allow(dead_code)]
-fn runtime_unsupported() -> AppError {
-    AppError::runtime(
-        crate::ipc::RuntimeErrorCode::Unsupported,
-        "this runtime does not support session connections",
-    )
+    fn models(&self, app: &AppHandle, account_id: &str) -> Vec<ModelInfo>;
 }
 
 impl SessionAdapter for PiAdapter {
@@ -502,37 +220,17 @@ impl SessionAdapter for PiAdapter {
         AgentRuntime::Pi
     }
     fn preflight(&self, _app: &AppHandle, _ctx: &TurnContext) -> Result<(), AppError> {
-        Err(AppError::runtime(
-            crate::ipc::RuntimeErrorCode::Unavailable,
-            "Pi runtime is not available in this build",
-        ))
+        Err(crate::ipc::retired_pi_error())
     }
     fn begin_turn(
         &self,
         _app: &AppHandle,
         _ctx: TurnContext,
     ) -> Result<std::sync::Arc<dyn TurnControl>, AppError> {
-        Err(AppError::runtime(
-            crate::ipc::RuntimeErrorCode::Unavailable,
-            "Pi runtime is not available in this build",
-        ))
+        Err(crate::ipc::retired_pi_error())
     }
     fn models(&self, _app: &AppHandle, _account_id: &str) -> Vec<ModelInfo> {
         Vec::new()
-    }
-
-    /// pi-rpc-sessions FR-1/FR-4: the real, session-scoped seam — spawn the
-    /// certified Pi child under the baseline launch policy and run the
-    /// `get_state` handshake. `preflight`/`begin_turn` above stay
-    /// unavailable: Pi does not use the per-turn `TurnControl` seam every
-    /// other runtime does (a Pi child outlives a single turn), so nothing
-    /// routes a Pi session through them today — see the module doc.
-    fn connect_session(
-        &self,
-        app: &AppHandle,
-        ctx: RuntimeConnectContext,
-    ) -> Result<std::sync::Arc<dyn RuntimeSessionControl>, AppError> {
-        Ok(pi::connect(app, ctx)? as std::sync::Arc<dyn RuntimeSessionControl>)
     }
 }
 
@@ -663,6 +361,8 @@ mod tests {
         // engine-level `begin_turn` orchestration is covered where it lives,
         // against the pure ladder that builds this struct (session/turn.rs).
         let ctx = TurnContext {
+            scope: Default::default(),
+            execution: Default::default(),
             session_id: "s1".into(),
             block_id: "b1".into(),
             text: "hi".into(),
@@ -692,18 +392,6 @@ mod tests {
     }
 }
 
-#[derive(Clone)]
-#[allow(dead_code)]
-pub(crate) struct RuntimeLaunchPolicy {
-    pub(crate) permission_mode: String,
-    pub(crate) allow_git: bool,
-}
-#[derive(Clone)]
-#[allow(dead_code)]
-pub(crate) struct RuntimeProfileSnapshot {
-    pub(crate) system_prompt: Option<String>,
-    pub(crate) extra_args: Vec<String>,
-}
 impl RuntimeModelRef {
     pub(crate) fn validate(&self) -> Result<(), AppError> {
         if [&self.provider_id, &self.model_id]
@@ -718,20 +406,7 @@ impl RuntimeModelRef {
         Ok(())
     }
 }
-impl RuntimeConnectContext {
-    pub(crate) fn validate(self) -> Result<Self, AppError> {
-        self.model.validate()?;
-        if !std::path::Path::new(&self.cwd).is_absolute()
-            || !crate::ipc::valid_correlation(&self.session_id)
-        {
-            return Err(AppError::runtime(
-                crate::ipc::RuntimeErrorCode::InvalidInput,
-                "invalid runtime connection snapshot",
-            ));
-        }
-        Ok(self)
-    }
-}
+pub(crate) use capabilities::{capability_ceiling, check_capability};
 pub(crate) const RUNTIME_CAPABILITIES: [&str; 17] = [
     "mcp",
     "subagents",
@@ -774,7 +449,7 @@ pub(crate) fn resolve_capability(
     caps: Option<&RuntimeCapabilities>,
     key: &str,
 ) -> bool {
-    if !RUNTIME_CAPABILITIES.contains(&key) {
+    if runtime == AgentRuntime::Pi || !RUNTIME_CAPABILITIES.contains(&key) {
         return false;
     }
     let baseline = match runtime {
@@ -794,11 +469,27 @@ pub(crate) fn resolve_capability(
     match caps {
         Some(caps) => {
             validate_capabilities(caps).is_ok()
-                && (runtime == AgentRuntime::Pi || baseline)
+                && (baseline || runtime == AgentRuntime::Codex && key == "permissions")
                 && caps.get(key).is_some_and(|s| s.available)
         }
         None => baseline,
     }
+}
+pub(crate) fn native_capabilities(runtime: AgentRuntime) -> RuntimeCapabilities {
+    RUNTIME_CAPABILITIES
+        .iter()
+        .map(|key| {
+            let available = capability_ceiling(runtime, key);
+            (
+                (*key).to_string(),
+                CapabilityState {
+                    available,
+                    reason: (!available)
+                        .then(|| "This native runtime does not support this control.".into()),
+                },
+            )
+        })
+        .collect()
 }
 #[cfg(test)]
 mod boundary_tests {
@@ -915,44 +606,27 @@ mod boundary_tests {
 }
 
 #[cfg(test)]
-mod connect_snapshot_tests {
+mod retirement_tests {
     use super::*;
-    fn context(cwd: &str) -> RuntimeConnectContext {
-        RuntimeConnectContext {
-            session_id: uuid(),
-            cwd: cwd.into(),
-            runtime: "native".into(),
-            worktree_distro: None,
-            account_id: uuid(),
-            launch_policy: RuntimeLaunchPolicy {
-                permission_mode: "default".into(),
-                allow_git: false,
-            },
-            profile_snapshot: RuntimeProfileSnapshot {
-                system_prompt: Some("exact prompt".into()),
-                extra_args: vec!["--exact".into()],
-            },
-            model: RuntimeModelRef {
-                provider_id: "exact.provider".into(),
-                model_id: "exact:model".into(),
-            },
-            resume: None,
-            config_dir: Some("/pi/acct".into()),
-            inherit_environment_credentials: false,
-            pi_profile_settings: None,
-            pi_launch_prompt: None,
-            resource_policy: None,
-        }
-    }
     #[test]
-    fn snapshot_requires_absolute_cwd_and_retains_launch_profile_and_model() {
-        assert!(context("relative").validate().is_err());
-        let ctx = context(env!("CARGO_MANIFEST_DIR")).validate().unwrap();
-        assert_eq!(ctx.model.model_id, "exact:model");
-        assert_eq!(
-            ctx.profile_snapshot.system_prompt.as_deref(),
-            Some("exact prompt")
-        );
-        assert_eq!(ctx.launch_policy.permission_mode, "default");
+    fn retired_pi_rejects_every_stale_true_capability() {
+        let caps = RUNTIME_CAPABILITIES
+            .iter()
+            .map(|key| {
+                (
+                    key.to_string(),
+                    CapabilityState {
+                        available: true,
+                        reason: None,
+                    },
+                )
+            })
+            .collect();
+        for key in RUNTIME_CAPABILITIES {
+            assert!(
+                !resolve_capability(AgentRuntime::Pi, Some(&caps), key),
+                "{key}"
+            );
+        }
     }
 }

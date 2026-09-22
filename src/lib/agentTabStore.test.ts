@@ -1,12 +1,12 @@
 // agent-tab slice of the app store (specs/agent-tab.md FR-10..FR-14, re-homed by
 // specs/fix-agent-view.md FR-1..FR-10). Covers the wiring the pure helpers in
-// features/agents/agent-tab.ts cannot: that opening a tab ACTIVATES it in the
+// src/lib/agent-tab.ts cannot: that opening a tab ACTIVATES it in the
 // pane holding its session, that closing the active one hands that pane back to
 // SESSION, and that a session switch keeps the other session's tabs.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { AgentTabRef } from '../features/agents/agent-tab';
-import { tabsForSession } from '../features/agents/agent-tab';
+import type { AgentTabRef } from './agent-tab';
+import { tabsForSession } from './agent-tab';
 import type { PaneSlot } from './layoutStore';
 import { useStore } from './store';
 

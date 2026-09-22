@@ -350,7 +350,7 @@ pub fn compact_all_step_details(app: &AppHandle) {
     let ids: Vec<String> = {
         let map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
         map.values()
-            .filter(|s| !status::is_busy(&s.status))
+            .filter(|s| s.agent_runtime != AgentRuntime::Pi && !status::is_busy(&s.status))
             .map(|s| s.id.clone())
             .collect()
     };
@@ -382,6 +382,15 @@ pub(crate) fn sweep_orphaned_step_detail_sidecars(app: &AppHandle) {
         let Some(id) = name.strip_suffix(".details.jsonl") else {
             continue;
         };
+        if app
+            .state::<Engine>()
+            .retired_runtime_records
+            .lock()
+            .unwrap()
+            .contains_key(id)
+        {
+            continue;
+        }
         if !valid_session_id(id) {
             continue;
         }

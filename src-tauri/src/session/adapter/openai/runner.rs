@@ -190,6 +190,9 @@ impl TurnControl for FrancoisTurnHandle {
     }
 
     fn decide_permission(&self, id: &str, decision: PermissionDecision) -> ControlAck {
+        if decision == PermissionDecision::Cancel {
+            return ControlAck::NotPending;
+        }
         // Removal IS the exactly-once claim (same discipline as the Claude
         // path's pending maps) — reused from stdio.rs rather than
         // reimplemented.
@@ -249,7 +252,7 @@ impl FrancoisTurnHandle {
             gate::GateDecision::Ask => match self.park(app, session_id, cwd, tool, input) {
                 Some(PermissionDecision::Allow) => Some((self.execute(tool, input, cwd), false)),
                 Some(PermissionDecision::Deny) => Some((gate::DENY_MESSAGE.to_string(), true)),
-                None => None,
+                None | Some(PermissionDecision::Cancel) => None,
             },
         }
     }

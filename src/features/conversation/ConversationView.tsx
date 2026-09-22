@@ -1,26 +1,25 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { isBusyStatus } from '../../../contract/fleet-board';
-import ComposerPane from './ComposerPane';
+import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { hasPendingPermissionBlock } from '../permissions/permission-card';
+import { hasPendingQuestionBlock } from '../questions/question-card';
+import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
 import Block from './Block';
-import Turn from './Turn';
-import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
+import ComposerPane from './ComposerPane';
 import { compactBlocks, TRANSCRIPT_TEXT_SELECT_STYLE, windowedBlocks } from './conversation-blocks';
+import './conversation.css';
 import EarlierBlocksRow from './EarlierBlocksRow';
 import JumpToLatestChip from './JumpToLatestChip';
 import ResumeFailBanner from './ResumeFailBanner';
-import UsageLimitBanner from './UsageLimitBanner';
-import PiRecoveryBanner from './PiRecoveryBanner';
-import { isBlockingRecovery } from './pi-recovery';
-import { useConversationTranscript } from './useConversationTranscript';
-import { hasPendingPermissionBlock } from '../permissions/permission-card';
-import { hasPendingQuestionBlock } from '../questions/question-card';
-import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
-import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
-import './conversation.css';
-import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
-import WorktreeNotice from './WorktreeNotice';
-import WelcomeBlock from './WelcomeBlock';
+import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
 import TranscriptSkeleton from './TranscriptSkeleton';
+import Turn from './Turn';
+import UsageLimitBanner from './UsageLimitBanner';
+import { useConversationTranscript } from './useConversationTranscript';
+import WelcomeBlock from './WelcomeBlock';
+import WorktreeNotice from './WorktreeNotice';
+import { sessionIsRetired } from '../../lib/runtimeCapability';
 
 // transcript-perf: this component now owns ONLY the transcript's own state
 // (the reducer, hydration, the worktree/resume/limit banners) plus the
@@ -135,7 +134,7 @@ export default function ConversationView({
 
   // pi-session-durability: present only on a Pi session (SessionMeta.recovery),
   // and only blocking for four of its six states — see isBlockingRecovery.
-  const recovery = meta?.recovery;
+  const retired = sessionIsRetired(meta);
 
   return (
     <div className="conv-root">
@@ -161,7 +160,7 @@ export default function ConversationView({
           refuse resume with one cause plus Retry/Create new session (FR-3/7).
           `ready`/`disconnected` render nothing — resume then happens
           transparently on the next send. */}
-      {isBlockingRecovery(recovery) && <PiRecoveryBanner sessionId={sessionId} recovery={recovery} />}
+      {retired && <div className="resume-fail-banner" role="status">Pi is unavailable in this version. Saved history is read-only.</div>}
 
       {/* plan usage-limit notice — the session stays live behind it */}
       {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}
@@ -200,7 +199,7 @@ export default function ConversationView({
             // design 7a: the framed welcome block stands in for the transcript
             // until the first turn — see WelcomeBlock for what it states.
             <div className="conv-item">
-              <WelcomeBlock sessionId={sessionId} />
+              {retired ? <Centered>No saved transcript is available.</Centered> : <WelcomeBlock sessionId={sessionId} />}
             </div>
           ) : (
             // design 9a: the transcript is a list of TURNS. A card (approval,
@@ -243,7 +242,7 @@ export default function ConversationView({
           composer-owned state (input, popup, history walk, attachments, the
           pending-queue strip) now lives inside ComposerPane, so a keystroke
           never reaches this component's own render. */}
-      <ComposerPane
+      {!retired && <ComposerPane
         sessionId={sessionId}
         inert={inert}
         visible={visible}
@@ -258,7 +257,7 @@ export default function ConversationView({
         dispatch={dispatch}
         setPinned={setPinned}
         showSkeleton={showSkeleton}
-      />
+      />}
     </div>
   );
 }

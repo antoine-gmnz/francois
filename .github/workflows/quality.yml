@@ -46,6 +46,12 @@ jobs:
       - name: Conventions (CLAUDE.md §Code layout)
         run: node scripts/quality/check.mjs
 
+      # process-architecture-validation FR-1..FR-3: the architecture scanners
+      # (native Rust boundaries with their negative fixtures, frontend
+      # shared-to-feature edges, Pi retirement) gate here, not only in npm test.
+      - name: Architecture boundaries
+        run: npm run lint:boundaries
+
       # Always: a failed gate is exactly when you most want the full report.
       - name: Build reports
         if: always()

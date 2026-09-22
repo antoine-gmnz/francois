@@ -16,7 +16,7 @@
 import type { AppError, ProfileId } from '../../../contract/common';
 import { MAX_PROFILE_NAME, type SessionProfile } from '../../../contract/session-profiles';
 import { profilesList } from '../../lib/api';
-import { toolsSummary } from './pi-profile';
+import { profileIsRetired } from '../../lib/runtimeCapability';
 
 // ---------- resolution (FR-15/FR-16) ----------
 
@@ -175,12 +175,12 @@ export const PROMPT_PREVIEW_MAX = 80;
  * tool allowlist, which `toolsSummary` names explicitly even when empty).
  */
 export function profileRowSubtitle(profile: SessionProfile): string {
-  if (profile.kind === 'pi') {
+  if (profileIsRetired(profile)) {
     const piPrompt = profile.settings.systemPrompt?.replace(/\s+/g, ' ').trim();
     if (profile.settings.systemPromptMode !== 'default' && piPrompt !== undefined && piPrompt !== '') {
       return piPrompt.length > PROMPT_PREVIEW_MAX ? `${piPrompt.slice(0, PROMPT_PREVIEW_MAX).trimEnd()}…` : piPrompt;
     }
-    return toolsSummary(profile.settings.tools);
+    return 'Unavailable · ' + (profile.settings.tools.length ? profile.settings.tools.join(', ') : 'no tools');
   }
   const prompt = profile.systemPrompt?.replace(/\s+/g, ' ').trim();
   if (prompt !== undefined && prompt !== '') {

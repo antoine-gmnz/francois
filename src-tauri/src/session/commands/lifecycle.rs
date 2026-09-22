@@ -85,6 +85,7 @@ fn update_codex_settings_with(
                 s.response_mode,
                 s.allow_git,
                 s.status.clone(),
+                s.settings_revision,
             )
         })
         .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
@@ -141,6 +142,7 @@ fn update_codex_settings_with(
                 s.response_mode,
                 s.allow_git,
                 s.status.clone(),
+                s.settings_revision,
             );
             if current != snapshot {
                 return Err(AppError::new(
@@ -192,6 +194,7 @@ pub fn rename_in_engine(
     name: String,
 ) -> Option<SessionMeta> {
     engine.with_session_mut(session_id, |s| {
+        s.settings_revision += 1;
         s.name = name;
         s.meta(accounts)
     })
@@ -400,7 +403,7 @@ pub fn session_create(
     // runtime. `acknowledgedUnrestrictedTools` may arrive `false` — the core
     // does no seeding of its own (never read off `piProfile`) and simply
     // refuses the first submit until `session_acknowledge_policy` records it.
-    resource_policy: Option<adapter::pi::RuntimeResourcePolicy>,
+    resource_policy: Option<retired_pi::RuntimeResourcePolicy>,
     // pi-migration-rollout: either the saved Pi profile's settings, or the
     // New Session form's edited override of them — see this field's own doc
     // comment on `SessionCreateInput.piProfile` for the full precedence
@@ -408,6 +411,32 @@ pub fn session_create(
     // decision.
     pi_profile: Option<crate::profiles::PiProfileSettingsInput>,
 ) -> IpcResult<Value> {
+    let account_id = match crate::account::resolve_new_session_account(&app, account_id.as_deref())
+    {
+        Ok(id) => id,
+        Err(e) => return e.into(),
+    };
+    if pi_profile.is_some() {
+        return crate::ipc::retired_pi_error().into();
+    }
+    if profile_id
+        .as_deref()
+        .is_some_and(|id| crate::profiles::is_retired_profile(&app, id))
+    {
+        return crate::ipc::retired_pi_error().into();
+    }
+    if resource_policy.is_some() {
+        return err(
+            ErrorCode::InvalidInput,
+            "resourcePolicy is only valid for a Pi account",
+        );
+    }
+    if runtime_model.is_some() {
+        return err(
+            ErrorCode::InvalidInput,
+            "runtimeModel is only valid for a Pi account",
+        );
+    }
     let requested_model = model_id.clone();
     let adopt = worktree.as_ref().is_some_and(|w| w.adopt);
     let response_mode = match response_mode {
@@ -444,107 +473,6 @@ pub fn session_create(
     // multi-account FR-18: resolve the account BEFORE anything is spawned or
     // created — an unknown id creates no session at all, and the create-time
     // probe below must run under the very config dir the turns will use (FR-21).
-    let account_id = match crate::account::resolve_new_session_account(&app, account_id.as_deref())
-    {
-        Ok(id) => id,
-        Err(e) => return e.into(),
-    };
-    // pi-models-metrics FR-4: resolved BEFORE `create_with_selection` (which
-    // never sees a Pi account, since Pi is neither Codex nor the legacy
-    // effort path) — `modelId` is invalid for Pi, `runtimeModel` for anyone
-    // else, and a Pi pair must resolve against a FRESH available snapshot.
-    let is_pi_account =
-        crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::Pi;
-    // pi-migration-rollout FR-8: the single-source production-readiness
-    // gate — checked before ANY other Pi-specific validation or I/O, so an
-    // ordinary user sees one honest "not available yet" reason rather than
-    // a confusing model/policy/profile error for a runtime that cannot be
-    // used at all in this build. See `adapter::pi::readiness`'s module doc.
-    if is_pi_account {
-        if let Err(e) = crate::session::adapter::pi::production_readiness_check(&app, &account_id) {
-            return e.into();
-        }
-    }
-    // pi-skills-capabilities: required for a Pi account, refused for every
-    // other runtime — checked up front, before any Pi-specific I/O, exactly
-    // like the modelId/runtimeModel exclusivity check above.
-    if is_pi_account {
-        if resource_policy.is_none() {
-            return err(
-                ErrorCode::InvalidInput,
-                "a Pi account requires an explicit resourcePolicy",
-            );
-        }
-    } else if resource_policy.is_some() {
-        return err(
-            ErrorCode::InvalidInput,
-            "resourcePolicy is only valid for a Pi account",
-        );
-    }
-    // pi-migration-rollout FR-2/FR-3/FR-5: the whole `piProfile`/`profileId`
-    // decision, resolved BEFORE `create_with_selection`'s closure — it needs
-    // its own read of `profile_id`/`system_prompt`/`extra_args` because that
-    // closure moves the originals for the legacy (non-Pi) resolution path.
-    let pi_profile_resolution = match crate::session::commands::pi_profile::resolve_pi_profile(
-        is_pi_account,
-        profile_id.as_deref(),
-        pi_profile,
-        system_prompt
-            .as_deref()
-            .is_some_and(|s| !s.trim().is_empty()),
-        extra_args.as_deref().unwrap_or(&[]),
-        |id| crate::profiles::find_pi(&app, id),
-    ) {
-        Ok(resolution) => resolution,
-        Err(crate::session::commands::pi_profile::PiProfileError::RuntimeMismatch(msg)) => {
-            return err(ErrorCode::ProfileRuntimeMismatch, msg)
-        }
-        Err(crate::session::commands::pi_profile::PiProfileError::NotFound) => {
-            return err(ErrorCode::ProfileNotFound, "no such profile")
-        }
-        Err(crate::session::commands::pi_profile::PiProfileError::Invalid(e)) => {
-            return AppError::from(e).into()
-        }
-    };
-    // pi-migration-rollout FR-3 (read-once fix): the launch prompt is
-    // resolved from `instructionPaths` HERE, exactly once, before the
-    // session ever exists — never again at a later connect/reconnect. A
-    // missing/unreadable instruction path fails CREATION (INVALID_INPUT), so
-    // the New Session form / profile editor keeps its contents, matching the
-    // contract's "read ONCE into the core-owned launch prompt snapshot".
-    let pi_launch_prompt = match &pi_profile_resolution.settings {
-        Some(settings) => match crate::session::adapter::pi::resolve_launch_prompt(settings) {
-            Ok(prompt) => Some(prompt),
-            Err(e) => return AppError::from(e).into(),
-        },
-        None => None,
-    };
-    let pi_descriptor = if is_pi_account {
-        if model_id_given {
-            return err(
-                ErrorCode::InvalidInput,
-                "modelId is not valid for a Pi account; use runtimeModel",
-            );
-        }
-        let Some(pair) = &runtime_model else {
-            return err(
-                ErrorCode::InvalidInput,
-                "a Pi account requires an exact provider/model pair",
-            );
-        };
-        match crate::session::adapter::pi::resolve_and_validate_pair(&app, &account_id, pair, true)
-        {
-            Ok(descriptor) => Some(descriptor),
-            Err(e) => return e.into(),
-        }
-    } else if runtime_model.is_some() {
-        return err(
-            ErrorCode::InvalidInput,
-            "runtimeModel is only valid for a Pi account",
-        );
-    } else {
-        None
-    };
     create_with_selection(
         crate::account::kind_of(&app, &account_id) == crate::account::AccountKind::CodexCli,
         model_id,
@@ -623,9 +551,7 @@ pub fn session_create(
             // only, and must never run for a Pi account (it would look
             // `profile_id` up through the legacy-only registry accessor and
             // report a live Pi profile as PROFILE_NOT_FOUND).
-            let profile_ref = if is_pi_account {
-                pi_profile_resolution.profile_ref.clone()
-            } else {
+            let profile_ref = {
                 match resolve_profile_ref(
                     &extra_args,
                     profile_id.as_deref(),
@@ -686,18 +612,8 @@ pub fn session_create(
             // humanize/context_limit machinery for an id it thinks looks
             // Claude-shaped) — the already-resolved descriptor is
             // authoritative instead.
-            let (model_id, model_label, context_limit_tokens) = match &pi_descriptor {
-                Some(d) => (
-                    d.model_ref.model_id.clone(),
-                    d.display_name.clone(),
-                    d.context_window
-                        .unwrap_or(crate::session::models::DEFAULT_CONTEXT_LIMIT),
-                ),
-                None => {
-                    let (label, limit) = resolve_model_display(&app, &account_id, &model_id);
-                    (model_id, label, limit)
-                }
-            };
+            let (model_label, context_limit_tokens) =
+                resolve_model_display(&app, &account_id, &model_id);
             // multi-provider-seam FR-13a: both axes derived from the resolved
             // account's kind — session_create gains no field and the new-session
             // modal gains no control.
@@ -732,11 +648,11 @@ pub fn session_create(
                 // pi-migration-rollout FR-3: the fully resolved, validated
                 // settings snapshot — `None` for every non-Pi session, and
                 // for a Pi session created with no profile at all.
-                pi_profile_resolution.settings,
+                None,
                 // pi-migration-rollout FR-3 (read-once fix): the launch
                 // prompt resolved from it, above — the SAME snapshot every
                 // later connect/reconnect/new-from replays.
-                pi_launch_prompt,
+                None,
                 resource_policy,
             );
             // pi-models-metrics: the exact pair this session was created
@@ -794,8 +710,12 @@ pub fn session_remove(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Option<()>> {
-    if let Err(error) = engine.shutdown_runtime(&session_id) {
-        return crate::ipc::IpcResult::Err { ok: false, error };
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
+    if let Err(error) = runtime_bridge::close_session(&app, &engine, &session_id) {
+        return error.into();
     }
     let removed = {
         let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
@@ -829,8 +749,6 @@ pub fn session_remove(
             remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
                                                            // pi-turn-controls FR-9: the admissions sidecar shadows the
                                                            // transcript the same way the step-detail one does — swept with it.
-            admission::remove_admission_sidecar(&app, &session_id);
-            engine.drop_admissions(&session_id);
 
             crate::diff::unwatch_session(&session_id, &session.cwd); // FR-15: dispose the watcher
                                                                      // workflow-details FR-6: the run directories of a removed session are
@@ -848,34 +766,6 @@ pub fn session_remove(
     }
 }
 
-/// pi-session-durability: `francois:session:reconnect` — explicit, read-only
-/// re-attachment to a Pi session's RECORDED native conversation (FR-3/FR-7).
-/// A thin wrapper: every decision (validation, projection rebuild, recovery
-/// state) lives in `adapter::pi::recovery`, unit-tested there with no
-/// `AppHandle` at all — this command exists only to give it a Tauri name.
-#[tauri::command(async)]
-pub fn session_reconnect(app: AppHandle, session_id: String) -> IpcResult<Value> {
-    match crate::session::adapter::pi::reconnect_session(&app, &session_id) {
-        Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
-        Err(error) => error.into(),
-    }
-}
-
-/// pi-session-durability: `francois:session:newFrom` — "Create new session"
-/// from a session whose native conversation cannot be resumed. Same thin-
-/// wrapper shape as `session_reconnect`.
-#[tauri::command(async)]
-pub fn session_new_from(
-    app: AppHandle,
-    session_id: String,
-    name: Option<String>,
-) -> IpcResult<Value> {
-    match crate::session::adapter::pi::new_from_session(&app, &session_id, name) {
-        Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
-        Err(error) => error.into(),
-    }
-}
-
 #[tauri::command(async)]
 pub fn session_switch_model(
     app: AppHandle,
@@ -887,6 +777,10 @@ pub fn session_switch_model(
     model_id: Option<String>,
     runtime_model: Option<adapter::RuntimeModelRef>,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let model_id_given = model_id
         .as_deref()
         .map(str::trim)
@@ -897,16 +791,8 @@ pub fn session_switch_model(
             "modelId and runtimeModel cannot both be supplied",
         );
     }
-    if let Some(pair) = runtime_model {
-        // pi-models-metrics FR-6: switching model always clears any existing
-        // effort — the model that follows may not support it. Both specs' §5
-        // ("all verbs revalidate session/capability/state") is honoured inside
-        // `apply_pi_model_switch`, which is the ONE ladder this branch and
-        // `session_switch_effort` share — see `pi_switch_gate`.
-        return match apply_pi_model_switch(&app, &session_id, pair, None) {
-            Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
-            Err(error) => error.into(),
-        };
+    if runtime_model.is_some() {
+        return crate::ipc::retired_pi_error().into();
     }
     // The non-Pi ladder, byte-for-byte the order it already ran.
     if let Err((code, msg)) = engine.require_capability(&session_id, "modelSwitching") {
@@ -924,144 +810,6 @@ pub fn session_switch_model(
         Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
         Err(error) => error.into(),
     }
-}
-
-/// pi-models-metrics FR-5: "accepted only when settled and no dispatch or
-/// compaction is pending" — pure so the three outcomes (terminal / busy /
-/// settled) are testable without an `AppHandle`. A terminal session answers
-/// `SESSION_NOT_RUNNING` (it accepts no further turns at all); anything else
-/// short of `idle` answers `SESSION_BUSY`.
-fn pi_settled_gate(status: &str) -> Result<(), AppError> {
-    if status::is_terminal(status) {
-        return Err(AppError::new(
-            ErrorCode::SessionNotRunning,
-            "session has ended",
-        ));
-    }
-    if status != status::IDLE {
-        return Err(AppError::new(
-            ErrorCode::SessionBusy,
-            "the session is not settled",
-        ));
-    }
-    Ok(())
-}
-
-/// pi-models-metrics FR-5 ("failure preserves the previous selection") / §7
-/// ("a read-back failure must not leave the app guessing which model won"):
-/// `RuntimeSessionControl::switch_model` verifies the EFFORT against what was
-/// requested and nothing else, so a Pi that silently falls back — or a
-/// `get_state` read-back that still names the OLD model — used to resolve
-/// `Ok`, with the requested pair written onto `runtime_model` and the
-/// read-back one onto `model_id`/`model_label`/`context_limit_tokens`. Those
-/// two halves then disagree, and the mismatched `runtime_model` is persisted
-/// and replayed as `--provider/--model` on the next reconnect. Pure, and
-/// called BEFORE any mutation: a mismatch changes nothing.
-fn verify_model_readback(
-    requested: &adapter::RuntimeModelRef,
-    descriptor: &events::RuntimeModelDescriptor,
-) -> Result<(), AppError> {
-    if descriptor.model_ref != *requested {
-        return Err(AppError::new(
-            ErrorCode::RuntimeProtocolError,
-            "Pi reported a different model than the one requested",
-        ));
-    }
-    Ok(())
-}
-
-/// pi-models-metrics FR-5/FR-6: the Pi branch shared by
-/// `session_switch_model` (a new `model`, `effort` always `None` — clearing
-/// any incompatible level) and `session_switch_effort` (the CURRENT model,
-/// the requested `effort`). Accepted only when settled (`pi_settled_gate`)
-/// and connected+capable (`pi_switch_gate`); resolved against the account's
-/// (possibly cached — FR-5, unlike FR-4's creation-time freshness rule)
-/// available snapshot BEFORE dispatch; sent, then READ BACK before anything
-/// on the session is mutated (FR-5's "failure preserves the previous
-/// selection" — nothing here is applied until the connection itself confirms
-/// it).
-fn apply_pi_model_switch(
-    app: &AppHandle,
-    session_id: &str,
-    model: adapter::RuntimeModelRef,
-    effort: Option<String>,
-) -> Result<SessionMeta, AppError> {
-    let engine = app.state::<Engine>();
-    let account_id =
-        match engine.with_session(session_id, |s| (s.status.clone(), s.account_id.clone())) {
-            None => return Err(AppError::new(ErrorCode::SessionNotFound, "no such session")),
-            Some((status, account_id)) => {
-                pi_settled_gate(&status)?;
-                account_id
-            }
-        };
-    let connection = super::runtime_models::pi_switch_gate(&engine, session_id)?;
-    adapter::pi::resolve_and_validate_pair(app, &account_id, &model, false)?;
-    let (descriptor, applied_effort, efforts) = connection.switch_model(model.clone(), effort)?;
-    // FR-5: before ANY mutation — a read-back naming another model leaves the
-    // session exactly as it was.
-    verify_model_readback(&model, &descriptor)?;
-    // Mutate FIRST — `model.efforts` (lead clarification: the descriptor
-    // carries only `reasoning: boolean`) has no slot on the `model.changed`
-    // payload below, so `SessionMeta.model.efforts` is the only vehicle for
-    // it and must already be current by the time `session.meta` is built.
-    if engine
-        .with_session_mut(session_id, |s| {
-            // The READ-BACK pair, not the requested one (they are equal by
-            // `verify_model_readback` above): every field below comes from the
-            // descriptor, so the two halves can never diverge.
-            s.runtime_model = Some(descriptor.model_ref.clone());
-            s.model_id = descriptor.model_ref.model_id.clone();
-            s.model_label = descriptor.display_name.clone();
-            s.context_limit_tokens = descriptor
-                .context_window
-                .unwrap_or(crate::session::models::DEFAULT_CONTEXT_LIMIT);
-            s.effort = applied_effort.clone();
-            s.model_efforts = efforts;
-            // pi-skills-capabilities FR-3: `images` follows the CURRENT
-            // model — a successful switch must never leave the PREVIOUS
-            // model's image support stale on the session's own snapshot.
-            if let Some(caps) = s.effective_capabilities.as_mut() {
-                let available = descriptor.input.iter().any(|k| k == "image");
-                caps.insert(
-                    "images".to_string(),
-                    adapter::CapabilityState {
-                        available,
-                        reason: (!available).then(|| {
-                            "the connected model does not report image input support".to_string()
-                        }),
-                    },
-                );
-            }
-        })
-        .is_none()
-    {
-        return Err(AppError::new(ErrorCode::SessionNotFound, "no such session"));
-    }
-    // Emission ORDER is pinned (lead clarification): `model.changed` FIRST,
-    // then the authoritative `session.meta` — the frontend projects
-    // `model.changed` without efforts, so a `session.meta` arriving first
-    // would have its efforts clobbered by the stale ones it still carries.
-    let (batch, _block) = engine.runtime_event_for_session(
-        app,
-        session_id,
-        now_ms(),
-        None,
-        None,
-        events::RuntimeEventPayload::ModelChanged {
-            model: descriptor,
-            effort: applied_effort,
-        },
-    )?;
-    for ev in batch {
-        emit(app, ev);
-    }
-    let meta = engine
-        .with_session(session_id, |s| s.meta(app))
-        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?;
-    persist(app, &engine);
-    emit(app, SessionEvent::Meta { meta: meta.clone() });
-    Ok(meta)
 }
 
 /// Shared switch semantics (francois:session:switchModel and `/model <arg>` —
@@ -1110,17 +858,10 @@ fn switch_model_in_engine(
     label: String,
     limit: u64,
 ) -> Result<SessionMeta, AppError> {
-    engine
+    let (revision, effort) = engine
         .with_session_mut(session_id, |s| {
-            if !adapter::resolve_capability(
-                s.agent_runtime,
-                s.effective_capabilities.as_ref(),
-                "modelSwitching",
-            ) {
-                return Err(AppError::new(
-                    ErrorCode::RuntimeUnsupported,
-                    "runtime capability is unavailable",
-                ));
+            if let Err((code, message)) = s.check_capability("modelSwitching") {
+                return Err(AppError::new(code, message));
             }
             if status::is_terminal(&s.status) {
                 return Err(AppError::new(
@@ -1128,12 +869,23 @@ fn switch_model_in_engine(
                     "session has ended",
                 ));
             }
-            s.model_id = model_id.to_string();
-            s.model_label = label;
-            s.context_limit_tokens = limit;
-            Ok(s.meta(accounts))
+            Ok((s.settings_revision, s.effort.clone()))
         })
-        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))?
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))??;
+    application::accept_settings(
+        &runtime_bridge::EngineState(engine),
+        session_id,
+        revision,
+        application::SettingsResult {
+            model_id: model_id.into(),
+            model_label: label,
+            context_limit: limit,
+            effort,
+        },
+    )?;
+    engine
+        .with_session(session_id, |s| s.meta(accounts))
+        .ok_or_else(|| AppError::new(ErrorCode::SessionNotFound, "no such session"))
 }
 
 /// session-permission-mode FR-2: `francois:session:switchPermissionMode`'s enum
@@ -1190,6 +942,7 @@ pub fn switch_permission_mode_in_engine(
             // means "since you last said so", not "since it last changed" — a
             // re-affirmed bypass is a fresh decision, and dating it from the
             // original one would understate how long it has been live.
+            s.settings_revision += 1;
             s.permission_mode = mode.to_string();
             s.permission_mode_since = now_ms();
             s.meta(accounts)
@@ -1226,15 +979,8 @@ pub fn switch_effort_in_engine(
     }
     engine
         .with_session_mut(session_id, |s| {
-            if !adapter::resolve_capability(
-                s.agent_runtime,
-                s.effective_capabilities.as_ref(),
-                "modelSwitching",
-            ) {
-                return Err(AppError::new(
-                    ErrorCode::RuntimeUnsupported,
-                    "runtime capability is unavailable",
-                ));
+            if let Err((code, message)) = s.check_capability("modelSwitching") {
+                return Err(AppError::new(code, message));
             }
             if status::is_terminal(&s.status) {
                 return Err(AppError::new(
@@ -1242,6 +988,7 @@ pub fn switch_effort_in_engine(
                     "session has ended",
                 ));
             }
+            s.settings_revision += 1;
             s.effort = effort.map(String::from);
             Ok(s.meta(accounts))
         })
@@ -1265,6 +1012,10 @@ pub fn session_switch_effort(
     session_id: String,
     effort: Option<String>,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
         return session_update_settings(
             app,
@@ -1280,25 +1031,6 @@ pub fn session_switch_effort(
     // CURRENT model — never Claude's `valid_effort` subset, and never
     // silently clamped (a mismatch after read-back is INVALID_INPUT, inside
     // `apply_pi_model_switch`'s `RuntimeSessionControl::switch_model` call).
-    match engine.with_session(&session_id, |s| (s.agent_runtime, s.runtime_model.clone())) {
-        None => return err(ErrorCode::SessionNotFound, "no such session"),
-        Some((AgentRuntime::Pi, None)) => {
-            return err(
-                ErrorCode::RuntimeUnsupported,
-                "no active Pi model selection to change the effort of",
-            )
-        }
-        Some((AgentRuntime::Pi, Some(model))) => {
-            let level = effort
-                .map(|e| e.trim().to_string())
-                .filter(|e| !e.is_empty());
-            return match apply_pi_model_switch(&app, &session_id, model, level) {
-                Ok(meta) => ok(serde_json::to_value(meta).unwrap()),
-                Err(error) => error.into(),
-            };
-        }
-        Some(_) => {}
-    }
     let level = effort
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty());
@@ -1332,6 +1064,10 @@ pub fn session_switch_permission_mode(
     session_id: String,
     mode: String,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let Some(mode) = parse_permission_mode(&mode) else {
         return err(ErrorCode::InvalidInput, "unknown permission mode");
     };
@@ -1372,6 +1108,7 @@ pub(crate) fn switch_response_mode_in_engine(
     }
     engine
         .with_session_mut(session_id, |s| {
+            s.settings_revision += 1;
             s.response_mode = mode;
             s.meta(accounts)
         })
@@ -1395,6 +1132,10 @@ pub fn session_switch_response_mode(
     session_id: String,
     mode: String,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let Some(mode) = ResponseMode::parse(&mode) else {
         return err(ErrorCode::InvalidInput, "unknown response mode");
     };
@@ -1419,6 +1160,10 @@ pub fn session_rename(
     session_id: String,
     name: String,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     let name = match validate_session_name(&name) {
         Ok(n) => n,
         Err(e) => return e.into(),
@@ -1566,7 +1311,9 @@ fn apply_validated_settings(
     validated: ValidatedSettingsPatch,
     catalog: &[ModelInfo],
 ) {
+    s.settings_revision += 1;
     if let Some(name) = validated.name {
+        s.settings_revision += 1;
         s.name = name;
     }
     if let Some(model_id) = validated.model_id {
@@ -1649,13 +1396,10 @@ fn settings_capability_guard(s: &Session, patch: &SessionSettingsPatch) -> Resul
         ),
         (patch.allow_git.is_some(), "permissions"),
     ] {
-        if needed
-            && !adapter::resolve_capability(s.agent_runtime, s.effective_capabilities.as_ref(), key)
-        {
-            return Err(AppError::new(
-                ErrorCode::RuntimeUnsupported,
-                "runtime capability is unavailable",
-            ));
+        if needed {
+            if let Err((code, message)) = s.check_capability(key) {
+                return Err(AppError::new(code, message));
+            }
         }
     }
     Ok(())
@@ -1676,6 +1420,10 @@ pub fn session_update_settings(
     session_id: String,
     patch: SessionSettingsPatch,
 ) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     if !patch.is_empty()
         && engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex)
     {
@@ -1713,38 +1461,17 @@ pub fn session_update_settings(
 
 #[tauri::command(async)]
 pub fn session_interrupt(
-    app: AppHandle,
+    _app: AppHandle,
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Option<()>> {
-    // pi-turn-controls FR-6/FR-7: a Pi session's Stop is the whole close-
-    // admission → clear_queue → abort → confirm-idle sequence, never the
-    // generic single-verb interrupt below (which the Pi `TurnControl` seam
-    // does not use at all — see `adapter::pi`'s own module doc).
-    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Pi) {
-        return match run_stop_sequence(&app, &engine, &app, &session_id) {
-            Ok(()) => ok(None),
-            Err(e) => e.into(),
-        };
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
     }
-    if let Err(error) = engine.cancel_runtime(&session_id) {
-        return IpcResult::Err { ok: false, error };
-    }
-    let turn = match engine.with_session(&session_id, |s| {
-        if status::is_busy(&s.status) {
-            s.current.clone()
-        } else {
-            None
-        }
-    }) {
-        None => return err(ErrorCode::SessionNotFound, "no such session"),
-        Some(turn) => turn,
-    };
-    if let Some(turn) = turn {
-        turn.interrupt();
-        turn.kill();
-    }
-    ok(None)
+
+    application::interrupt(&runtime_bridge::EngineState(&engine), &session_id)
+        .map(|_| None)
+        .into()
 }
 
 #[cfg(test)]
@@ -2216,67 +1943,6 @@ mod tests {
     }
 
     // ---------- pi-models-metrics: the settled gate ----------
-
-    #[test]
-    fn pi_settled_gate_accepts_only_idle() {
-        assert!(pi_settled_gate(status::IDLE).is_ok());
-    }
-
-    #[test]
-    fn pi_settled_gate_rejects_a_busy_session_as_session_busy() {
-        for busy in ["starting", "running", "awaiting_approval", "awaiting_input"] {
-            let err = pi_settled_gate(busy).unwrap_err();
-            assert_eq!(err.code, ErrorCode::SessionBusy, "{busy} should be busy");
-        }
-    }
-
-    #[test]
-    fn pi_settled_gate_rejects_a_terminal_session_as_session_not_running() {
-        for terminal in [status::DONE, status::ERROR] {
-            let err = pi_settled_gate(terminal).unwrap_err();
-            assert_eq!(err.code, ErrorCode::SessionNotRunning);
-        }
-    }
-
-    /// pi-models-metrics FR-5/§7: `switch_model` verifies the effort and
-    /// nothing else, so the read-back must be checked against what was
-    /// REQUESTED before a single field is written — otherwise a silent Pi
-    /// fallback leaves `runtime_model` (requested) and `model_id` (read back)
-    /// naming different models, and the mismatch is persisted and replayed on
-    /// the next reconnect.
-    #[test]
-    fn a_read_back_naming_another_model_is_a_protocol_error_before_any_mutation() {
-        fn descriptor(provider_id: &str, model_id: &str) -> events::RuntimeModelDescriptor {
-            events::RuntimeModelDescriptor {
-                model_ref: adapter::RuntimeModelRef {
-                    provider_id: provider_id.into(),
-                    model_id: model_id.into(),
-                },
-                display_name: "Model".into(),
-                input: vec!["text".into()],
-                context_window: Some(200_000),
-                max_output_tokens: None,
-                reasoning: false,
-                auth_state: "verified".into(),
-                availability: "available".into(),
-                unavailable_reason: None,
-            }
-        }
-        let requested = adapter::RuntimeModelRef {
-            provider_id: "anthropic".into(),
-            model_id: "sonnet".into(),
-        };
-        assert!(verify_model_readback(&requested, &descriptor("anthropic", "sonnet")).is_ok());
-        for (provider_id, model_id) in [("openai", "sonnet"), ("anthropic", "haiku")] {
-            let err = verify_model_readback(&requested, &descriptor(provider_id, model_id))
-                .expect_err("a read-back naming another model must be refused");
-            assert_eq!(
-                err.code,
-                ErrorCode::RuntimeProtocolError,
-                "{provider_id}/{model_id}"
-            );
-        }
-    }
 
     #[test]
     fn valid_effort_is_the_gate_the_switch_command_applies() {

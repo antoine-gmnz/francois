@@ -220,13 +220,7 @@ impl Session {
         &self,
         kind: &str,
     ) -> Result<(), (ErrorCode, &'static str)> {
-        if kind == "image"
-            && !super::adapter::resolve_capability(
-                self.agent_runtime,
-                self.effective_capabilities.as_ref(),
-                "images",
-            )
-        {
+        if kind == "image" && self.check_capability("images").is_err() {
             return Err((
                 ErrorCode::RuntimeUnsupported,
                 "runtime images capability is unavailable",

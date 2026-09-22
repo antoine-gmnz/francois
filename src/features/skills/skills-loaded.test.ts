@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { RuntimeResourcePolicy, SkillInfo } from '../../../contract/common';
-import { isSkillRunnable, projectResourcesNote, skillInvocationLabel, skillRowKey } from './skills-loaded';
+import type { SkillInfo } from '../../../contract/common';
+import { isSkillRunnable, skillInvocationLabel, skillRowKey } from './skills-loaded';
 
 const skill = (extra: Partial<SkillInfo> = {}): SkillInfo => ({
   name: 'review',
@@ -55,18 +55,5 @@ describe('skillRowKey (pr-142 §B1)', () => {
 
   it('falls back to skill:name when kind is absent too', () => {
     expect(skillRowKey(skill({ name: 'pdf-reader' }))).toBe('skill:pdf-reader');
-  });
-});
-
-describe('projectResourcesNote (FR-8)', () => {
-  it('is null for a non-Pi session (no resourcePolicy at all)', () => {
-    expect(projectResourcesNote(undefined)).toBeNull();
-  });
-
-  it('distinguishes ignored from allowed, so "no skills" is never confused with "disabled"', () => {
-    const ignored: RuntimeResourcePolicy = { projectResources: 'ignore', extensions: 'disabled', acknowledgedUnrestrictedTools: true };
-    const allowed: RuntimeResourcePolicy = { projectResources: 'allow', extensions: 'disabled', acknowledgedUnrestrictedTools: true };
-    expect(projectResourcesNote(ignored)).toBe('project resources: ignored — allow them in session settings');
-    expect(projectResourcesNote(allowed)).toBe('project resources: allowed');
   });
 });

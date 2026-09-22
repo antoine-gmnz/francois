@@ -1,8 +1,11 @@
 //! park/decide commands over the stdio control channel: answer a question,
 //! decide a gated permission ask.
 
-use crate::ipc::{err, ok, IpcResult};
-use crate::ipc::{AppError, ErrorCode};
+#[cfg(test)]
+use crate::ipc::AppError;
+use crate::ipc::ErrorCode;
+use crate::ipc::{err, IpcResult};
+#[cfg(test)]
 use crate::permissions::PermissionRule;
 use crate::session::*;
 use std::collections::HashMap;
@@ -20,55 +23,26 @@ pub fn session_answer_question(
     block_id: String,
     answers: HashMap<String, String>,
 ) -> IpcResult<Option<()>> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     if answers.is_empty() {
         return err(ErrorCode::InvalidInput, "answers is empty");
     }
-    // multi-provider-seam FR-8: reached only through `TurnControl` — no
-    // Child/ChildStdin/pending map named here. Snapshot the handle, then
-    // RELEASE the sessions lock — the control-channel write below can block
-    // and must never stall every other command.
-    let outer = engine.with_session(&session_id, |s| s.current.clone());
-    let Some(outer) = outer else {
-        return err(ErrorCode::SessionNotFound, "no such session");
-    };
-    let Some(control) = outer else {
-        // No turn in flight ⇒ nothing can be pending (turn over).
-        return err(
-            ErrorCode::QuestionNotPending,
-            "that question is no longer pending",
-        );
-    };
     let answers_value = serde_json::to_value(&answers).unwrap_or_else(|_| serde_json::json!({}));
-    match control.answer_question(&block_id, &answers_value) {
-        ControlAck::NotPending => err(
-            ErrorCode::QuestionNotPending,
-            "that question is no longer pending",
-        ),
-        ControlAck::ChannelClosed => {
-            // §5.4: the child died between park and answer — FR-13 cancels the
-            // question, and the caller learns it is no longer pending.
-            resolve_question(&app, &session_id, &block_id, "cancelled", None);
-            refresh_parked_status(&app, &session_id);
-            err(
-                ErrorCode::QuestionNotPending,
-                "that question is no longer pending",
-            )
-        }
-        ControlAck::Applied => {
-            resolve_question(
-                &app,
-                &session_id,
-                &block_id,
-                "answered",
-                Some(&answers_value),
-            );
-            // The entry was claimed above, so this recomputes off the remaining
-            // asks: back to `running`, or to the OTHER parked state when a
-            // second ask is still up.
-            refresh_parked_status(&app, &session_id);
-            ok(None)
-        }
-    }
+    application::answer_question(
+        &runtime_bridge::EngineState(&engine),
+        &runtime_bridge::AppEffects {
+            app: app.clone(),
+            cwd: String::new(),
+        },
+        &session_id,
+        &block_id,
+        &answers_value,
+    )
+    .map(|_| None)
+    .into()
 }
 
 /// FR-7's rule-first half, split out of `permissions_decide` (which needs an
@@ -82,6 +56,7 @@ pub fn session_answer_question(
 /// allowed/denied/cancelled blockId persist an "always" rule to settings.json
 /// before the decision itself failed `PERMISSION_NOT_PENDING`. Being pending IS
 /// the authorization.
+#[cfg(test)]
 fn remember_rule(
     engine: &Engine,
     control: &dyn TurnControl,
@@ -127,94 +102,42 @@ pub fn permissions_decide(
     decision: String,
     tier: Option<String>,
 ) -> IpcResult<Option<()>> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+
     if let Err((code, msg)) = engine.require_capability(&session_id, "permissions") {
         return err(code, msg);
     }
-    let Some((allow, remember)) = crate::permissions::decide_outcome(&decision) else {
+    let (choice, remember) = if decision == "cancel" {
+        (PermissionDecision::Cancel, false)
+    } else if let Some((allow, remember)) = crate::permissions::decide_outcome(&decision) {
+        (
+            if allow {
+                PermissionDecision::Allow
+            } else {
+                PermissionDecision::Deny
+            },
+            remember,
+        )
+    } else {
         return err(ErrorCode::InvalidInput, "unknown decision");
     };
-    // multi-provider-seam FR-8: reached only through `TurnControl` — no
-    // Child/ChildStdin/pending map named here. Snapshot the handle, then
-    // RELEASE the sessions lock — the control-channel write below can block
-    // and must never stall every other command.
-    let outer = engine.with_session(&session_id, |s| s.current.clone());
-    let Some(outer) = outer else {
-        return err(ErrorCode::SessionNotFound, "no such session");
-    };
-    let Some(control) = outer else {
-        // No turn in flight ⇒ nothing can be pending (§7 #16).
-        return err(
-            ErrorCode::PermissionNotPending,
-            "that request is no longer pending",
-        );
-    };
-
-    // FR-7: learn the pattern of the STILL-PENDING ask and write the rule
-    // BEFORE deciding. A concurrent decide could write the same rule twice —
-    // the merge is idempotent (§7 #1) — but only one of them can claim the
-    // entry below.
-    let mut rule: Option<PermissionRule> = None;
-    if remember {
-        match remember_rule(
-            &engine,
-            control.as_ref(),
-            &session_id,
-            &block_id,
-            tier,
-            allow,
-        ) {
-            Ok(r) => rule = Some(r),
-            Err(e) => return e.into(),
-        }
-    }
-
-    // FR-8: claim the entry — removal is the exactly-once guarantee (FR-10). A
-    // concurrent cancel / turn-end that got there first already resolved this ask.
-    let decision_arg = if allow {
-        PermissionDecision::Allow
-    } else {
-        PermissionDecision::Deny
-    };
-    match control.decide_permission(&block_id, decision_arg) {
-        ControlAck::NotPending => {
-            // Lost the race after the rule was already written (the peek→claim
-            // gap). The rule IS on disk and the card is about to render
-            // `cancelled`, so say where it went rather than leaving it
-            // invisible until the editor is opened.
-            if let Some(r) = &rule {
-                eprintln!(
-                    "permission-guardrails: wrote rule {} but the request was cancelled first",
-                    r.id
-                );
-            }
-            err(
-                ErrorCode::PermissionNotPending,
-                "that request is no longer pending",
-            )
-        }
-        ControlAck::ChannelClosed => {
-            // FR-9: the child died between park and decision. The rule (if any)
-            // was already written, so it rides along on the cancelled
-            // resolution — FR-22's "rule written: …" line must still render, or
-            // an "always allow" would take effect on disk with no trace
-            // anywhere in the transcript.
-            resolve_permission(&app, &session_id, &block_id, "cancelled", rule.as_ref());
-            refresh_parked_status(&app, &session_id);
-            err(
-                ErrorCode::PermissionNotPending,
-                "that request is no longer pending",
-            )
-        }
-        ControlAck::Applied => {
-            let state = if allow { "allowed" } else { "denied" };
-            resolve_permission(&app, &session_id, &block_id, state, rule.as_ref());
-            // The entry was claimed above, so this recomputes off the remaining
-            // asks: back to `running`, or to `awaiting_input` when a question is
-            // still parked behind this approval.
-            refresh_parked_status(&app, &session_id);
-            ok(None)
-        }
-    }
+    application::decide_permission(
+        &runtime_bridge::EngineState(&engine),
+        &runtime_bridge::AppEffects {
+            app: app.clone(),
+            cwd: String::new(),
+        },
+        &runtime_bridge::Rules(&engine),
+        &session_id,
+        &block_id,
+        choice,
+        remember,
+        tier.as_deref(),
+    )
+    .map(|_| None)
+    .into()
 }
 
 #[cfg(test)]

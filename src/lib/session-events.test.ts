@@ -16,7 +16,7 @@ const runtimeMeta = (runtimeGeneration?: string): SessionMeta => ({
   id: 's1', name: 'x', cwd: '/repo', model: { id: 'm', label: 'M' }, status: 'idle',
   contextUsedTokens: 0, contextLimitTokens: 0, startedAt: 0, lastActivityAt: 0,
   permissionMode: 'default', permissionModeSince: 0, runtime: 'native', accountId: 'default',
-  agentRuntime: 'pi', protocol: 'anthropic', allowGit: false, responseMode: 'default', runtimeGeneration,
+  agentRuntime: 'claude-code', protocol: 'anthropic', allowGit: false, responseMode: 'default', runtimeGeneration,
 });
 const runtimeEvent = (generation: string, sequence: number): SessionEvent => ({
   type: 'runtime.event', sessionId: 's1', generation, sequence, at: 1,
@@ -37,6 +37,36 @@ describe('subscribeSessionEvents (transcript-scale FR-17..20)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('drops stale execution events for retired history before any consumer sees them', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const received = vi.fn();
+    await subscribeSessionEvents('s1', received);
+    sessionHandler?.({ payload: { type: 'session.meta', meta: { ...runtimeMeta('saved'), agentRuntime: 'pi' } } });
+    received.mockClear();
+    sessionHandler?.({ payload: statusEvent('s1') });
+    sessionHandler?.({ payload: runtimeEvent('saved', 1) });
+    expect(received).not.toHaveBeenCalled();
+  });
+
+  it('invalidates native request authority on store reset and generation replacement', async () => {
+    const { subscribeSessionEvents } = await import('./session-events');
+    const { useStore } = await import('./store');
+    const { requestReplyAvailable } = await import('./request-replies');
+    const meta: SessionMeta = { ...runtimeMeta('native'), agentRuntime: 'codex', status: 'running', effectiveCapabilities: { ...(await import('../../contract/multi-provider-seam')).runtimeCapabilities('codex'), permissions: { available: true } } };
+    useStore.getState().setSessions([meta]);
+    await subscribeSessionEvents('s1', vi.fn());
+    sessionHandler?.({ payload: { type: 'question.asked', sessionId: 's1', blockId: 'q', questions: [] } });
+    expect(requestReplyAvailable(meta, 'q')).toBe(true);
+    useStore.getState().setSessions([]);
+    useStore.getState().setSessions([meta]);
+    expect(requestReplyAvailable(meta, 'q')).toBe(false);
+    sessionHandler?.({ payload: { type: 'question.asked', sessionId: 's1', blockId: 'next', questions: [] } });
+    expect(requestReplyAvailable(meta, 'next')).toBe(true);
+    useStore.getState().setSessions([{ ...meta, runtimeGeneration: 'replacement' }]);
+    useStore.getState().setSessions([meta]);
+    expect(requestReplyAvailable(meta, 'next')).toBe(false);
   });
 
   it('establishes exactly one Tauri listener on the first registration, regardless of how many consumers register (FR-17)', async () => {

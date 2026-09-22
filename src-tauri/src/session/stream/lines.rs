@@ -3,59 +3,41 @@
 //! teardown: draining orphaned parked requests, closing a dangling open
 //! block, and ending the turn.
 
-use super::BlockKind;
-use crate::session::*;
+use super::{publish_text_block, BlockKind, StreamEnvironment};
+use crate::ipc::{AppError, ErrorCode};
+use crate::session::application::{RequestKind, RuntimeEvent};
+use crate::session::{
+    classify_local_answer, command_fallback_fires, deny_response, parse_init_slash_commands,
+    synthetic_text, uuid, write_control_line, ContextTracker, McpServerInfo, PendingPermission,
+    PendingQuestion,
+};
 
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::ChildStdin;
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
 
 /// `type: "system"` lines: only `subtype: "init"` matters here. Returns
 /// whether this line was the init line, so the caller can set `got_init`
 /// (which feeds resume-fail detection).
-pub fn handle_system_line(env: &dyn SessionEnv, session_id: &str, cwd: &str, v: &Value) -> bool {
-    if v.get("subtype").and_then(|subtype| subtype.as_str()) != Some("init") {
+pub fn handle_system_line(
+    env: &dyn StreamEnvironment,
+    session_id: &str,
+    _cwd: &str,
+    v: &Value,
+) -> bool {
+    if v.get("subtype").and_then(Value::as_str) != Some("init") {
         return false;
     }
-    if let Some(claude_session_id) = v.get("session_id").and_then(|id| id.as_str()) {
-        {
-            let mut map = env
-                .engine()
-                .sessions
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            if let Some(s) = map.get_mut(session_id) {
-                s.claude_session_id = Some(claude_session_id.to_string());
-            }
+    if let Some(anchor) = v.get("session_id").and_then(Value::as_str) {
+        env.publish(RuntimeEvent::ResumeAnchor(anchor.into()));
+        if env.failure().is_some() {
+            return false;
         }
-        // persist the (possibly new) thread id so --resume survives a restart (FR-7)
-        env.persist();
     }
     emit_mcp_from_init(env, session_id, v);
-    // slash-menu FR-2: capture the CLI's own slash_commands; on a
-    // CHANGE emit one session.commands carrying the merged
-    // registry. Absent array → no change, identical set → silent.
     if let Some(names) = parse_init_slash_commands(v) {
-        let changed = {
-            let mut map = env
-                .engine()
-                .sessions
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            map.get_mut(session_id)
-                .is_some_and(|s| capture_cli_commands(s, names.clone()))
-        };
-        if changed {
-            // Engine.sessions dropped — the skills disk scan must
-            // never run under it (lock rules).
-            let commands = merge_commands(&help_entries(), &env.discover_commands(cwd), &names);
-            env.emit_session(SessionEvent::Commands {
-                session_id: session_id.to_string(),
-                commands,
-            });
-        }
+        env.publish(RuntimeEvent::CommandsObserved(names));
     }
     true
 }
@@ -65,8 +47,8 @@ pub fn handle_system_line(env: &dyn SessionEnv, session_id: &str, cwd: &str, v: 
 /// (stream_events carry those). Returns whether a synthetic message was
 /// seen, so the caller can set `saw_synthetic`.
 pub fn handle_assistant_line(
-    env: &dyn SessionEnv,
-    session_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
     turn_cmd: Option<&str>,
     v: &Value,
 ) -> bool {
@@ -77,7 +59,11 @@ pub fn handle_assistant_line(
         return false;
     };
     let card = classify_local_answer(turn_cmd, &answer);
-    finalize_command_block(env, session_id, &uuid(), turn_cmd.unwrap_or(""), &card);
+    env.publish(RuntimeEvent::CommandOutput {
+        block_id: uuid(),
+        command: turn_cmd.unwrap_or("").into(),
+        card,
+    });
     true
 }
 
@@ -154,8 +140,8 @@ pub fn parse_background_tasks(v: &Value) -> Option<usize> {
 /// question or permission ask (session-questions FR-10 /
 /// permission-guardrails FR-10). Unmatched ids are ignored.
 pub fn handle_control_cancel_line(
-    env: &dyn SessionEnv,
-    session_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
     v: &Value,
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
@@ -174,7 +160,11 @@ pub fn handle_control_cancel_line(
             stdin,
             &deny_response(&question.request_id, "question cancelled"),
         );
-        resolve_question(env, session_id, &block_id, "cancelled", None);
+        env.publish(RuntimeEvent::RequestResolved {
+            block_id,
+            kind: RequestKind::Question,
+            outcome: "cancelled".into(),
+        });
     }
     let claimed_perm = {
         let mut pending = pending_permissions.lock().unwrap();
@@ -185,7 +175,11 @@ pub fn handle_control_cancel_line(
             stdin,
             &deny_response(&permission.request_id, "request cancelled"),
         );
-        resolve_permission(env, session_id, &block_id, "cancelled", None);
+        env.publish(RuntimeEvent::RequestResolved {
+            block_id,
+            kind: RequestKind::Permission,
+            outcome: "cancelled".into(),
+        });
     }
 }
 
@@ -206,36 +200,48 @@ fn take_pending_by_request_id<T>(
 }
 
 /// session-questions FR-13: any question still parked when the turn dies
-/// resolves as cancelled, exactly once — this drain is the claim; kill_all's
-/// own drain and an in-flight answer can never double-resolve. No
+/// resolves as cancelled, exactly once. Called with stdin already closed, so
+/// no answer can reach the child any more; a racing claim finds the channel
+/// closed, and the owner's reduction drops the second cancellation. No
 /// control_response: child is gone.
 pub fn drain_orphaned_questions(
-    env: &dyn SessionEnv,
-    session_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
 ) {
-    let orphaned: Vec<String> = {
-        let mut pending = pending_questions.lock().unwrap();
-        pending.drain().map(|(block_id, _)| block_id).collect()
-    };
-    for block_id in orphaned {
-        resolve_question(env, session_id, &block_id, "cancelled", None);
-    }
+    drain_orphaned(env, RequestKind::Question, pending_questions);
 }
 
 /// permission-guardrails FR-10: identical drain for parked approval cards —
-/// an ask never outlives the turn it parked, and the claim is exactly-once.
+/// an ask never outlives the turn it parked.
 pub fn drain_orphaned_permissions(
-    env: &dyn SessionEnv,
-    session_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
     pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
 ) {
-    let orphaned: Vec<String> = {
-        let mut pending = pending_permissions.lock().unwrap();
-        pending.drain().map(|(block_id, _)| block_id).collect()
-    };
+    drain_orphaned(env, RequestKind::Permission, pending_permissions);
+}
+
+/// Publish first, remove after: while the cancellations are projected the
+/// asks still count as parked, so the derived status stays `awaiting_*` until
+/// the terminal outcome instead of flashing `running` in between (the
+/// pre-migration turn-end drains never refreshed the parked status).
+fn drain_orphaned<T>(
+    env: &dyn StreamEnvironment,
+    kind: RequestKind,
+    pending: &Arc<Mutex<HashMap<String, T>>>,
+) {
+    let orphaned: Vec<String> = pending.lock().unwrap().keys().cloned().collect();
+    for block_id in &orphaned {
+        env.publish(RuntimeEvent::RequestResolved {
+            block_id: block_id.clone(),
+            kind,
+            outcome: "cancelled".into(),
+        });
+    }
+    let mut pending = pending.lock().unwrap();
     for block_id in orphaned {
-        resolve_permission(env, session_id, &block_id, "cancelled", None);
+        pending.remove(&block_id);
     }
 }
 
@@ -245,7 +251,7 @@ pub fn drain_orphaned_permissions(
 /// the partial answer is buffered and persisted rather than living only in the
 /// deltas the UI happened to receive.
 pub fn close_open_block(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     open_block: Option<(String, BlockKind)>,
     text_accum: &HashMap<String, String>,
@@ -254,17 +260,17 @@ pub fn close_open_block(
         return;
     };
     match kind {
-        BlockKind::Text => {
-            let text = text_accum.get(&block_id).cloned().unwrap_or_default();
-            finalize_text_block(env, session_id, &block_id, text);
-        }
-        // command-inspect: a block closed here never settled through a real
-        // tool_result, so FR-1 never ran for it — no record, no chevron.
-        BlockKind::Tool => env.emit_session(SessionEvent::ToolDone {
-            session_id: session_id.to_string(),
+        BlockKind::Text => publish_text_block(
+            env,
+            session_id,
+            &block_id,
+            text_accum.get(&block_id).cloned().unwrap_or_default(),
+        ),
+        BlockKind::Tool => env.publish(RuntimeEvent::ToolCompleted {
             block_id,
             meta: "interrupted".into(),
-            has_detail: None,
+            detail: None,
+            affects_workspace: false,
         }),
     }
 }
@@ -274,9 +280,9 @@ pub fn close_open_block(
 /// fallback card, and end the turn — success, interrupted, or crashed.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_reader_turn(
-    app: &AppHandle,
-    session_id: &str,
-    model_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
+    _model_id: &str,
     ctx_usage: ContextTracker,
     got_result: bool,
     result_error: Option<String>,
@@ -286,55 +292,36 @@ pub fn finish_reader_turn(
     result_text: Option<String>,
     turn_cmd: Option<&str>,
 ) {
-    let known = resolve_context_tokens(model_id);
-    let limit = known.unwrap_or(DEFAULT_CONTEXT_LIMIT);
-    // `finish(0)` = do not clamp. Same rule as the load path: an unknown window
-    // is a display placeholder, not a ceiling, and clamping a turn's figure to
-    // it writes 200000 into `sessions.json` where the true count belonged.
-    let pending_used = ctx_usage.finish(known.unwrap_or(0));
-    if got_result && result_error.is_none() {
-        // interactive-commands FR-18 defensive fallback: a success turn with zero
-        // assistant/tool blocks and no synthetic seen put its local answer only in
-        // the result string — card it so no slash command ever dies silently.
-        if command_fallback_fires(true, saw_synthetic, had_blocks, result_text.as_deref()) {
-            let answer = result_text.clone().unwrap_or_default();
-            let card = classify_local_answer(turn_cmd, &answer);
-            finalize_command_block(app, session_id, &uuid(), turn_cmd.unwrap_or(""), &card);
-            // app: &AppHandle coerces to &dyn SessionEnv
+    if got_result
+        && result_error.is_none()
+        && command_fallback_fires(true, saw_synthetic, had_blocks, result_text.as_deref())
+    {
+        let card = classify_local_answer(turn_cmd, &result_text.unwrap_or_default());
+        env.publish(RuntimeEvent::CommandOutput {
+            block_id: uuid(),
+            command: turn_cmd.unwrap_or("").into(),
+            card,
+        });
+    }
+    if (got_result && result_error.is_none()) || was_interrupted {
+        if let Some(used) = ctx_usage.finish(0) {
+            env.publish(RuntimeEvent::Usage {
+                context_used_tokens: Some(used),
+                input_tokens: None,
+                output_tokens: None,
+                cost: None,
+            });
         }
-        if let Some(used) = pending_used {
-            update_used(app, session_id, used);
-            emit(
-                app,
-                SessionEvent::ContextUsage {
-                    session_id: session_id.to_string(),
-                    used_tokens: used,
-                    limit_tokens: limit,
-                },
-            );
-        }
-        finish_turn(app, session_id, false, None);
-    } else if was_interrupted {
-        if let Some(used) = pending_used {
-            update_used(app, session_id, used);
-            emit(
-                app,
-                SessionEvent::ContextUsage {
-                    session_id: session_id.to_string(),
-                    used_tokens: used,
-                    limit_tokens: limit,
-                },
-            );
-        }
-        finish_turn(app, session_id, false, None);
+        env.publish(RuntimeEvent::TurnFinished);
     } else {
-        let msg = result_error
-            .unwrap_or_else(|| "the Claude Code process ended unexpectedly".to_string());
-        finish_turn(app, session_id, true, Some(msg));
+        env.publish(RuntimeEvent::TurnFailed(AppError::new(
+            ErrorCode::Internal,
+            result_error.unwrap_or_else(|| "the Claude Code process ended unexpectedly".into()),
+        )));
     }
 }
 
-pub fn emit_mcp_from_init(env: &dyn SessionEnv, session_id: &str, init: &Value) {
+pub fn emit_mcp_from_init(env: &dyn StreamEnvironment, _session_id: &str, init: &Value) {
     let tools: Vec<String> = init
         .get("tools")
         .and_then(|t| t.as_array())
@@ -387,20 +374,7 @@ pub fn emit_mcp_from_init(env: &dyn SessionEnv, session_id: &str, init: &Value) 
             },
             scope: None,
         };
-        {
-            let mut map = env
-                .engine()
-                .sessions
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            if let Some(s) = map.get_mut(session_id) {
-                s.mcp.insert(name.clone(), info.clone());
-            }
-        }
-        env.emit_session(SessionEvent::McpUpdate {
-            session_id: session_id.into(),
-            server: info,
-        });
+        env.publish(RuntimeEvent::McpObserved(info));
     }
 }
 

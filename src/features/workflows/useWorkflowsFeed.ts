@@ -9,7 +9,7 @@ import type { AppError, SessionEvent, WorkflowRun } from '../../../contract/comm
 import { workflowsList } from '../../lib/api';
 import { useHydratedSubscription } from '../../lib/hooks/useHydratedSubscription';
 import { subscribeSessionEvents } from '../../lib/session-events';
-import type { AgentTabRef } from '../agents/agent-tab';
+import type { AgentTabRef } from '../../lib/agent-tab';
 import { applyRunUpdate, seedRuns, workflowTabRef } from './workflow-run';
 
 export interface UseWorkflowsFeed {

@@ -38,6 +38,8 @@ use serde::Serialize;
 /// Mirrors PermissionAsk in contract/common.ts.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct PermissionAsk {
+    #[serde(rename = "allowedDecisions", skip_serializing_if = "Option::is_none")]
+    pub allowed_decisions: Option<Vec<String>>,
     #[serde(rename = "toolName")]
     pub tool_name: String,
     pub summary: String,

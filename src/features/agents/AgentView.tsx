@@ -23,7 +23,7 @@ import {
   receiveAgentTranscript,
   routeAgentEventToTranscript,
   type TranscriptState,
-} from './agent-tab';
+} from '../../lib/agent-tab';
 import './agents.css';
 
 /** Stop's failure banner clears itself after this long — same window as the

@@ -53,19 +53,6 @@ pub const ATTACHMENT_IMAGE_EXTENSIONS: [&str; 5] = {
     out
 };
 
-/// pi-transcript-events FR-7 (`wire::build_prompt_body`): mime type for a
-/// file name, case-insensitive, keyed on the same list
-/// `ATTACHMENT_IMAGE_EXTENSIONS` derives from — a name with no matching
-/// extension falls back to `application/octet-stream`.
-pub fn mime_type_for_extension(name: &str) -> &'static str {
-    let lower = name.to_lowercase();
-    ATTACHMENT_IMAGE_TYPES
-        .iter()
-        .find(|(ext, _)| lower.ends_with(ext))
-        .map(|(_, mime)| *mime)
-        .unwrap_or("application/octet-stream")
-}
-
 /// FR-2. Directory segments appended to the session cwd.
 pub const ATTACHMENTS_DIR_ROOT: &str = ".francois";
 pub const ATTACHMENTS_DIR_NAME: &str = "attachments";
@@ -299,20 +286,6 @@ mod tests {
         ] {
             assert_eq!(attachment_kind_for_name(name), "file", "{name}");
         }
-    }
-
-    #[test]
-    fn mime_type_for_extension_matches_the_five_image_extensions_case_insensitively() {
-        assert_eq!(mime_type_for_extension("a.png"), "image/png");
-        assert_eq!(mime_type_for_extension("b.JPG"), "image/jpeg");
-        assert_eq!(mime_type_for_extension("c.jpeg"), "image/jpeg");
-        assert_eq!(mime_type_for_extension("d.GIF"), "image/gif");
-        assert_eq!(mime_type_for_extension("e.webp"), "image/webp");
-        assert_eq!(
-            mime_type_for_extension("report.pdf"),
-            "application/octet-stream"
-        );
-        assert_eq!(mime_type_for_extension("noext"), "application/octet-stream");
     }
 
     #[test]

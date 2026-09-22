@@ -10,7 +10,7 @@
 //! four concerns `process_util::spawn` applies by construction, so no spawn site
 //! names it at all.
 //!
-//! `spawn_claude` itself lives in `session/adapter/claude_code.rs`
+//! `run_compact` and the turn spawn live in `session/adapter/claude_code.rs`
 //! (multi-provider-seam FR-3): it is turn-shaped (stdin/stdout wiring, the
 //! NDJSON user line) AND Claude-CLI-shaped, rather than argv/env plumbing.
 

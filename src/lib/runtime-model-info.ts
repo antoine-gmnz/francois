@@ -1,13 +1,4 @@
-// runtime-model-info (pi-models-metrics §5) — RuntimeModelDescriptor -> ModelInfo.
-//
-// Split out of features/sessions/runtime-model.ts (frontend fix loop §7 item 5):
-// sessionsStore's `model.changed` handler needs `modelInfoFromRuntimeDescriptor`
-// to build the SessionMeta.model it caches, and src/lib is what every feature
-// imports — a store the fleet cache writes belongs here, not the other way
-// round. `runtime-model.ts` stays in features/sessions (it also imports
-// ./model-picker, a feature-local module this one has no business pulling in)
-// and now imports this function back for its own `runtimeCatalogModels`.
-
+// Shared normalized model-event display projection; no runtime execution.
 import type { AccountId, ModelInfo, RuntimeModelDescriptor } from '../../contract/common';
 import { formatContextTokens } from '../../contract/conversation-view';
 import { runtimeModelKey } from '../../contract/pi-models-metrics';

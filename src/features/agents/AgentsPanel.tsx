@@ -74,7 +74,8 @@ export default function AgentsPanel({ sessionId }: { sessionId: string | null })
   }, [hasRunning]);
 
   const doKill = async (agentId: string) => {
-    if (pendingKill.has(agentId)) return;
+    // process-native-capabilities FR-5: an observed agent is not a stop control.
+    if (!capability.available || pendingKill.has(agentId)) return;
     setPendingKill((prev) => new Set(prev).add(agentId));
     const res = await agentsKill(agentId);
     if (!res.ok) {

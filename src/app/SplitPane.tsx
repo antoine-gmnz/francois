@@ -5,7 +5,7 @@ import type { ShellId } from '../../contract/shell-terminal';
 import { formatContextTokens } from '../../contract/conversation-view';
 import { isBusyStatus, STATUS_COLOR, STATUS_LABEL, statusPulses } from '../../contract/fleet-board';
 import AgentView from '../features/agents/AgentView';
-import { agentIdFromTab, tabIdFor, tabsForSession, workflowIdFromTab } from '../features/agents/agent-tab';
+import { agentIdFromTab, tabIdFor, tabsForSession, workflowIdFromTab } from '../lib/agent-tab';
 import ConversationView from '../features/conversation/ConversationView';
 import DiffView from '../features/diff/DiffView';
 import ProjectPickerPopover from '../features/projects/ProjectPickerPopover';

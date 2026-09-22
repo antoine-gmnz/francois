@@ -275,23 +275,10 @@ describe('moved from run-chip.ts (FR-17/FR-20)', () => {
     });
   });
 
-  // pi-models-metrics FR-4: `draft.modelId` is the Pi picker's own composite
-  // (accountId, providerId, modelId) key, never a real modelId — the project
-  // default must carry the session's exact `runtimeModel` pair instead.
-  it('writes the exact runtimeModel pair for a Pi session, never modelId', () => {
-    const piSession = session({
-      agentRuntime: 'pi',
-      accountId: 'pi-1',
-      model: { id: 'pi-1 anthropic claude-sonnet-5', label: 'claude-sonnet-5' },
-      runtimeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
-    });
-    const piDraft = draftFromSession(piSession);
-    expect(nextProjectDefaults({}, piDraft, piSession)).toEqual({
-      runtimeModel: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
-      permissionMode: 'default',
-      responseMode: 'default',
-      allowGit: false,
-    });
+  it('preserves current defaults when invoked with read-only Pi history', () => {
+    const retired = session({ agentRuntime: 'pi', runtimeModel: { providerId: 'saved', modelId: 'saved' } });
+    const current = { modelId: 'sonnet', effort: 'high' };
+    expect(nextProjectDefaults(current, draftFromSession(retired), retired)).toBe(current);
   });
 
   it('drops a stale runtimeModel default when the project default moves to a non-Pi session', () => {

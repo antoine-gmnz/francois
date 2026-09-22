@@ -2,15 +2,19 @@
 //! / `content_block_stop` triad that turns the assistant's incremental
 //! deltas into transcript blocks and subagent dispatches.
 
-use super::{BlockKind, ToolRec};
-use crate::session::*;
+use super::{BlockKind, StreamEnvironment, ToolRec};
+use crate::session::application::RuntimeEvent;
+use crate::session::{
+    agent_identity, dispatch_model, finalize_tool_input, is_subagent_tool, is_workflow_tool,
+    now_ms, resolve_background, tool_summary, uuid, AgentInfo, ContextTracker,
+};
 
 use serde_json::Value;
 use std::collections::HashMap;
 
 #[allow(clippy::too_many_arguments)]
 pub fn handle_stream_event(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     cwd: &str,
     ev: &Value,
@@ -44,7 +48,7 @@ pub fn handle_stream_event(
 /// tool_use block. Other block types (e.g. `thinking`) are ignored.
 #[allow(clippy::too_many_arguments)]
 fn handle_content_block_start(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     ev: &Value,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
@@ -104,7 +108,7 @@ fn parse_tool_use_block(content_block: &Value) -> (String, String, Value) {
 /// Mint the bookkeeping slot for a new tool_use block, then — if the tool is
 /// a subagent dispatch — mint the FR-37 agent record too.
 fn start_tool_use_block(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     idx: u64,
     content_block: &Value,
@@ -138,7 +142,12 @@ fn start_tool_use_block(
     // a subagent's. Its name/phases stay provisional until the input finishes
     // accumulating (FR-4, in finish_tool_block).
     if is_workflow {
-        let run_uuid = on_workflow_start(env, session_id, &tool_use_id);
+        let run_uuid = uuid();
+        env.publish(RuntimeEvent::WorkflowStarted {
+            run_id: run_uuid.clone(),
+            tool_use_id: tool_use_id.clone(),
+            at: now_ms(),
+        });
         if let Some(rec) = tools.get_mut(&tool_use_id) {
             rec.input["__workflowId"] = Value::String(run_uuid);
         }
@@ -148,14 +157,12 @@ fn start_tool_use_block(
 /// async-agents FR-37: a `Task` (or other subagent) dispatch starts — mint
 /// its `AgentInfo` record and stash the correlation key.
 fn mint_subagent(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     tool_use_id: &str,
     tools: &mut HashMap<String, ToolRec>,
 ) {
     let agent_id = uuid();
-    // Provisional: on a streamed dispatch the input is still empty here, so both
-    // fall back to the placeholder. finish_tool_block re-derives them (FR-37).
     let (name, desc) = tools
         .get(tool_use_id)
         .map(|rec| agent_identity(&rec.input))
@@ -166,39 +173,24 @@ fn mint_subagent(
         name,
         task: desc,
         status: "running".into(),
-        started_at: now_ms(), // async-agents FR-7: never changes
+        started_at: now_ms(),
         ended_at: None,
-        // async-agents FR-3: conservative until content_block_stop
-        // resolves the FR-2 ladder over the complete input JSON.
         background: false,
         last_activity: None,
         step_count: 0,
     };
-    {
-        let mut map = env
-            .engine()
-            .sessions
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if let Some(s) = map.get_mut(session_id) {
-            s.insert_agent(agent.clone());
-            // async-agents FR-1: the correlation key. Session-scoped
-            // (not turn-local) so FR-13/FR-16 reach it after the
-            // tool call closed.
-            s.agent_by_tool
-                .insert(tool_use_id.to_string(), agent_id.clone());
-        }
-    }
-    // record agent_id against the tool for completion
     if let Some(rec) = tools.get_mut(tool_use_id) {
-        rec.input["__agentId"] = Value::String(agent_id.clone());
+        rec.input["__agentId"] = Value::String(agent_id);
     }
-    env.emit_session(SessionEvent::AgentUpdate { agent });
+    env.publish(RuntimeEvent::SubagentStarted {
+        tool_use_id: tool_use_id.into(),
+        agent,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
 fn handle_content_block_delta(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     ev: &Value,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
@@ -221,8 +213,8 @@ fn handle_content_block_delta(
 
 #[allow(clippy::too_many_arguments)]
 fn handle_text_delta(
-    env: &dyn SessionEnv,
-    session_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
     idx: u64,
     delta: &Value,
     blocks: &mut HashMap<u64, (String, BlockKind, String)>,
@@ -230,46 +222,25 @@ fn handle_text_delta(
     text_utf16: &mut HashMap<String, usize>,
     open_block: &mut Option<(String, BlockKind)>,
 ) {
-    let Some((block_id, kind, _)) = blocks.get(&idx).cloned() else {
+    let Some((block_id, BlockKind::Text, _)) = blocks.get(&idx).cloned() else {
         return;
     };
-    if kind != BlockKind::Text {
-        return;
-    }
     let text = delta
         .get("text")
-        .and_then(|t| t.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
     let accum = text_accum.entry(block_id.clone()).or_default();
-    // FR-2: the prefix already streamed for this block, tracked incrementally
-    // instead of re-derived by re-encoding the whole accumulated string every
-    // delta (that re-derivation was O(accumulated length) per delta, i.e.
-    // O(n^2) over a long response). `or_default()` mirrors `text_accum`'s own
-    // fallback (edge case: a delta arriving without its `content_block_start`),
-    // so the two maps fail the same way.
     let slot = text_utf16.entry(block_id.clone()).or_insert(0);
     let offset = *slot;
     *slot += text.encode_utf16().count();
     accum.push_str(&text);
-    // Keep the transcript buffer current with the partial text, so a view that
-    // hydrates mid-block seeds the opening it would otherwise never receive.
-    // transcript-perf FR-23: the lock is held only for the push itself — no
-    // allocation/serialization of the full block text happens inside it; the
-    // chunk (`text`) is what gets appended, `accum` only seeds a fresh block.
-    {
-        let mut map = env
-            .engine()
-            .sessions
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if let Some(s) = map.get_mut(session_id) {
-            s.buf_assistant_streaming(&block_id, &text, accum);
-        }
-    }
+    env.publish(RuntimeEvent::AssistantAppend {
+        block_id: block_id.clone(),
+        text: text.clone(),
+    });
     *open_block = Some((block_id.clone(), BlockKind::Text));
-    env.emit_session(SessionEvent::AssistantDelta {
-        session_id: session_id.into(),
+    env.publish(RuntimeEvent::AssistantChunk {
         block_id,
         text,
         offset,
@@ -305,7 +276,7 @@ fn handle_input_json_delta(
 }
 
 fn handle_content_block_stop(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     cwd: &str,
     ev: &Value,
@@ -327,14 +298,14 @@ fn handle_content_block_stop(
 }
 
 fn finish_text_block(
-    env: &dyn SessionEnv,
+    env: &dyn StreamEnvironment,
     session_id: &str,
     block_id: &str,
     text_accum: &mut HashMap<String, String>,
     open_block: &mut Option<(String, BlockKind)>,
 ) {
     let text = text_accum.get(block_id).cloned().unwrap_or_default();
-    finalize_text_block(env, session_id, block_id, text);
+    publish_text_block(env, session_id, block_id, text);
     *open_block = None;
 }
 
@@ -345,22 +316,14 @@ fn finish_text_block(
 /// Shared with `close_open_block` (lines.rs), which reaches this same path when
 /// the reader dies with a block still open — an interrupted answer used to
 /// never reach the buffer at all, so it vanished from the transcript on reload.
-pub fn finalize_text_block(env: &dyn SessionEnv, session_id: &str, block_id: &str, text: String) {
-    let block = {
-        let mut map = env
-            .engine()
-            .sessions
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        map.get_mut(session_id)
-            .and_then(|s| s.finish_assistant(block_id, text.clone()))
-    };
-    if let Some(buf_block) = &block {
-        env.append_transcript(session_id, buf_block); // durable-sessions FR-2
-    }
-    env.emit_session(SessionEvent::AssistantDone {
-        session_id: session_id.into(),
-        block_id: block_id.to_string(),
+pub fn publish_text_block(
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
+    block_id: &str,
+    text: String,
+) {
+    env.publish(RuntimeEvent::AssistantFinal {
+        block_id: block_id.into(),
         text,
     });
 }
@@ -369,8 +332,8 @@ pub fn finalize_text_block(env: &dyn SessionEnv, session_id: &str, block_id: &st
 /// summary, emit `tool.start`. `tool_use_id` is the block's accum-slot
 /// field, which for a tool block holds the tool_use_id rather than text.
 fn finish_tool_block(
-    env: &dyn SessionEnv,
-    session_id: &str,
+    env: &dyn StreamEnvironment,
+    _session_id: &str,
     cwd: &str,
     block_id: &str,
     tool_use_id: &str,
@@ -380,71 +343,36 @@ fn finish_tool_block(
     let Some(rec) = tools.get_mut(tool_use_id) else {
         return;
     };
-    // async-agents FR-2: the accumulated __acc json becomes the
-    // real input; __agentId survives the reparse (Finding 5).
     rec.input = finalize_tool_input(&rec.input);
     let summary = tool_summary(&rec.tool, &rec.input, cwd);
-    // async-agents FR-2: the input JSON is complete now — resolve the dispatch
-    // kind and its FR-37 name/task (only readable here), and tell the panel.
-    let dispatch = if rec.is_task {
-        rec.input
-            .get("__agentId")
-            .and_then(|val| val.as_str())
-            .map(|agent_id| {
-                let (name, task) = agent_identity(&rec.input);
-                (
-                    agent_id.to_string(),
-                    resolve_background(&rec.input, &rec.tool),
-                    name,
-                    task,
-                )
-            })
-    } else {
-        None
-    };
-    // The dispatch's own model, which can differ from the session's (None on a
-    // plain tool, or when the dispatch inherits).
-    let model = if rec.is_task {
-        dispatch_model(&rec.input)
-    } else {
-        None
-    };
-    let dispatch_emissions = {
-        let mut map = env
-            .engine()
-            .sessions
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let mut ems = Vec::new();
-        if let Some(s) = map.get_mut(session_id) {
-            s.buf_tool(
-                block_id,
-                rec.tool.clone(),
-                summary.clone(),
-                rec.is_task,
-                model.clone(),
-            );
-            if let Some((agent_id, is_background, name, task)) = &dispatch {
-                ems = apply_dispatch_input(s, agent_id, *is_background, name, task);
-            }
-        }
-        ems
-    };
-    emit_agent_emissions(env, session_id, dispatch_emissions);
-    // workflow-panel FR-4: the script (and so its `export const meta` block) is
-    // only complete now — read the run's real name, description, and phases off it.
-    if rec.is_workflow {
-        if let Some(run_uuid) = rec.input.get("__workflowId").and_then(|v| v.as_str()) {
-            let (run_uuid, input) = (run_uuid.to_string(), rec.input.clone());
-            on_workflow_input_complete(env, session_id, &run_uuid, &input);
+    let model = rec.is_task.then(|| dispatch_model(&rec.input)).flatten();
+    // The shared projector applies the transcript before specialized observations,
+    // preserving the original dispatch/input/ToolStart ordering.
+    if rec.is_task {
+        if let Some(agent_id) = rec.input.get("__agentId").and_then(Value::as_str) {
+            let (name, task) = agent_identity(&rec.input);
+            env.publish(RuntimeEvent::SubagentInput {
+                agent_id: agent_id.into(),
+                background: resolve_background(&rec.input, &rec.tool),
+                name,
+                task,
+            });
         }
     }
-    *open_block = Some((block_id.to_string(), BlockKind::Tool));
-    env.emit_session(SessionEvent::ToolStart {
-        session_id: session_id.into(),
-        block_id: block_id.to_string(),
+    if rec.is_workflow {
+        if let Some(run_id) = rec.input.get("__workflowId").and_then(Value::as_str) {
+            env.publish(RuntimeEvent::WorkflowInput {
+                run_id: run_id.into(),
+                input: rec.input.clone(),
+            });
+        }
+    }
+    *open_block = Some((block_id.into(), BlockKind::Tool));
+    env.publish(RuntimeEvent::ToolInputReady {
+        block_id: block_id.into(),
         tool: rec.tool.clone(),
         summary,
+        is_task: rec.is_task,
         model,
     });
 }

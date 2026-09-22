@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
-import { agentIdFromTab, tabsForSession } from '../features/agents/agent-tab';
+import { agentIdFromTab, tabsForSession } from '../lib/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
 import ExtensionsModal from '../features/extensions/ExtensionsModal';
 import { detectionRoot, initExtensionEvents, refreshExtensions } from '../features/extensions/extensionsFeed';

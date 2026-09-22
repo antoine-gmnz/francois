@@ -1,65 +1,82 @@
-// runtimeCapability (multi-provider-openai FR-20) — the one place src/ reads
-// contract/multi-provider-seam's runtimeCapabilities() table for a session.
-// Every disabled-pane consumer (panes [3]-[6], the usage bar, the slash menu)
-// goes through sessionCapability, so nowhere else compares `agentRuntime`/
-// `protocol` to a literal — the table is the only source (spec §9's grep check).
+import type { AgentRuntime, SessionMeta } from '../../contract/common';
+import type { Account } from '../../contract/multi-account';
+import type { SessionProfile } from '../../contract/session-profiles';
+import { runtimeCapabilities, type CapabilityState, type RuntimeCapabilities, type RuntimeCapability } from '../../contract/multi-provider-seam';
 
-import type { SessionMeta } from '../../contract/common';
-import { runtimeCapabilities, type CapabilityState, type RuntimeCapability } from '../../contract/multi-provider-seam';
-import { PI_BASELINE_UNAVAILABLE, PI_UNRESTRICTED_TOOLS_NOTICE } from '../../contract/pi-skills-capabilities';
+export const PI_UNAVAILABLE = 'Pi is unavailable in this version. Saved history is read-only.';
+// process-native-capabilities FR-4: a supported control whose transport is not
+// connected reads differently from one the runtime does not support at all.
+export const CAPABILITY_DISCONNECTED = 'This control needs a live runtime connection. Start or continue a turn to reconnect.';
+export const CAPABILITY_INVALID = 'The runtime sent an invalid capability report. Start a new turn to refresh it.';
 
-/**
- * pi-skills-capabilities FR-3/FR-4: the sentence a capability clamped off Pi
- * shows. Generic on purpose — it is only ever reached when a live snapshot
- * CLAIMS something FR-3 pins off, i.e. when the core is wrong about itself, and
- * a per-capability sentence would be writing copy for a state that is a bug.
- * A snapshot that disables the capability keeps its own, better reason.
- */
-const PI_CLAMPED_REASON = "This isn't available on a Pi session.";
+// Mirrors src-tauri/src/session/adapter/capabilities.rs — both are tested
+// against src-tauri/src/session/adapter/capability-matrix.json.
+const MAX_REASON_BYTES = 512;
+const KEYS = Object.keys(runtimeCapabilities('claude-code')) as RuntimeCapability[];
+// eslint-disable-next-line no-control-regex -- the check IS for control characters
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/;
 
-const PI_CLAMPED: ReadonlySet<RuntimeCapability> = new Set(PI_BASELINE_UNAVAILABLE);
+/** Keys supported only while the negotiated live transport exists (FR-1/FR-2). */
+function liveOnly(runtime: AgentRuntime, capability: RuntimeCapability): boolean {
+  return runtime === 'codex' && capability === 'permissions';
+}
 
-/**
- * The capability state for one session's runtime. `meta` absent (no session
- * focused, or the session isn't bound to a pane yet) reads as available —
- * there is nothing session-specific to gate without one, and every
- * pre-existing empty state already covers that case on its own.
- */
-export function sessionCapability(
-  meta: SessionMeta | null | undefined,
-  capability: RuntimeCapability,
-): CapabilityState {
-  if (!meta) return { available: true };
-  const baseline = runtimeCapabilities(meta.agentRuntime)[capability];
-  const live = meta.effectiveCapabilities?.[capability];
-  // The core's live snapshot may only narrow the contract's static default. A
-  // runtime must never acquire a UI action merely because an incomplete or
-  // optimistic child snapshot says it can do something.
-  // Pi deliberately has a fully-disabled static fallback until it connects;
-  // after that, its core-supplied snapshot is the authoritative capability set
-  // — but only INSIDE the FR-3 baseline. That row is a disconnected
-  // placeholder rather than a ceiling, so it cannot do the narrowing job the
-  // other runtimes' rows do, and the seven capabilities the spec pins off
-  // ("can never exceed by name or manifest claim") are clamped here instead.
-  if (meta.agentRuntime === 'pi') {
-    const state = live ?? baseline;
-    if (state.available && PI_CLAMPED.has(capability)) {
-      return { available: false, reason: PI_CLAMPED_REASON };
-    }
-    return state;
-  }
-  if (!live || !baseline.available) return baseline;
-  return live.available ? baseline : live;
+function validSnapshot(caps: RuntimeCapabilities): boolean {
+  const entries = Object.entries(caps);
+  if (entries.length !== KEYS.length) return false;
+  return KEYS.every((key) => {
+    const state = caps[key] as CapabilityState | undefined;
+    if (!state || typeof state.available !== 'boolean') return false;
+    if (state.available) return state.reason === undefined;
+    const reason = state.reason;
+    return typeof reason === 'string' && reason.trim() !== '' && !UNSAFE.test(reason)
+      && new TextEncoder().encode(reason).length <= MAX_REASON_BYTES;
+  });
 }
 
 /**
- * Sandbox selection is separate from interactive approval support. For Pi
- * (pi-skills-capabilities FR-5) this is not "not built yet" — there is no
- * François-enforced sandbox for a permission mode to select, so the reason is
- * the same FR-5 notice every Pi surface shows, not a generic unavailability line.
+ * process-frontend-boundaries: the retired-runtime predicates. Pi is readable
+ * history only — callers ask these rather than comparing `agentRuntime`/`kind`
+ * to a literal, so this module stays the one runtime-name mapping in src/.
  */
+export function sessionIsRetired(meta: Pick<SessionMeta, 'agentRuntime'> | null | undefined): boolean {
+  return meta?.agentRuntime === 'pi';
+}
+
+export function accountIsRetired(account: { kind?: Account['kind'] | string } | null | undefined): boolean {
+  return account?.kind === 'pi';
+}
+
+export function profileIsRetired<P extends { kind?: SessionProfile['kind'] | string }>(
+  profile: P | null | undefined,
+): profile is P & { kind: 'pi' } {
+  return profile?.kind === 'pi';
+}
+
+/**
+ * Request replies (question/permission cards) that are only valid while the
+ * negotiated live transport generation exists — derived from the same
+ * live-only capability row sessionCapability gates on.
+ */
+export function requestNeedsLiveGeneration(meta: Pick<SessionMeta, 'agentRuntime'> | null | undefined): boolean {
+  return !!meta && liveOnly(meta.agentRuntime, 'permissions');
+}
+
+export function sessionCapability(meta: SessionMeta | null | undefined, capability: RuntimeCapability): CapabilityState {
+  if (!meta) return { available: true };
+  if (sessionIsRetired(meta)) return { available: false, reason: PI_UNAVAILABLE };
+  const baseline = runtimeCapabilities(meta.agentRuntime)[capability];
+  if (!baseline.available && !liveOnly(meta.agentRuntime, capability)) return baseline;
+  const snapshot = meta.effectiveCapabilities;
+  if (snapshot && !validSnapshot(snapshot)) return { available: false, reason: CAPABILITY_INVALID };
+  if (liveOnly(meta.agentRuntime, capability) && (!snapshot || !meta.runtimeGeneration)) {
+    return { available: false, reason: CAPABILITY_DISCONNECTED };
+  }
+  const live = snapshot?.[capability];
+  if (live && !live.available) return live;
+  return { available: true };
+}
+
 export function sandboxSelectionCapability(meta: SessionMeta | null | undefined): CapabilityState {
-  return meta?.agentRuntime === 'pi'
-    ? { available: false, reason: PI_UNRESTRICTED_TOOLS_NOTICE }
-    : { available: true };
+  return sessionIsRetired(meta) ? { available: false, reason: PI_UNAVAILABLE } : { available: true };
 }

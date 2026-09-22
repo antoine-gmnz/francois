@@ -132,6 +132,9 @@ pub fn classify_block(b: &BufBlock) -> Value {
                 "questions": card.get("questions").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
                 "state": card.get("state").cloned().unwrap_or_else(|| Value::String("pending".into())),
             });
+            if let Some(blocking) = card.get("blocking") {
+                o["blocking"] = blocking.clone();
+            }
             if let Some(a) = card.get("answers") {
                 o["answers"] = a.clone();
             }

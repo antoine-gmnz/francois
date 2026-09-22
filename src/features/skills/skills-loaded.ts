@@ -4,7 +4,7 @@
 // resources are disabled" (FR-8). Extracted so the exact-spelling rule (FR-1)
 // and the distinguishing rule (FR-8) are unit-testable without the DOM.
 
-import type { RuntimeResourcePolicy, SkillInfo } from '../../../contract/common';
+import type { SkillInfo } from '../../../contract/common';
 
 /**
  * FR-1: the exact command text, spelling preserved (`/skill:review`) — never
@@ -31,17 +31,4 @@ export function isSkillRunnable(skill: Pick<SkillInfo, 'loaded'>): boolean {
  */
 export function skillRowKey(skill: Pick<SkillInfo, 'name' | 'kind' | 'invocation'>): string {
   return skill.invocation ?? `${skill.kind ?? 'skill'}:${skill.name}`;
-}
-
-/**
- * FR-8: the one status line every Pi skills list carries (never shown for a
- * non-Pi session, since `resourcePolicy` is Pi-only per SessionMeta) — stated
- * up front rather than inferred from an empty list, so "no skills" is never
- * confused with "project resources are disabled" (design brief "States").
- */
-export function projectResourcesNote(resourcePolicy: RuntimeResourcePolicy | undefined): string | null {
-  if (!resourcePolicy) return null;
-  return resourcePolicy.projectResources === 'allow'
-    ? 'project resources: allowed'
-    : 'project resources: ignored — allow them in session settings';
 }

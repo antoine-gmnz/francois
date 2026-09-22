@@ -332,18 +332,6 @@ pub(crate) fn discard(handle: &mut LoginHandle) {
     }
 }
 
-/// pi-provider-auth FR-3: the exactly-once claim for a Pi setup PTY, the twin
-/// of `claim` above for the `pi_setups` map rather than the single `login`
-/// slot. `pub(crate)` so `pi::setup`'s reader-thread exit path can settle a setup
-/// the same way `settle_success`/`settle_failure` do for a Claude login.
-pub(crate) fn claim_pi_setup(app: &AppHandle, login_id: &str) -> Option<LoginHandle> {
-    let state = app.try_state::<AccountState>()?;
-    let mut inner = state.0.lock().ok()?;
-    let handle = inner.pi_setups.remove(login_id)?;
-    handle.settled.store(true, Ordering::SeqCst);
-    Some(handle)
-}
-
 /// FR-13: an identity appeared — kill the PTY, register (or refresh, FR-17) the
 /// row, then emit `account.login.done` followed by `account.list` (FR-7).
 /// FR-14: an identity that is already registered fails instead, and the dir goes.
@@ -558,13 +546,6 @@ pub fn write_login(app: &AppHandle, login_id: &str, data: &str) -> Result<(), Ap
                 .map_err(|_| AppError::new(ErrorCode::PtyError, "the login terminal is closed"));
         }
     }
-    if let Some(setup) = inner.pi_setups.get_mut(login_id) {
-        return setup
-            .writer
-            .write_all(data.as_bytes())
-            .and_then(|_| setup.writer.flush())
-            .map_err(|_| AppError::new(ErrorCode::PtyError, "the login terminal is closed"));
-    }
     Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))
 }
 
@@ -602,19 +583,6 @@ pub fn resize_login(app: &AppHandle, login_id: &str, cols: u16, rows: u16) -> Re
                 });
         }
     }
-    if let Some(setup) = inner.pi_setups.get(login_id) {
-        return setup
-            .master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|_| {
-                AppError::new(ErrorCode::PtyError, "could not resize the login terminal")
-            });
-    }
     Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))
 }
 
@@ -626,13 +594,7 @@ pub fn cancel_login(app: &AppHandle, login_id: &str) -> Result<(), AppError> {
         discard(&mut handle);
         return Ok(());
     }
-    match claim_pi_setup(app, login_id) {
-        Some(mut handle) => {
-            discard(&mut handle);
-            Ok(())
-        }
-        None => Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN)),
-    }
+    Err(AppError::new(ErrorCode::InvalidInput, MSG_NO_LOGIN))
 }
 
 /// FR-8 + FR-16: an account removed while a login into THAT row is in flight
@@ -654,18 +616,6 @@ pub fn cancel_login_for_account(inner: &mut AccountInner, account_id: &str) {
             discard(&mut handle);
         }
     }
-    let stale: Vec<String> = inner
-        .pi_setups
-        .iter()
-        .filter(|(_, h)| h.account_id == account_id)
-        .map(|(id, _)| id.clone())
-        .collect();
-    for id in stale {
-        if let Some(mut handle) = inner.pi_setups.remove(&id) {
-            handle.settled.store(true, Ordering::SeqCst);
-            discard(&mut handle);
-        }
-    }
 }
 
 /// FR-16: app exit cancels the in-flight login the same way — no orphan PTY,
@@ -679,10 +629,6 @@ pub fn cancel_all_logins(app: &AppHandle) {
         return;
     };
     if let Some(mut handle) = inner.login.take() {
-        handle.settled.store(true, Ordering::SeqCst);
-        discard(&mut handle);
-    }
-    for (_, mut handle) in inner.pi_setups.drain() {
         handle.settled.store(true, Ordering::SeqCst);
         discard(&mut handle);
     }

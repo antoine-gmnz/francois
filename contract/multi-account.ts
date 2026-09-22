@@ -4,6 +4,8 @@
 //
 // Physical Tauri binding: `francois:account:<verb>` → `invoke('account_<verb>')`;
 // `francois:account:event` → `listen('francois://account/event')`.
+// Pi records are read-only compatibility data; no add/trust/setup/refresh Pi API exists.
+// Shared Pi-targeted mutations return RUNTIME_UNSUPPORTED before I/O.
 
 import type { AppError, AccountId, ClaudeRuntime, ModelInfo, Result, SessionId } from './common';
 
@@ -209,69 +211,7 @@ export interface PiAccountConfig {
   trusted: boolean;
 }
 
-// francois:account:addPi → invoke('account_add_pi')
-export interface PiAccountCreateInput {
-  kind: 'pi';
-  label: string; // trimmed 1..60 chars
-  configDir: string; // existing absolute directory; canonicalized in core. Duplicate (configDir, runtime) pair ⇒ INVALID_INPUT (FR-1)
-  runtime: ClaudeRuntime;
-  distro?: string; // required iff runtime === 'wsl'
-  inheritEnvironmentCredentials: boolean;
-  trustConfiguration: boolean; // explicit user action; false saves the account with trusted=false, not a rejected call
-}
-export type AccountAddPiResponse = Result<Account[]>;
-// errors: 'INVALID_INPUT' (blank or over-60 label · non-absolute, missing or not-a-directory configDir ·
-//           duplicate configDir+runtime+distro · missing distro for wsl, or a distro without it · 'wsl' off
-//           Windows · configDir inside or containing the app data directory · configDir overlapping another
-//           account's directory — equality with another Pi row under a different runtime/distro is the one
-//           allowed overlap, FR-1),
-//         'INTERNAL'
-
-// francois:account:trustPi → invoke('account_trust_pi')
-// Fingerprints the account's current executable configuration and records
-// trust (or revokes it — FR-4). Refused while the account has a connected
-// session or an open setup PTY, so trust can never flip under a running turn.
-export interface AccountTrustPiPayload {
-  accountId: AccountId;
-  trustConfiguration: boolean;
-}
-export type AccountTrustPiResponse = Result<Account[]>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_IN_USE',
-//         'ACCOUNT_CONFIG_UNTRUSTED' (a GRANT refused: this build's fingerprint inputs are unverified, or the
-//           configuration cannot be fingerprinted at all — a symlinked or oversized input), 'INTERNAL'
-
-// francois:account:piSetup → invoke('account_pi_setup')
-// Launches the certified Pi interactive binary in a login PTY (reusing the
-// existing login-PTY infrastructure, FR-3) from a neutral app-owned setup cwd
-// with extensions disabled, so the user can run Pi's own native `/login` or
-// key configuration. Resolves as soon as the PTY is spawned; closing setup
-// never by itself implies auth succeeded — `piRefresh` is the only source of
-// a 'verified' observation. PTY input/resize/close reuse the existing
-// `AccountLoginWritePayload` / `AccountLoginResizePayload` /
-// `AccountLoginCancelPayload` shapes and `account.login.data` /
-// `account.login.done` / `account.login.failed` events; PTY bytes are never
-// captured into diagnostics, transcripts or persisted storage.
-export interface PiSetupInput { accountId: AccountId }
-export type AccountPiSetupResponse = Result<AccountLoginStarted>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'ACCOUNT_CONFIG_CHANGED' (fingerprint drift since
-//         trust was recorded), 'SPAWN_FAILED', 'PTY_ERROR', 'INTERNAL'
-
-// francois:account:piRefresh → invoke('account_pi_refresh')
-// Runs a per-account model probe (FR-7/FR-9: same launch policy as sessions,
-// no cross-account cache) and returns the observed state per provider Pi
-// reports models for. A local model MAY be 'configured' with no API key.
-export interface PiRefreshAuthInput { accountId: AccountId }
-export interface PiProviderAuthObservation {
-  providerId: string;
-  state: 'unknown' | 'configured' | 'verified' | 'failed';
-  checkedAt: number; // epoch ms
-  message?: string;
-}
-export type AccountPiRefreshResponse = Result<PiProviderAuthObservation[]>;
-// errors: 'ACCOUNT_NOT_FOUND', 'ACCOUNT_CONFIG_UNTRUSTED', 'ACCOUNT_CONFIG_CHANGED', 'INVALID_INPUT' (a stored
-//         runtime/distro that no longer validates), 'RUNTIME_UNAVAILABLE',
-//         'RUNTIME_INCOMPATIBLE', 'RUNTIME_TIMEOUT', 'RUNTIME_PROTOCOL_ERROR',
-//         'PROVIDER_AUTH_FAILED' (a provider observed later as failed, never a login-return success), 'INTERNAL'
+// Pi account execution/mutation APIs retired; PiAccountConfig remains saved-data vocabulary.
 
 // francois:account:updateEndpoint → invoke('account_update_endpoint')
 export interface AccountUpdateEndpointPayload {
@@ -360,3 +300,4 @@ export type AccountEvent =
    * turned out to be there (or a successful one that npm reported oddly).
    */
   | { type: 'cli.install.done'; tool: CliToolId; tools: CliToolStatus[]; error?: AppError };
+
