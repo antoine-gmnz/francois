@@ -1,13 +1,7 @@
-/* WebView2 falls back to SOFTWARE compositing in some environments (incl. this dev
-   webview). There a smooth 60fps opacity animation repaints its element every frame
-   forever, pegging ~half a CPU core at idle — even with layer promotion, which does
-   not help software compositing. So throttle our one continuous smooth animation
-   (`pulse`, ease-in-out) to a low step rate: still reads as a gentle breathe, but
-   ~a dozen repaints/sec instead of 60. (`blink` is already step-based → cheap.) */
-[style*="pulse"] {
-  animation-duration: 1.6s !important;
-  animation-timing-function: steps(6, end) !important;
-}
+/* `pulse` and the running spinner used to be stepped (6 and 12 steps) to spare
+   CPU under WebView2's software-compositing fallback; the stepping read as lag,
+   so both are smooth now. They still pause while the window is hidden (below).
+   (`blink` stays step-based — a caret blink is discrete by nature.) */
 /* Stop every looping animation while the window is hidden/minimized — no wasted
    repaints, and no compositor backlog to flush (and re-lag) on restore. Toggled by
    the visibilitychange handler in main.tsx. The class-declared loops (the running
@@ -17,6 +11,20 @@ html[data-hidden='1'] [style*='animation'],
 html[data-hidden='1'] .state-icon--running,
 html[data-hidden='1'] .status-dot--pulsing {
   animation-play-state: paused !important;
+}
+
+/* Honour the OS-level "reduce motion" setting everywhere at once, rather than
+   listing every keyframe/transition site individually — the one exception is
+   `.conv-hydrating-bar__thumb`, which already collapses to a static frame
+   under the same query in conversation.css instead of merely freezing mid-slide. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 /* ══ Design tokens — "Redesign · Graphite & Signal" ═══════════════════════════
@@ -86,6 +94,16 @@ html[data-hidden='1'] .status-dot--pulsing {
   /* The SHELL tab's own line height (ShellTerminal.tsx hands xterm the same
      number, which xterm cannot read from CSS). */
   --terminal-line-height: 1.35;
+
+  /* ── motion (fix/animation-smoothness) — the durations/easings already in
+     use across the app, named so new transitions reach for these instead of
+     inventing another one-off value. Keep to `transform`/`opacity`: both are
+     compositor-only, so they never trigger layout or paint on every frame. ── */
+  --dur-fast: 90ms;
+  --dur-base: 120ms;
+  --dur-slow: 140ms;
+  --ease-out: ease-out;
+  --ease-standard: ease;
 
   /* ── surfaces ── */
   --bg-canvas: #0c0d0f;
@@ -646,12 +664,9 @@ a {
   border-radius: 50%;
   flex-shrink: 0;
 }
-/* design-refresh FR-16: `pulse` ticks — 1.6s in 6 steps. Declared in full
-   here rather than leaning on the `[style*="pulse"]` throttle at the top of
-   this file: that selector matches the *inline* style attribute only, so a
-   class-declared animation like this one never saw it. */
+/* design-refresh FR-16: `pulse` — a smooth 1.6s breathe. */
 .status-dot--pulsing {
-  animation: pulse 1.6s steps(6, end) infinite;
+  animation: pulse 1.6s ease-in-out infinite;
 }
 
 /* Inline error banner (NewSessionModal.tsx:510-522, ConversationView.tsx:426-442). */

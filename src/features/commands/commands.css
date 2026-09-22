@@ -59,9 +59,8 @@
   height: 5px;
   border-radius: 50%;
   background: var(--warn);
-  /* design-refresh FR-16: ticking pulse. Spelled out because the
-     `[style*="pulse"]` throttle in styles.css matches inline styles only. */
-  animation: pulse 1.6s steps(6, end) infinite;
+  /* design-refresh FR-16: smooth pulse, same as `.status-dot--pulsing`. */
+  animation: pulse 1.6s ease-in-out infinite;
 }
 .cmdcard-loading-text {
   font-size: var(--font-size-9-5);
