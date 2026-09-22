@@ -295,8 +295,11 @@ pub fn apply_remove(inner: &mut AccountInner, id: &str) -> Result<AccountRecord,
         .iter()
         .position(|r| r.id == id)
         .ok_or(AppError::new(ErrorCode::AccountNotFound, NOT_FOUND_MSG))?;
-    ensure_account_available(inner, id)?;
+    // Removal is the one mutation a retired Pi row accepts — the only way out
+    // of a registry that still names it (as the default, say). Its raw copy
+    // goes with it, or `retained_registry_doc` would write the row back.
     let removed = inner.records.remove(idx);
+    inner.retired_records.remove(id);
     inner.auth_failed_at.remove(id);
     if inner.default_account_id == id {
         inner.default_account_id = DEFAULT_ACCOUNT_ID.to_string();
@@ -921,13 +924,36 @@ mod retirement_tests {
             ErrorCode::RuntimeUnsupported
         );
         assert_eq!(
-            apply_remove(&mut inner, "retired").err().unwrap().code,
-            ErrorCode::RuntimeUnsupported
-        );
-        assert_eq!(
             registry_doc(&inner.records, &inner.default_account_id),
             before
         );
+    }
+
+    /// A retired Pi row is removable — otherwise one saved as the default
+    /// strands every new session on RUNTIME_UNSUPPORTED with no way out. The
+    /// raw copy goes too, or the next write would put the row straight back.
+    #[test]
+    fn a_retired_pi_row_is_removed_with_its_raw_copy_and_the_default_flag() {
+        let mut inner = inner_fixture(&["keep", "retired"], "retired");
+        inner.records[1].kind = AccountKind::Pi;
+        inner.retired_records.insert(
+            "retired".into(),
+            serde_json::json!({"id":"retired","label":"Saved","kind":"pi","configDir":"/pi/home","createdAt":1}),
+        );
+
+        let removed = apply_remove(&mut inner, "retired").unwrap();
+
+        assert_eq!(removed.kind, AccountKind::Pi);
+        assert_eq!(inner.default_account_id, DEFAULT_ACCOUNT_ID);
+        let doc = retained_registry_doc(&inner);
+        let ids: Vec<_> = doc["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["keep"]);
+        assert_eq!(doc["defaultAccountId"], DEFAULT_ACCOUNT_ID);
     }
 }
 

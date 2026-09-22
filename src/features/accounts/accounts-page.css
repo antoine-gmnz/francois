@@ -134,6 +134,10 @@
   gap: var(--space-12);
   padding-top: var(--space-8);
 }
+.acc-page .acc-section-title {
+  flex: 1;
+  min-width: 0;
+}
 .acc-page .acc-section-eyebrow {
   flex: 1;
   color: var(--text-faint);
