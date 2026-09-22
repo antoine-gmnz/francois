@@ -179,10 +179,10 @@ export function shellFooterPath(cwd: string, shellName: string, home: string): s
  * `'workflow'` branches here and `MainPaneBody` handles those explicitly rather
  * than forcing them into the `Record<MainTab, renderer>` table.
  */
-export type MainPaneBranch = 'overview' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow' | 'ext';
+export type MainPaneBranch = 'overview' | 'github' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow' | 'ext';
 
 export function mainPaneBranch(mainTab: MainTab): MainPaneBranch {
-  if (mainTab === 'overview' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
+  if (mainTab === 'overview' || mainTab === 'github' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
   if (isPanelTab(mainTab)) return 'panel';
   // extensions FR-9: `ext:<id>` is the third dynamic-tab kind. Checked before
   // the agent fallback, which claims everything it does not recognise.
@@ -232,7 +232,7 @@ export function isPanelTab(tab: MainTab): tab is PanelTab {
  * panel tabs and `overview` are session-independent, so they are not here.
  */
 export function isSessionScopedTab(tab: MainTab): boolean {
-  return tab !== 'overview' && !isPanelTab(tab);
+  return tab !== 'overview' && tab !== 'github' && !isPanelTab(tab);
 }
 
 /**
@@ -248,7 +248,7 @@ export function isSessionScopedTab(tab: MainTab): boolean {
  * FR-1 deletes).
  */
 export function showsPanes(paneCount: number, mainTab: MainTab): boolean {
-  return paneCount > 1 && mainTab !== 'overview';
+  return paneCount > 1 && mainTab !== 'overview' && mainTab !== 'github';
 }
 
 // ---------- global shortcuts (Phase 5 dispatch table) ----------

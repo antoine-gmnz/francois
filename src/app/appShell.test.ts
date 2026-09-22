@@ -109,8 +109,9 @@ describe('shellFooterPath', () => {
 });
 
 describe('mainPaneBranch', () => {
-  it('maps the four plain MainTab values onto themselves', () => {
+  it('maps the five plain MainTab values onto themselves', () => {
     expect(mainPaneBranch('overview')).toBe('overview');
+    expect(mainPaneBranch('github')).toBe('github');
     expect(mainPaneBranch('session')).toBe('session');
     expect(mainPaneBranch('diff')).toBe('diff');
     expect(mainPaneBranch('shell')).toBe('shell');
@@ -388,6 +389,12 @@ describe('showsPanes (FR-1)', () => {
     expect(showsPanes(2, 'overview')).toBe(false);
     expect(showsPanes(3, 'overview')).toBe(false);
     expect(showsPanes(4, 'overview')).toBe(false);
+  });
+
+  it('yields the view to GITHUB at every split count, the same as OVERVIEW', () => {
+    expect(showsPanes(2, 'github')).toBe(false);
+    expect(showsPanes(3, 'github')).toBe(false);
+    expect(showsPanes(4, 'github')).toBe(false);
   });
 
   it('never shows panes at one pane', () => {

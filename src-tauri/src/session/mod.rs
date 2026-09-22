@@ -81,7 +81,11 @@ mod usage_probe;
 mod workflow_details;
 mod workflow_watch;
 mod workflows;
-mod worktree;
+// github-page: widened to pub(crate) so the github domain can reuse this
+// tree's git-shell helpers (remote_name, default_branch, current_branch,
+// worktree_list_entries, fetch_with_timeout, worktree_slug, …) instead of
+// duplicating them.
+pub(crate) mod worktree;
 
 // ---------------------------------------------------------------------------
 // core-architecture-wave3 FR-1: the session domain's module map.

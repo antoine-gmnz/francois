@@ -236,6 +236,27 @@ pub fn compute_file_diff(cwd: &str, path: &str) -> Result<FileDiff, GitErr> {
     })
 }
 
+/// github-page: builds a `FileDiff` straight from an already-fetched unified
+/// diff patch (e.g. `git show <sha> -- <path>`), reusing the same hunk parser
+/// and binary detection `compute_file_diff` uses — so CommitDetail's
+/// `firstFileDiff` renders with the exact same shape diff-view's own file
+/// diffs do, without a second parser.
+pub(crate) fn file_diff_from_patch(text: &str) -> FileDiff {
+    if text
+        .lines()
+        .any(|l| l.starts_with("Binary files") && l.contains("differ"))
+    {
+        return FileDiff {
+            hunks: Vec::new(),
+            binary: true,
+        };
+    }
+    FileDiff {
+        hunks: parse_unified_diff(text),
+        binary: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

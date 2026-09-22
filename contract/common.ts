@@ -113,10 +113,10 @@ export type ErrorCode =
   | 'EXT_MANIFEST_UNSUPPORTED' // extension-install FR-5: unknown `manifest` version; detail: { found, supported }
   | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
+  | 'GH_UNAVAILABLE' | 'GH_FAILED' // github-page: gh missing/unauthenticated/not GitHub (detail: { status }) · gh exited non-zero (detail: { code, stderr })
   | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
   | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
   | 'RUNTIME_UNAVAILABLE'
-  | 'STEP_DETAIL_NOT_FOUND' // command-inspect: no captured detail record for this block
   | 'RUNTIME_INCOMPATIBLE'
   | 'RUNTIME_PROTOCOL_ERROR'
   | 'RUNTIME_TIMEOUT'

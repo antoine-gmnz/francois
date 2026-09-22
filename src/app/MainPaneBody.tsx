@@ -8,6 +8,7 @@ import ExtensionView from '../features/extensions/ExtensionView';
 import { extIdFromTab } from '../features/extensions/extensions';
 import WorkflowView from '../features/workflows/WorkflowView';
 import OverviewView from '../features/overview/OverviewView';
+import GitHubView from '../features/github/GitHubView';
 import type { MainTab } from '../lib/store';
 import { hostedTab, mainPaneBranch, type MainPaneBranch } from './appShell';
 import EmptyPaneMessage from './EmptyPaneMessage';
@@ -121,6 +122,7 @@ function MainPaneBranchBody({
     // publish the counts the roster rows read).
     panel: () => null,
     overview: () => <OverviewView home={home} />,
+    github: () => <GitHubView />,
     // SESSION/SHELL: the body itself is the host's (see MainPaneBody above) —
     // only the sessionless prompt is rendered here.
     session: () =>

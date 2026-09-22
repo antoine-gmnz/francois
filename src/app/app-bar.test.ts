@@ -33,4 +33,8 @@ describe('activeNav', () => {
       expect(activeNav(tab)).toBe('sessions');
     }
   });
+
+  it('reads GitHub only on the github tab', () => {
+    expect(activeNav('github')).toBe('github');
+  });
 });

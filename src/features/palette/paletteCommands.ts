@@ -272,6 +272,21 @@ export function registerBuiltinCommands(): void {
     },
   });
 
+  // 5c — GitHub (github-page FR-1) — same toggle grammar as Overview: the app
+  // bar's third app-scoped destination.
+  registerPaletteCommand({
+    id: 'open-github',
+    glyph: '⌬',
+    name: 'Open GitHub',
+    hint: () => 'pull requests, commits, branches',
+    run: () => {
+      const st = useStore.getState();
+      st.setFocusedPane('main');
+      st.setMainTab(st.mainTab === 'github' ? 'session' : 'github');
+      requestBodyFocusOnClose(); // FR-16 exception: don't restore into a now-hidden pane
+    },
+  });
+
   // 6 — Compact context (session-engine)
   registerPaletteCommand({
     id: 'compact-context',

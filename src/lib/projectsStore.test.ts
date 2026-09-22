@@ -209,6 +209,14 @@ describe('switchProject (FR-39)', () => {
     expect(useStore.getState().mainTab).toBe('diff');
   });
 
+  it('leaves the GitHub view too — the app bar\'s other app-scoped destination', async () => {
+    const useStore = await seeded();
+    useStore.getState().setMainTab('github');
+
+    useStore.getState().switchProject('p1');
+    expect(useStore.getState().mainTab).toBe('session');
+  });
+
   it('opens the new-session modal for a project with no sessions, and arms the rollback', async () => {
     const useStore = await seeded();
     useStore.getState().switchProject('p1'); // start somewhere real

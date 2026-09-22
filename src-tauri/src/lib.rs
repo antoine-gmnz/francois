@@ -26,6 +26,7 @@ pub mod dnd;
 pub mod editor;
 pub mod extensions;
 pub(crate) mod fs_util;
+pub mod github;
 pub(crate) mod ids;
 pub(crate) mod ipc;
 pub mod permissions;

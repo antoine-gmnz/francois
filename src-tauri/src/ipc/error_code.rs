@@ -219,6 +219,10 @@ pub enum ErrorCode {
     RuntimePolicyRequired,
     /// pi-migration-rollout: a legacy profile selected for a Pi account, or Pi settings for another runtime
     ProfileRuntimeMismatch,
+    /// github-page: gh missing / unauthenticated / non-GitHub remote (detail: { status: GhStatus })
+    GhUnavailable,
+    /// github-page: gh ran and exited non-zero (detail: { code, stderr })
+    GhFailed,
     Internal,
 }
 
@@ -329,6 +333,8 @@ impl ErrorCode {
         ErrorCode::QueueFull,
         ErrorCode::RuntimePolicyRequired,
         ErrorCode::ProfileRuntimeMismatch,
+        ErrorCode::GhUnavailable,
+        ErrorCode::GhFailed,
         ErrorCode::Internal,
     ];
 
@@ -439,6 +445,8 @@ impl ErrorCode {
             ErrorCode::QueueFull => "QUEUE_FULL",
             ErrorCode::RuntimePolicyRequired => "RUNTIME_POLICY_REQUIRED",
             ErrorCode::ProfileRuntimeMismatch => "PROFILE_RUNTIME_MISMATCH",
+            ErrorCode::GhUnavailable => "GH_UNAVAILABLE",
+            ErrorCode::GhFailed => "GH_FAILED",
             ErrorCode::Internal => "INTERNAL",
         }
     }
