@@ -24,28 +24,29 @@ export const MANUAL_NOTE = "Francois couldn't verify npm ownership of this copy.
 
 // ------------------------------------------------------------------ the chip
 
-/** What the status-bar version readout renders (FR-8). */
+/** What the status-bar version readout renders (FR-8; App bar 126:2). */
 export interface UpdateChipView {
-  /** true → the accent chip that opens the modal; false → today's dim readout. */
+  /** true → the accent button (arrow + dot) follows the version; false → no button. */
   available: boolean;
-  /** `↑ 0.16.0` (the NEW version) when available, else the running version. */
+  /** The RUNNING version, always — the readout never switches to the latest one. */
   label: string;
-  /** The button's accessible name. Empty while idle — that state is a plain,
-   *  non-interactive readout with no tooltip, exactly as it renders today. */
+  /** The button's accessible name. Empty while idle — nothing renders to carry it. */
   title: string;
 }
 
 /**
- * FR-8. `appVersion` is the bundle's own version (useAppIdentity); it is empty
- * until that resolves, which reads as `dev` exactly as it does today. A failed
- * or not-yet-returned check is indistinguishable from "no update" on purpose
- * (FR-7) — this function never sees an error to render.
+ * FR-8 / App bar 126:2: the version readout is always the RUNNING build
+ * (`appVersion`); `appVersion` is the bundle's own version (useAppIdentity), empty
+ * until that resolves, which reads as `dev`. A failed or not-yet-returned check is
+ * indistinguishable from "no update" on purpose (FR-7) — this function never sees
+ * an error to render.
  */
 export function updateChipView(check: UpdateCheck | null, appVersion: string): UpdateChipView {
+  const label = appVersion || 'dev';
   if (check?.updateAvailable) {
-    return { available: true, label: `↑ ${check.latest}`, title: `Francois ${check.latest} is available` };
+    return { available: true, label, title: `Francois ${check.latest} is available` };
   }
-  return { available: false, label: appVersion || 'dev', title: '' };
+  return { available: false, label, title: '' };
 }
 
 // ------------------------------------------------------- the primary action

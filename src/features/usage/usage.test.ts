@@ -18,6 +18,8 @@ import {
   formatCountdown,
   meterChipView,
   meterChipViews,
+  meterResetLine,
+  shortMeterLabel,
   parseResetAt,
   requestUsageRefresh,
   resetUsageFeed,
@@ -25,6 +27,8 @@ import {
   sessionResetLabel,
   startUsageFeed,
   usageBarView,
+  usageIconAttention,
+  usageIconSummary,
 } from './usage';
 
 /** multi-account FR-27: every snapshot below belongs to one account. */
@@ -379,6 +383,20 @@ describe('meterChipView (FR-23/24/29, §7 #11)', () => {
   });
 });
 
+describe('shortMeterLabel (the app bar is too narrow for the CLI wording)', () => {
+  it.each([
+    ['Current session', 'Session'],
+    ['Current week (all models)', 'Week'],
+    ['Current week (Sonnet only)', 'Sonnet'],
+    ['Current week (Opus)', 'Opus'],
+    ['current week (Fable only)', 'Fable'],
+    ['Opus weekly', 'Opus weekly'],
+    ['', ''],
+  ])('%j → %j', (label, short) => {
+    expect(shortMeterLabel(label)).toBe(short);
+  });
+});
+
 // --------------------------------------------------------------- bar view
 
 describe('usageBarView (FR-25/26, §8 states)', () => {
@@ -609,6 +627,70 @@ describe('reset countdown (FR-30)', () => {
       };
       expect(usageBarView(snap, now).reset).toBe('resets in 4h 29m');
     });
+  });
+});
+
+// --------------------------------------------------------- popover row reset
+
+describe('meterResetLine (the popover — one row per meter, not just the session one)', () => {
+  const now = new Date(2026, 6, 22, 13, 0, 0, 0).getTime();
+
+  it('counts down a parseable resetsAt', () => {
+    expect(meterResetLine(meter('Current week (all models)', 34, 'Jul 25, 11:00am'), now)).toBe('resets in 2d 22h');
+  });
+
+  it('falls back to the verbatim text when unparseable', () => {
+    expect(meterResetLine(meter('Current session', 14, 'soon'), now)).toBe('resets soon');
+  });
+
+  it('says "resets now" rather than "resets in now" at the boundary', () => {
+    expect(meterResetLine(meter('Current session', 99, 'Jul 22, 1:00pm'), now)).toBe('resets now');
+  });
+});
+
+// ------------------------------------------------------------- icon trigger
+
+describe('usageIconSummary (the app-bar icon button title)', () => {
+  const now = 1_000_000;
+
+  it('lists every chip, short-labelled, percent included', () => {
+    const v = usageBarView(ready([meter('Current session', 42), meter('Current week (all models)', 72)]), now);
+    expect(usageIconSummary(v)).toBe('Plan usage · Session 42% · Week 72%');
+  });
+
+  it('is the error message when there is no data to show', () => {
+    const v = usageBarView(
+      { status: 'error', meters: [], fetchedAt: null, error: { code: 'SPAWN_FAILED', message: 'Claude Code CLI not found.' } },
+      now,
+    );
+    expect(usageIconSummary(v)).toBe('Claude Code CLI not found.');
+  });
+
+  it('reads "no usage data yet" for the empty state', () => {
+    expect(usageIconSummary(usageBarView(EMPTY, now))).toBe('Plan usage — no usage data yet');
+  });
+});
+
+describe('usageIconAttention (danger tint + dot, no text)', () => {
+  const now = 1_000_000;
+
+  it('is true when any chip is high (>=80%)', () => {
+    const v = usageBarView(ready([meter('Current session', 42), meter('Current week (all models)', 91)]), now);
+    expect(usageIconAttention(v)).toBe(true);
+  });
+
+  it('is false when every chip is under the threshold', () => {
+    const v = usageBarView(ready([meter('Current session', 42)]), now);
+    expect(usageIconAttention(v)).toBe(false);
+  });
+
+  it('is true for a full error (no data) — the warning treatment', () => {
+    const v = usageBarView({ status: 'error', meters: [], fetchedAt: null, error: { code: 'INTERNAL', message: 'x' } }, now);
+    expect(usageIconAttention(v)).toBe(true);
+  });
+
+  it('is false for the empty/loading states with no problem to report', () => {
+    expect(usageIconAttention(usageBarView(EMPTY, now))).toBe(false);
   });
 });
 
