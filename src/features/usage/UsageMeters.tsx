@@ -166,7 +166,7 @@ export default function UsageMeters() {
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => setOpen((v) => !v)}
         >
-          <Icon name="plan" size={16} />
+          <Icon name="usage" size={16} />
         </IconButton>
         {open && (
           <div role="dialog" aria-label="Plan usage" className="usage-popover">
@@ -197,7 +197,7 @@ export default function UsageMeters() {
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((v) => !v)}
       >
-        <Icon name="plan" size={16} />
+        <Icon name="usage" size={16} />
         {attention && <span className="usg-dot" />}
       </IconButton>
       {open && (

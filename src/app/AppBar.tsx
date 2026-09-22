@@ -1,15 +1,18 @@
-// The app bar — redesign "Graphite & Signal", Figma "App bar" (126:158): the one
-// app-level strip, laid out as a 3-column grid so the command search sits
-// genuinely centered regardless of what either side weighs (the grid is this
-// turn's stand-in for the mock's absolute centering — same result, no overlap
-// math). Left to right:
+// The app bar — redesign "Graphite & Signal", Figma "App bar" (126:2, Sessions
+// variant): the one app-level strip, laid out as a 3-column grid so the command
+// search sits genuinely centered regardless of what either side weighs (the
+// grid is this turn's stand-in for the mock's absolute centering — same
+// result, no overlap math). Left to right:
 //  · LEFT   — the mark + wordmark, then the Overview / Sessions / GitHub nav;
 //  · CENTER — the command search (it IS the palette's trigger);
-//  · RIGHT  — the notification-mute chip, the plan-usage icon (opens a popover
-//             with the meters — too many Claude Code accounts made them too
-//             wide to show inline), the update control, a divider, the
-//             pane-layout segments (Sessions view only) + a second divider,
-//             the theme/settings tools, and the account avatar.
+//  · RIGHT  — the notification-mute chip (not in the design), the plan-usage
+//             icon (opens a popover with the meters — too many Claude Code
+//             accounts made them too wide to show inline), the running
+//             version and, only when a newer one exists, the update button, a
+//             divider, the pane-layout segments (Sessions view only) + a
+//             second divider, the theme/settings tools, the account avatar,
+//             and — Windows/Linux only, the window is frameless there — a
+//             third divider and the native caption buttons (WindowControls.tsx).
 //
 // Everything here is app-scoped; everything session-scoped lives in the session
 // header (SessionHeader.tsx) above the transcript. Nothing in this bar animates
@@ -21,7 +24,15 @@
 //  · the `+` new-session button → the roster header `+`, the rail, and `n`;
 //  · the `N waiting` chip → the Overview pill's attention badge (clicking the
 //    badge still jumps to the longest-waiting session).
+//
+// Frameless-window dragging (Windows/Linux, rework-topbar): Tauri only starts a
+// window drag when the mousedown target itself carries
+// `data-tauri-drag-region` — put on the header and the non-interactive left
+// group, never on a button — so every control keeps working. A double-click on
+// the drag region toggles maximize, matching the native caption's own gesture.
 
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { MouseEvent } from 'react';
 import { statusNeedsAttention } from '../../contract/fleet-board';
 import { accountDisplayLabel, accountNeedsLogin, findAccount, usageAccountId } from '../features/accounts/accounts';
 import { NotifyMutedChip } from '../features/notifications/NotifyMutedChip';
@@ -31,6 +42,7 @@ import LayoutToggle from '../features/usage/LayoutToggle';
 import UsageMeters from '../features/usage/UsageMeters';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
 import { focusedSessionId } from '../lib/layoutStore';
+import { hasTauriRuntime, IS_MAC } from '../lib/platform';
 import { useStore } from '../lib/store';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
@@ -39,6 +51,19 @@ import { Logo } from '../ui/Logo';
 import { accountInitials, activeNav } from './app-bar';
 import './app-bar.css';
 import { layoutDisplay, topbarTier } from './topbar';
+import { WindowControls } from './WindowControls';
+
+/**
+ * Tauri only drags the window on a mousedown that lands on the
+ * `data-tauri-drag-region` element itself — a click that bubbled up from a
+ * button doesn't count, so no explicit exclusion is needed here. Windows/Linux
+ * only: macOS keeps its native title bar above this component entirely.
+ */
+function dragDoubleClick(e: MouseEvent<HTMLElement>) {
+  if (IS_MAC || !hasTauriRuntime()) return;
+  if (!(e.target instanceof HTMLElement) || !('tauriDragRegion' in e.target.dataset)) return;
+  void getCurrentWindow().toggleMaximize();
+}
 
 export interface AppBarProps {
   appVersion: string;
@@ -80,8 +105,8 @@ export default function AppBar({ appVersion }: AppBarProps) {
   };
 
   return (
-    <header className="app-bar">
-      <div className="app-bar__left">
+    <header className="app-bar" data-tauri-drag-region onDoubleClick={dragDoubleClick}>
+      <div className="app-bar__left" data-tauri-drag-region>
         <div className="app-bar__brand">
           <Logo size={20} />
           <span className="app-bar__wordmark">Francois</span>
@@ -157,6 +182,13 @@ export default function AppBar({ appVersion }: AppBarProps) {
         </div>
 
         <AccountAvatar />
+
+        {!IS_MAC && hasTauriRuntime() && (
+          <>
+            <span className="app-bar__divider" />
+            <WindowControls />
+          </>
+        )}
       </div>
     </header>
   );

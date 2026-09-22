@@ -25,9 +25,9 @@
   border-radius: 50%;
   background: var(--state-success);
 }
-/* No update: the running version, quiet. */
+/* App bar 126:2: the running version, always shown — quiet, mono-small. */
 .upd-version {
-  color: var(--text-faint);
+  color: var(--text-muted);
   font: var(--type-mono-small);
   white-space: nowrap;
   flex-shrink: 0;
