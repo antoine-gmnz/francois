@@ -114,6 +114,16 @@ export type ErrorCode =
   | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
   | 'GH_UNAVAILABLE' | 'GH_FAILED' // github-page: gh missing/unauthenticated/not GitHub (detail: { status }) · gh exited non-zero (detail: { code, stderr })
+  | 'COHORTE_NOT_DETECTED' // cohorte-integration: no .cohorte/ for that root (detail: { startDir })
+  | 'COHORTE_CLI_MISSING' // cohorte-integration: `cohorte` does not resolve on the login-shell PATH
+  | 'COHORTE_CLI_INCOMPATIBLE' // cohorte-integration: version outside the supported range (detail: { version, supportedRange })
+  | 'COHORTE_TIMEOUT' // cohorte-integration: a CLI spawn was killed at its deadline (detail: { cli, timeoutMs })
+  | 'COHORTE_OUTPUT_CAPPED' // cohorte-integration: stdout past the cap (detail: { cli, capBytes })
+  | 'COHORTE_OUTPUT_INVALID' // cohorte-integration: stdout is not a document Francois can read (detail: { cli })
+  | 'COHORTE_COMMAND_FAILED' // cohorte-integration: exit code other than 0/3/4 (detail: { cli, code, stderr })
+  | 'COHORTE_REJECTED' // cohorte-integration: exit 3 on the FIRST step (detail: { cli, cohorteCode, message })
+  | 'COHORTE_RUN_NOT_FOUND' // cohorte-integration: runId unknown to status (detail: { runId })
+  | 'COHORTE_GATE_NOT_PENDING' // cohorte-integration: the approval is no longer pending (resolved elsewhere)
   | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
   | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
   | 'RUNTIME_UNAVAILABLE'
