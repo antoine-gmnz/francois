@@ -39,6 +39,9 @@ import type { AppState } from './store';
  */
 export type MainTab =
   | 'overview'
+  // github-page FR-1: the app-bar "GitHub" destination — app-scoped, full main
+  // pane, no session header/panel, exactly like 'overview'.
+  | 'github'
   | 'agents'
   | 'mcp'
   | 'skills'

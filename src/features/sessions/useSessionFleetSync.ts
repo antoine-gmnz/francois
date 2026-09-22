@@ -5,8 +5,8 @@ import { statusTransitionKind, type ActivityKind } from '../../../contract/overv
 import { diffGetSummary, onDiffEvent, sessionList } from '../../lib/api';
 import { captureSessionHydration, subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
-import { clearDraft } from '../conversation/composer-draft';
-import { clearPending, resolvePrompt } from '../conversation/pending-queue';
+import { clearDraft } from '../../lib/composer-draft';
+import { clearPending, resolvePrompt } from '../../lib/pending-queue';
 import { prunePaletteSession } from '../palette/paletteData';
 import { useShellStore } from '../shell/shellStore';
 import { activityLabel } from './activity';

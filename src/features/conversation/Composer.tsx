@@ -6,7 +6,7 @@ import { Icon } from '../../ui/Icon';
 import SlashMenu from '../commands/SlashMenu';
 import AttachmentChip from './AttachmentChip';
 import { composerErrorBanners } from './attachments';
-import { firstLine, type PendingPrompt } from './pending-queue';
+import { firstLine, type PendingPrompt } from '../../lib/pending-queue';
 
 // The SESSION tab input bar: slash-menu popup (FR-5) anchored above it, the
 // transient send-error banner, the pending-queue strip (transcript-perf §6..8),

@@ -147,6 +147,11 @@ export const S_WORKER = 'sess-orbit-worker';
 export const S_LEDGER = 'sess-ledger';
 export const S_INFRA = 'sess-infra';
 export const S_DOCS = 'sess-docs';
+// github-page: the two worktree sessions the Branches & worktrees frame (31,
+// `162:16108`) shows already attached — auth-retry (awaiting an approval, the
+// attention tint) and rate-limit (mid-turn, the running tint).
+export const S_AUTH_RETRY = 'sess-orbit-auth-retry';
+export const S_RATE_LIMIT = 'sess-orbit-rate-limit';
 
 // Spread into each session below rather than applied by a helper function:
 // a top-level CALL is a possible side effect, so Rollup would keep it — and
@@ -209,6 +214,44 @@ export const SESSIONS: SessionMeta[] = [
       path: '~/code/orbit-worktrees/billing-retry',
       sourceRepoRoot: '~/code/orbit',
       createdBranch: true,
+      fetched: true,
+    },
+  },
+  {
+    ...BASE,
+    id: S_AUTH_RETRY,
+    name: 'auth-retry',
+    cwd: '~/code/orbit-auth-retry',
+    projectId: PROJECT_ORBIT,
+    status: 'awaiting_approval',
+    contextUsedTokens: 52_100,
+    startedAt: T0 - (40) * MIN,
+    lastActivityAt: T0 - (2) * 60 * MIN, // matches the branch row's "2 h ago" last commit
+    worktree: {
+      branch: 'auth-retry',
+      baseRef: 'origin/main',
+      path: '~/code/orbit-auth-retry',
+      sourceRepoRoot: '~/code/orbit',
+      createdBranch: false,
+      fetched: true,
+    },
+  },
+  {
+    ...BASE,
+    id: S_RATE_LIMIT,
+    name: 'rate-limit',
+    cwd: '~/code/orbit-rate-limit',
+    projectId: PROJECT_ORBIT,
+    status: 'running',
+    contextUsedTokens: 96_400,
+    startedAt: T0 - (70) * MIN,
+    lastActivityAt: T0,
+    worktree: {
+      branch: 'rate-limit',
+      baseRef: 'origin/main',
+      path: '~/code/orbit-rate-limit',
+      sourceRepoRoot: '~/code/orbit',
+      createdBranch: false,
       fetched: true,
     },
   },

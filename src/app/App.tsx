@@ -302,7 +302,7 @@ export default function App() {
   // panel belong to the Sessions view; the OVERVIEW dashboard takes the whole
   // workspace.
   const showSessionPanel = useStore((s) => s.showSessionPanel);
-  const sessionView = mainTab !== 'overview';
+  const sessionView = mainTab !== 'overview' && mainTab !== 'github';
 
   return (
     <div className="app-root">

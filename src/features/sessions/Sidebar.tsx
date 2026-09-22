@@ -175,8 +175,9 @@ export default function Sidebar({ home }: { home: string }) {
   // to 0 on project-scope change (projects FR-28).
   const [rowCursor, setRowCursor] = useRowCursorClamp(visible, activeSessionId, activeProjectId);
 
-  // overview: picking a session while the dashboard is up means "drill into this
-  // one", so the main pane leaves OVERVIEW. Any OTHER tab is left alone — moving
+  // overview: picking a session while the dashboard — or GitHub, the app bar's
+  // other app-scoped destination (app-bar.ts) — is up means "drill into this
+  // one", so the main pane leaves it. Any OTHER tab is left alone — moving
   // between sessions while reviewing diffs must not kick you out of DIFF.
   const selectSession = (id: string) => {
     // split-by-4 FR-19: a pick lands in the FOCUSED pane. Assigning a session
@@ -184,7 +185,8 @@ export default function Sidebar({ home }: { home: string }) {
     // themselves, so this only has to route.
     if (focusedPaneIndex > 0) assignToFocusedPane(id);
     else setActiveSessionId(id);
-    if (useStore.getState().mainTab === 'overview') setMainTab('session');
+    const t = useStore.getState().mainTab;
+    if (t === 'overview' || t === 'github') setMainTab('session');
   };
 
   // Keyboard handling for pane [1] and the filter input (FR-16/17/20).

@@ -59,7 +59,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
   const waiting = sessions.filter((s) => statusNeedsAttention(s.status));
   const nav = activeNav(mainTab);
 
-  const go = (tab: 'overview' | 'session') => {
+  const go = (tab: 'overview' | 'session' | 'github') => {
     if (settingsOpen) toggleSettings(); // the nav leaves Settings
     setFocusedPane('main');
     setMainTab(tab);
@@ -107,6 +107,14 @@ export default function AppBar({ appVersion }: AppBarProps) {
           onClick={() => go('session')}
         >
           Sessions
+        </button>
+        <button
+          type="button"
+          className={nav === 'github' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
+          title="pull requests, commits and branches"
+          onClick={() => go('github')}
+        >
+          GitHub
         </button>
       </nav>
 

@@ -6,8 +6,8 @@
 // crate relative to it.
 
 use francois::{
-    account, diagnostics, diff, dnd, editor, extensions, permissions, profiles, project, session,
-    shell, update, usage, window,
+    account, diagnostics, diff, dnd, editor, extensions, github, permissions, profiles, project,
+    session, shell, update, usage, window,
 };
 
 use tauri::RunEvent;
@@ -193,6 +193,19 @@ fn main() {
             session::session_worktree_remove,
             editor::session_editor_list,
             editor::session_open_in_editor,
+            github::github_repo_info,
+            github::github_fetch,
+            github::github_list_pulls,
+            github::github_get_pull,
+            github::github_update_pull_branch,
+            github::github_merge_pull,
+            github::github_list_commits,
+            github::github_get_commit,
+            github::github_list_branches,
+            github::github_worktree_disk_usage,
+            github::github_create_worktree,
+            github::github_prune,
+            github::github_open_url,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,
