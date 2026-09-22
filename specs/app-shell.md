@@ -311,7 +311,7 @@ Everything in `Claude Terminal.dc.html` **except** the interior of each pane's s
 - Click a window-control dot → corresponding `francois:app:*` IPC call.
 - Click the `⌘K` status-bar hint → `togglePalette`.
 - Keyboard: full table in §5 (`KEY_BINDINGS`), suspension behavior per FR-26–FR-28.
-- Motion: `pulse` (`1.4s ease-in-out infinite`, opacity `1 → 0.35 → 1`) on the agents-indicator dot while N > 0; `blink` (`1s step-end infinite`, opacity `1 → 0`) is used by tab-content features for streaming cursors, not by app-shell chrome itself.
+- Motion: `pulse` (`1.4s ease-in-out infinite`, opacity `1 → 0.35 → 1`) on the agents-indicator dot while N > 0; `blink` (`1s step-end infinite`, opacity `1 → 0`) is used by tab-content features for streaming cursors, not by app-shell chrome itself. **Superseded (loaders adoption):** `blink` is retired — streaming cursors are now the shared `Caret` primitive's own `fr-blink` (`src/ui/loaders.css`).
 
 ### Visual notes — full token set (owned by app-shell's design-tokens module)
 
@@ -342,7 +342,7 @@ Everything in `Claude Terminal.dc.html` **except** the interior of each pane's s
 
 **Motion**
 - `pulse`: `@keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.35 } }`, `1.4s ease-in-out infinite`, used on running/connecting status dots (title-bar agents dot when N > 0).
-- `blink`: `@keyframes blink { 0%,49% { opacity:1 } 50%,100% { opacity:0 } }`, `1s step-end infinite`, used for streaming/typing cursors (owned by conversation-view/shell-terminal/command-palette, sourced from this token set).
+- `blink`: `@keyframes blink { 0%,49% { opacity:1 } 50%,100% { opacity:0 } }`, `1s step-end infinite`, used for streaming/typing cursors (owned by conversation-view/shell-terminal/command-palette, sourced from this token set). **Superseded (loaders adoption):** the global `blink` keyframe is gone — streaming cursors draw through the shared `Caret` primitive's `fr-blink` (`src/ui/loaders.css`), `1.06s steps(1,end)`, cyan (`var(--state-running)`) rather than the accent above.
 
 **Radii & spacing**
 - Panel radius 5px; window radius 9px; command-palette modal radius 8px; chip/row radius 4px; badge radius 8px.

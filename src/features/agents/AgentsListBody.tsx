@@ -21,6 +21,7 @@ import {
   stepToolPrefix,
 } from './agent-trail';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
+import { Orbit } from '../../ui/Loaders';
 import { StatusDot } from '../../ui/StatusDot';
 
 const statusColor: Record<string, string> = {
@@ -128,7 +129,9 @@ function Card({
   return (
     <div onClick={onClick} onMouseEnter={() => onHover(true)} onMouseLeave={() => onHover(false)} className={cardClass}>
       <div className="agent-inline-row">
-        <StatusDot color={sc} pulsing={agent.status === 'running'} />
+        <span className="agent-status-slot">
+          {agent.status === 'running' ? <Orbit size={14} label={null} /> : <StatusDot color={sc} />}
+        </span>
         <span className="agent-card__name truncate">{agent.name}</span>
         {showAsyncMarker(agent) && <span className="agent-async-badge agent-async-badge--shrink">{ASYNC_MARKER}</span>}
         {showKill ? (

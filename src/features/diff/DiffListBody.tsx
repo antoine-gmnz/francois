@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import type { RefObject } from 'react';
 import type { AppError } from '../../../contract/common';
 import type { DiffFileSummary, DiffHunk, DiffLine, DiffSummary, FileDiff } from '../../../contract/diff-view';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { Icon } from '../../ui/Icon';
+import { Slabs } from '../../ui/Loaders';
 import { DiffTree } from './DiffTree';
 import { computeIntralineSpans, type IntralineSpan } from './intraline';
 import { isReviewed } from './review-state';
@@ -188,6 +190,9 @@ function DiffBody({
 
   const [win, setWin] = useState({ start: 0, end: WINDOW_INITIAL });
 
+  // Nothing under 300ms — a loader that flashes is worse than a beat of silence.
+  const showLoadingSlabs = useDelayedFlag(loading && !diff, 300);
+
   // Recompute the visible window on scroll / resize.
   useEffect(() => {
     const el = scrollRef.current;
@@ -216,7 +221,7 @@ function DiffBody({
   }, [diff, scrollRef]);
 
   if (error) return <Placeholder text={error.message} error />;
-  if (loading && !diff) return <Placeholder text="Loading…" />;
+  if (loading && !diff) return showLoadingSlabs ? <Placeholder loading /> : null;
   if (!diff) return null;
   if (diff.binary) return <Placeholder text="Binary file" />;
   if (rows.length === 0) return <Placeholder text="No content changes" />;
@@ -271,6 +276,11 @@ function IntralineText({ text, spans }: { text: string; spans: IntralineSpan[] }
   );
 }
 
-function Placeholder({ text, error }: { text: string; error?: boolean }) {
+function Placeholder({ text, error, loading }: { text?: string; error?: boolean; loading?: boolean }) {
+  if (loading) return (
+    <div className="diff-placeholder diff-placeholder--loading">
+      <Slabs size={16} />
+    </div>
+  );
   return <div className={error ? 'diff-placeholder diff-placeholder--error' : 'diff-placeholder'}>{text}</div>;
 }
