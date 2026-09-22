@@ -142,7 +142,7 @@ fn parse_numstat_files(data: &[u8]) -> Vec<CommitFile> {
             })
         })
         .collect();
-    files.sort_by(|a, b| (b.additions + b.deletions).cmp(&(a.additions + a.deletions)));
+    files.sort_by_key(|f| std::cmp::Reverse(f.additions + f.deletions));
     files
 }
 

@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
-import { getPending, parkPrompt } from '../conversation/pending-queue';
+import { getPending, parkPrompt } from '../../lib/pending-queue';
 import {
   clearQueueOnSessionCleared,
   clearQueueOnSessionError,

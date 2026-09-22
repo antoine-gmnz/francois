@@ -14,9 +14,9 @@
 
 import type { SessionId, SessionMeta } from '../../../contract/common';
 import { githubOpenUrl, sessionCreate, sessionSend, sessionWorktreeProbe } from '../../lib/api';
-import { parkPrompt, resolvePrompt } from '../conversation/pending-queue';
-import { setDraft } from '../conversation/composer-draft';
-import { recordSent } from '../conversation/message-history';
+import { parkPrompt, resolvePrompt } from '../../lib/pending-queue';
+import { setDraft } from '../../lib/composer-draft';
+import { recordSent } from '../../lib/message-history';
 import { useStore } from '../../lib/store';
 
 /** Select `id` and switch the main pane to its SESSION view (FR-5's "Where

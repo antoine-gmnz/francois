@@ -32,7 +32,7 @@ import {
 import { composerPlaceholder } from '../questions/question-card';
 import RunChip from '../sessions/RunChip';
 import Composer from './Composer';
-import { getDraft, setDraft } from './composer-draft';
+import { getDraft, setDraft } from '../../lib/composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
 import { isClearCommand, readingWindowHint, RESTORING_PLACEHOLDER, type TranscriptDispatch } from './conversation-blocks';
 import './conversation.css';
@@ -45,8 +45,8 @@ import {
     recallPrev,
     recordSent,
     type Browse,
-} from './message-history';
-import { appendToDraft, parkPrompt, resolvePrompt, usePendingQueue, wasWronglyOptimistic } from './pending-queue';
+} from '../../lib/message-history';
+import { appendToDraft, parkPrompt, resolvePrompt, usePendingQueue, wasWronglyOptimistic } from '../../lib/pending-queue';
 import { useSessionAttachments } from './useSessionAttachments';
 
 export interface ComposerPaneProps {
@@ -253,7 +253,7 @@ export default function ComposerPane({
     // has to come back out and the prompt parked instead. The opposite miss
     // ("guessed busy, actually ran now") is already correctly parked and
     // resolves itself at the imminent message.user (FR-12) — see
-    // ./pending-queue's wasWronglyOptimistic.
+    // lib/pending-queue's wasWronglyOptimistic.
     if (wasWronglyOptimistic(guessedBusy, res.data.queued)) {
       dispatch({ t: 'remove', blockId });
       parkPrompt(sessionId, blockId, text);

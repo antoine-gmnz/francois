@@ -304,7 +304,7 @@ fn map_pull_detail(
             comments: 0,
         })
         .collect();
-    files.sort_by(|a, b| (b.additions + b.deletions).cmp(&(a.additions + a.deletions)));
+    files.sort_by_key(|f| std::cmp::Reverse(f.additions + f.deletions));
 
     let mut comments = inline_comments;
     // CHANGES_REQUESTED review bodies join the unresolved comment list (FR-5).
@@ -330,7 +330,7 @@ fn map_pull_detail(
             url: pr.url.clone(),
         });
     }
-    comments.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    comments.sort_by_key(|c| std::cmp::Reverse(c.created_at));
     for c in &comments {
         if let Some(p) = &c.path {
             if let Some(f) = files.iter_mut().find(|f| &f.path == p) {
