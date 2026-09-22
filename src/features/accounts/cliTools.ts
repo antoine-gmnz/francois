@@ -112,7 +112,9 @@ export function loginBlockedReason(spec: ProviderSpec, tool: CliToolStatus | nul
  * is not mistaken for a second, different action.
  */
 export function installButtonLabel(state: CliInstallState, tool: CliToolStatus): string {
-  if (state.phase === 'installing') return 'Installing…';
+  // No trailing ellipsis while installing — the button wraps this in the shared
+  // `Caret` loader, which already carries the "still going" reading on its own.
+  if (state.phase === 'installing') return 'Installing';
   if (state.phase === 'failed') return 'Retry install';
   return `Install ${tool.bin}`;
 }

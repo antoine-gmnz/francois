@@ -157,7 +157,7 @@ describe('installButtonLabel', () => {
 
   it('reads as in-progress while npm runs', () => {
     expect(installButtonLabel({ phase: 'installing', output: '', error: null }, tool())).toBe(
-      'Installing…',
+      'Installing',
     );
   });
 });

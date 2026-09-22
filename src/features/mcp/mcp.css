@@ -118,6 +118,16 @@
   cursor: pointer;
   transition: background 120ms ease;
 }
+/* Fixed-size slot for the status glyph — a resting StatusDot and a running
+   Orbit (14px) are different footprints, so the row centers whichever is
+   showing rather than shifting the name column. */
+.mcp-status-slot {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
 .mcp-row--selected {
   background: var(--bg-raised);
 }

@@ -13,12 +13,13 @@
 // matching every other piece of this feature.
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import type { AppError } from '../../../contract/common';
 import type { Account, EndpointProbe } from '../../../contract/multi-account';
 import { accountAddEndpoint, accountTestEndpoint, accountUpdateEndpoint } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { Button } from '../../ui/Button';
+import { Caret } from '../../ui/Loaders';
 import './accounts.css';
 import {
   endpointAddPayload,
@@ -151,6 +152,9 @@ export function EndpointForm({
   // Round-2 review MEDIUM: account_test_endpoint can also fail INVALID_INPUT
   // (FR-8), so the Base URL border must fire on that path too, not Save alone.
   const baseUrlHasError = endpointBaseUrlHasError(saveError, probe.kind === 'error' ? probe.error : null);
+  // Nothing under 300ms — Test/Save that settle fast never get a caret flash.
+  const showTestCaret = useDelayedFlag(probe.kind === 'testing', 300);
+  const showSaveCaret = useDelayedFlag(saving, 300);
 
   return (
     <div className="acc-endpoint-form">
@@ -242,12 +246,10 @@ export function EndpointForm({
 
       <div className="acc-endpoint-actions">
         <Button variant="ghost" onClick={runTest} disabled={busy || baseUrl.trim() === ''}>
-          {probe.kind === 'testing' && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
-          Test
+          {showTestCaret ? <Caret>Test</Caret> : 'Test'}
         </Button>
         <Button variant="primary" onClick={save} disabled={endpointSaveDisabled(label, baseUrl, busy)}>
-          {saving && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
-          Save
+          {showSaveCaret ? <Caret>Save</Caret> : 'Save'}
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel

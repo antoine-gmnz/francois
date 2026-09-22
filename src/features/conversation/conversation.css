@@ -189,33 +189,11 @@
    (--bg-raised). The gutter glyphs take a fill token rather than a text one on
    purpose: they are part of the bar ramp, not type that says anything. */
 
+/* session-switch-loader FR-7: the wrapper carries the role/aria-label; the
+   hairline itself is the shared `Stitch` primitive (src/ui/loaders.css),
+   which already owns its own reduced-motion breathe. */
 .conv-hydrating-bar {
-  position: relative;
-  height: 2px;
-  background: var(--bg-panel);
-  overflow: hidden;
   flex-shrink: 0;
-}
-.conv-hydrating-bar__thumb {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 30%;
-  background: var(--accent);
-  animation: conv-hydrating-creep 1.5s ease-in-out infinite;
-}
-@keyframes conv-hydrating-creep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(320%);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .conv-hydrating-bar__thumb {
-    animation: none;
-    transform: translateX(0);
-  }
 }
 
 /* FR-5: bottom-pinned in the SAME scroll container the real transcript uses —
@@ -985,8 +963,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* A call still in flight has no result yet — it says so with the pulsing dot
-   the rest of the app uses for "live", not with an empty chip. */
+/* A call still in flight has no result yet — it says so with the shared Caret
+   loader (src/ui/Loaders.tsx), not with an empty chip. */
 .toolrow--live .toolrow__target {
   color: var(--text-hint);
 }
@@ -1047,15 +1025,9 @@
   font-size: var(--font-size-11);
   color: var(--hue-purple-soft);
 }
-.block-caret {
-  display: inline-block;
-  width: 8px;
-  height: 16px;
-  background: var(--accent);
-  vertical-align: text-bottom;
-  margin-left: var(--space-5);
-  animation: blink 1s step-end infinite;
-}
+/* The streaming caret and the in-flight tool-row marker are now the shared
+   `Caret` primitive (src/ui/Loaders.tsx, src/ui/loaders.css) — `.block-caret`
+   retired in its favour. */
 
 /* design 7a: the prompt is an accent `›` line, not a card — see Block.tsx. */
 .block-user__arrow {

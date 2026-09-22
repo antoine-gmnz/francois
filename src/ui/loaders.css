@@ -1,0 +1,179 @@
+/* "Graphite & Signal · motion" (design mirror: François Loaders.html) —
+   Slabs / Caret / Stitch / Orbit. Token mapping from the artifact:
+     --run → var(--state-running)   --attn → var(--state-attention)
+     --line → var(--line-subtle)    --line-strong → var(--line-strong)
+     --mono → var(--font-mono)      --text → currentColor
+   Geometry scales off one `--s` custom property (Loaders.tsx sets it per
+   call site); Caret has no `--s` — it inherits font-size from its row.
+   Motion is transform-and-opacity only throughout. */
+
+/* 1 · Slabs — the view has nothing else to show yet. One per screen. */
+.fr-slabs {
+  display: inline-flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: calc(var(--s, 24px) * 0.17);
+  width: var(--s, 24px);
+  color: currentColor;
+}
+.fr-slabs i {
+  display: block;
+  height: calc(var(--s, 24px) * 0.2);
+  border-radius: calc(var(--s, 24px) * 0.04);
+  background: currentColor;
+  transform-origin: left center;
+  animation: fr-slab 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+.fr-slabs i:nth-child(1) {
+  width: 100%;
+  animation-delay: 0s;
+}
+.fr-slabs i:nth-child(2) {
+  width: 74%;
+  animation-delay: 0.13s;
+}
+.fr-slabs i:nth-child(3) {
+  width: 48%;
+  animation-delay: 0.26s;
+}
+@keyframes fr-slab {
+  0%,
+  100% {
+    transform: scaleX(0.28);
+    opacity: 0.45;
+  }
+  45% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  70% {
+    transform: scaleX(1);
+    opacity: 0.85;
+  }
+}
+
+/* 2 · Caret — inline, terminal-flavoured. Inherits font-size & color from the
+   row it sits in; only the block itself is fixed cyan (the running colour). */
+.fr-caret {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  font-family: var(--font-mono);
+}
+.fr-caret::before {
+  content: '';
+  width: 0.52em;
+  height: 1.05em;
+  background: var(--state-running);
+  border-radius: 1px;
+  animation: fr-blink 1.06s steps(1, end) infinite;
+}
+/* A busy button label (Save, Test, Installing…) is UI type, not terminal
+   output — the caret block still reads fine at that size, but forcing mono
+   onto the label itself would swap the button's own font mid-word. */
+.btn .fr-caret {
+  font-family: inherit;
+}
+@keyframes fr-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.12;
+  }
+}
+
+/* 3 · Stitch — indeterminate hairline. Lives on an edge, never in the middle;
+   never blocks the content underneath. */
+.fr-stitch {
+  position: relative;
+  height: 2px;
+  width: 100%;
+  flex-shrink: 0;
+  background: var(--line-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.fr-stitch::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--state-running), transparent);
+  animation: fr-stitch 1.25s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes fr-stitch {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(365%);
+  }
+}
+
+/* 4 · Orbit — work François only watches (a subagent, a workflow run, a
+   remote check). Violet, kept as the one classic spinner in the set. */
+.fr-orbit {
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--s, 24px);
+  height: var(--s, 24px);
+  position: relative;
+  color: var(--state-attention);
+}
+.fr-orbit i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: calc(var(--s, 24px) * 0.1) solid var(--line-strong);
+}
+.fr-orbit i:nth-child(2) {
+  border-color: currentColor transparent transparent transparent;
+  animation: fr-spin 1s linear infinite;
+}
+@keyframes fr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced motion: all four swap to a slow 2.2s opacity breathe — no spin, no
+   travel. This is a LOCAL exception to the global near-zero-duration rule in
+   src/styles.css (same precedent as `.conv-hydrating-bar__thumb` there): that
+   rule's `*, *::before, *::after` selector has lower specificity than the
+   class/pseudo-element selectors below, so the `!important` breathe duration
+   here wins instead of being crushed to ~0ms. */
+@media (prefers-reduced-motion: reduce) {
+  .fr-slabs i,
+  .fr-caret::before,
+  .fr-stitch::after,
+  .fr-orbit i:nth-child(2) {
+    animation: fr-breathe 2.2s ease-in-out infinite !important;
+  }
+  .fr-slabs i {
+    transform: scaleX(1) !important;
+  }
+  .fr-stitch::after {
+    width: 100%;
+    transform: none !important;
+    background: var(--state-running);
+    opacity: 0.5;
+  }
+  .fr-orbit i:nth-child(2) {
+    transform: rotate(90deg) !important;
+  }
+  @keyframes fr-breathe {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
