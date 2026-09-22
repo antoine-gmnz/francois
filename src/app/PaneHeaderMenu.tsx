@@ -1,10 +1,11 @@
-import { MoreHorizontal } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { ProjectId } from '../../contract/common';
 import ProjectPickerPopover from '../features/projects/ProjectPickerPopover';
 import { useDismiss } from '../lib/hooks/useDismiss';
 import { paneCount, shellPaneEligibleProjects } from '../lib/layoutStore';
 import { useStore } from '../lib/store';
+import { Icon } from '../ui/Icon';
+import { IconButton } from '../ui/IconButton';
 import { paneMenuEntries, type PaneMenuEntry } from './appShell';
 
 export interface PaneHeaderMenuProps {
@@ -70,17 +71,18 @@ export default function PaneHeaderMenu({ index, kind, onConvertToShell }: PaneHe
     // stopPropagation throughout: the pane's own click handler would otherwise
     // re-focus this pane after the action has already moved focus elsewhere.
     <span ref={ref} className="split-pane__menu" onClick={(e) => e.stopPropagation()}>
-      <button
-        type="button"
-        className="split-pane__promote split-pane__menu-btn"
+      <IconButton
+        size={24}
+        on={open}
+        className="split-pane__menu-btn"
         title="Pane actions"
         onClick={() => {
           setOpen((o) => !o);
           setPicking(null);
         }}
       >
-        <MoreHorizontal size={12} strokeWidth={1.75} />
-      </button>
+        <Icon name="dots" size={13} />
+      </IconButton>
       {open &&
         (picking !== null ? (
           <ProjectPickerPopover onPick={(projectId) => dispatch(picking, projectId)} onClose={() => setPicking(null)} />

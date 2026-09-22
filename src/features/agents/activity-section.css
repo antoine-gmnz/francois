@@ -1,0 +1,91 @@
+/* The session panel's Activity section (ActivitySection.tsx) — redesign
+   "Graphite & Signal", Figma "16 · Panel / Activity" 134:3540 (light
+   142:14231). Rows sit 6px in from the rail edge; the first running row is
+   raised. Colour from theme tokens only. */
+
+.activity-row-wrap {
+  padding: 0 var(--space-6);
+}
+
+.activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: var(--space-8) var(--space-6) var(--space-8) var(--space-10);
+  border-radius: var(--radius-5);
+  min-width: 0;
+}
+.activity-row--openable {
+  cursor: pointer;
+}
+.activity-row--lead,
+.activity-row--openable:hover {
+  background: var(--bg-raised);
+}
+
+.activity-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  min-height: 24px;
+}
+
+.activity-row__name {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-mono-medium);
+  color: var(--text-primary);
+}
+
+.activity-row__clock {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.activity-row__clock--live {
+  color: var(--state-running);
+}
+
+.activity-row__stop {
+  color: var(--state-danger);
+}
+.activity-row__slot {
+  width: 24px;
+  flex-shrink: 0;
+}
+.activity-row__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.activity-row__line,
+.activity-row__phases {
+  padding-left: 21px;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.activity-row__phases {
+  color: var(--text-faint);
+}
+.activity-row__failed {
+  color: var(--state-danger);
+}
+
+.activity-section__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 26px;
+}
+.activity-section__hint {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}

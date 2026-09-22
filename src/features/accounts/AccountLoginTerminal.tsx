@@ -39,7 +39,7 @@ export default function AccountLoginTerminal({ loginId, onReady }: AccountLoginT
 
   useEffect(() => {
     const term = new Terminal({
-      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+      fontFamily: "'Geist Mono', ui-monospace, monospace",
       fontSize: 12,
       fontWeight: '400',
       fontWeightBold: '700',

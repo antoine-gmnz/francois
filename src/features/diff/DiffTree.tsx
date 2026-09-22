@@ -1,18 +1,17 @@
-import { Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import type { DiffFileStatus, DiffFileSummary } from '../../../contract/diff-view';
+import type { DiffFileSummary } from '../../../contract/diff-view';
+import { Icon } from '../../ui/Icon';
 import { ListRow } from '../../ui/ListRow';
 import type { DiffTreeNode, RollupState, VisibleRow } from './diff-tree';
+import { FILE_STATUS } from './file-status';
+import { isReviewed } from './review-state';
 
-// per-status glyph + color (spec §8 status set) — unchanged from the flat list.
-const STATUS: Record<DiffFileStatus, { ch: string; color: string }> = {
-  modified: { ch: 'M', color: 'var(--accent)' },
-  added: { ch: 'A', color: 'var(--success)' },
-  deleted: { ch: 'D', color: 'var(--error)' },
-  untracked: { ch: 'U', color: 'var(--hue-blue)' },
-  renamed: { ch: 'R', color: 'var(--hue-purple)' },
-};
+// Figma "File tree" (135:5177): folders at a 10px inset, each depth 16px deeper,
+// so a file under a top-level folder starts at 26px like the design.
+const INDENT_BASE = 10;
+const INDENT_STEP = 16;
+const indent = (depth: number) => ({ paddingLeft: INDENT_BASE + depth * INDENT_STEP });
 
 export interface DiffTreeProps {
   visibleRows: VisibleRow[];
@@ -26,14 +25,16 @@ export interface DiffTreeProps {
   selectedCount: number;
   totalFiles: number;
   rollup: (node: DiffTreeNode) => RollupState;
+  reviewMarks: readonly string[];
   onSelectPath: (path: string) => void;
   onToggleFile: (path: string) => void;
   onToggleAll: () => void;
   onToggleFold: (key: string) => void;
 }
 
-/** diff-navigator: the left column — filter box + collapsible folder tree, replacing
- *  the flat vertical file list (spec §8). */
+/** diff-navigator: the left column — filter box + collapsible folder tree. Each
+ *  file carries its status letter, a ✓ once reviewed, and (on hover, or while
+ *  left out) the checkbox that decides whether `Commit…` includes it. */
 export function DiffTree({
   visibleRows,
   filter,
@@ -46,6 +47,7 @@ export function DiffTree({
   selectedCount,
   totalFiles,
   rollup,
+  reviewMarks,
   onSelectPath,
   onToggleFile,
   onToggleAll,
@@ -54,8 +56,7 @@ export function DiffTree({
   // FR-19: the cursor auto-scrolls into view on every move, so a filtered-out or
   // long tree never leaves the keyboard cursor invisible above/below the viewport.
   const cursorRowRef = useRef<HTMLDivElement>(null);
-  // Design brief §Left column: the `/` keycap hint disappears on focus, not merely
-  // once the query is non-empty.
+  // The `/` keycap hint disappears on focus, not merely once the query is non-empty.
   const [filterFocused, setFilterFocused] = useState(false);
   useEffect(() => {
     cursorRowRef.current?.scrollIntoView({ block: 'nearest' });
@@ -64,50 +65,52 @@ export function DiffTree({
   return (
     <div className="scz diff-filelist">
       <div className="diff-filter">
-        <Search className="diff-filter__icon" size={12} />
+        <Icon name="search" size={12} className="diff-filter__icon" />
         <input
           ref={filterInputRef}
           className="diff-filter__input"
           value={filter}
-          placeholder="filter files…"
+          placeholder="Filter files"
           onChange={(e) => onFilterChange(e.target.value)}
           onFocus={() => setFilterFocused(true)}
           onBlur={() => setFilterFocused(false)}
-          aria-label="filter files"
+          aria-label="Filter files"
         />
         {filter === '' && !filterFocused && <span className="diff-filter__hint">/</span>}
       </div>
 
-      <div onClick={onToggleAll} title={allSelected ? 'deselect all' : 'select all'} className="diff-filelist__header">
+      <div
+        onClick={onToggleAll}
+        title={allSelected ? 'Leave every file out of the commit' : 'Include every file in the commit'}
+        className="diff-filelist__header"
+      >
         <Checkbox checked={allSelected} indeterminate={selectedCount > 0 && !allSelected} />
         <span>
-          {selectedCount} of {totalFiles} selected
+          {selectedCount} of {totalFiles} in commit
         </span>
       </div>
 
       <div className="diff-tree" role="tree" aria-activedescendant={cursorKey ?? undefined}>
         {visibleRows.length === 0 && filter.trim() !== '' ? (
-          <div className="diff-tree__no-match">no file matches &quot;{filter}&quot;</div>
+          <div className="diff-tree__no-match">No file matches &quot;{filter}&quot;</div>
         ) : (
           visibleRows.map((row) => {
+            const isCursor = row.key === cursorKey;
             if (row.node.kind === 'folder') {
-              const node = row.node;
-              const isCursor = row.key === cursorKey;
               return (
                 <FolderRow
                   key={row.key}
-                  node={node}
+                  node={row.node}
                   depth={row.depth}
                   expanded={row.expanded}
                   cursor={isCursor}
-                  rollupState={rollup(node)}
+                  rollupState={rollup(row.node)}
                   onToggle={() => onToggleFold(row.key)}
                   rowRef={isCursor ? cursorRowRef : undefined}
                 />
               );
             }
             const file = row.node.file;
-            const isCursor = row.key === cursorKey;
             return (
               <FileRow
                 key={row.key}
@@ -117,6 +120,7 @@ export function DiffTree({
                 selected={file.path === selectedPath}
                 cursor={isCursor}
                 checked={!deselected.has(file.path)}
+                reviewed={isReviewed(reviewMarks, file)}
                 onClick={() => onSelectPath(file.path)}
                 onToggle={() => onToggleFile(file.path)}
                 rowRef={isCursor ? cursorRowRef : undefined}
@@ -129,17 +133,13 @@ export function DiffTree({
   );
 }
 
-// A small terminal-styled checkbox: an accent-filled box with a ✓ when checked, a
-// hollow box when unchecked, and a dash when indeterminate.
+// The commit-selection box: filled with a check when included, hollow when left
+// out, a dash when a folder is mixed.
 function Checkbox({ checked, indeterminate, dim }: { checked: boolean; indeterminate?: boolean; dim?: boolean }) {
-  const on = checked || indeterminate;
+  const cls = ['diff-box', (checked || indeterminate) && 'diff-box--on', dim && 'diff-box--dim'].filter(Boolean).join(' ');
   return (
-    <span
-      className={dim ? 'diff-checkbox diff-checkbox--dim' : 'diff-checkbox'}
-      aria-hidden={dim ? true : undefined}
-      style={{ border: `1px solid ${on ? 'var(--accent)' : 'var(--text-muted)'}`, background: checked ? 'var(--accent)' : 'transparent' }}
-    >
-      {checked ? '✓' : indeterminate ? <span className="diff-checkbox-dash" /> : ''}
+    <span className={cls} aria-hidden>
+      {checked ? <Icon name="check" size={10} /> : indeterminate ? <span className="diff-box__dash" /> : null}
     </span>
   );
 }
@@ -161,20 +161,22 @@ function FolderRow({
   onToggle: () => void;
   rowRef?: RefObject<HTMLDivElement>;
 }) {
+  // A folder partly left out of the commit says so; a fully included one stays quiet.
+  const partial = rollupState !== 'checked';
   return (
     <div
       ref={rowRef}
       onClick={onToggle}
-      title={node.label}
+      title={partial ? `${node.label} — ${rollupState === 'mixed' ? 'partly' : 'not'} in commit` : node.label}
       role="treeitem"
       aria-expanded={expanded}
       id={node.key}
       className={cursor ? 'diff-tree-row diff-tree-row--folder diff-tree-row--cursor' : 'diff-tree-row diff-tree-row--folder'}
-      style={{ paddingLeft: 8 + depth * 12 }}
+      style={indent(depth)}
     >
-      <span className="diff-tree-row__caret">{expanded ? '▾' : '▸'}</span>
-      <Checkbox checked={rollupState === 'checked'} indeterminate={rollupState === 'mixed'} dim />
+      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={10} className="diff-tree-row__caret" />
       <span className="diff-tree-row__label truncate">{node.label}</span>
+      {partial && <Checkbox checked={false} indeterminate={rollupState === 'mixed'} dim />}
     </div>
   );
 }
@@ -186,6 +188,7 @@ function FileRow({
   selected,
   cursor,
   checked,
+  reviewed,
   onClick,
   onToggle,
   rowRef,
@@ -196,45 +199,45 @@ function FileRow({
   selected: boolean;
   cursor: boolean;
   checked: boolean;
+  reviewed: boolean;
   onClick: () => void;
   onToggle: () => void;
   rowRef?: RefObject<HTMLDivElement>;
 }) {
-  const st = STATUS[file.status] ?? STATUS.modified;
+  const st = FILE_STATUS[file.status] ?? FILE_STATUS.modified;
+  const cls = ['diff-file-row', cursor && 'diff-tree-row--cursor', !checked && 'diff-file-row--excluded'].filter(Boolean).join(' ');
   return (
     <ListRow
       ref={rowRef}
       onClick={onClick}
-      title={file.path}
+      title={checked ? file.path : `${file.path} — not in commit`}
       selected={selected}
       id={file.path}
       role="treeitem"
-      className={cursor ? 'diff-file-row diff-tree-row--cursor' : 'diff-file-row'}
-      style={{ paddingLeft: 8 + depth * 12 }}
+      aria-selected={selected}
+      className={cls}
+      style={indent(depth)}
     >
+      <span className={`diff-file-status diff-file-status--${st.tone}`}>{st.ch}</span>
+      <span className="diff-file-name truncate">{renderMatch(file.name, filter)}</span>
+      <span className="diff-file-row__spacer" />
+      {reviewed && <Icon name="check" size={12} className="diff-file-row__reviewed" title="Reviewed" />}
       <span
         onClick={(e) => {
-          e.stopPropagation(); // toggle selection without changing which diff is shown
+          e.stopPropagation(); // toggle commit selection without changing which diff is shown
           onToggle();
         }}
-        className="diff-checkbox-wrap"
+        className="diff-file-row__commit"
+        title={checked ? 'Leave out of the commit' : 'Include in the commit'}
       >
         <Checkbox checked={checked} />
       </span>
-      <span className="diff-file-status" style={{ color: st.color }}>
-        {st.ch}
-      </span>
-      <span className="diff-file-name truncate" style={{ color: selected ? 'var(--text-bright)' : 'var(--text)' }}>
-        {renderMatch(file.name, filter)}
-      </span>
-      {file.additions > 0 && <span className="diff-file-stat diff-color-add">+{file.additions}</span>}
-      {file.deletions > 0 && <span className="diff-file-stat diff-color-del">−{file.deletions}</span>}
     </ListRow>
   );
 }
 
-// FR-8/design §8: emphasize the matched substring within the basename with weight
-// only, never colour — the accent slot belongs to the selected row.
+// FR-8: emphasize the matched substring within the basename with weight only,
+// never colour.
 function renderMatch(name: string, filter: string) {
   const query = filter.trim().toLowerCase();
   if (!query) return name;

@@ -16,7 +16,8 @@ import type { WorkflowRun } from '../../../contract/common';
 import type { WorkflowAgentInfo, WorkflowPendingAsk } from '../../../contract/workflow-details';
 import { workflowsScript } from '../../lib/api';
 import { Chip } from '../../ui/Chip';
-import { StatusDot } from '../../ui/StatusDot';
+import { Icon } from '../../ui/Icon';
+import { StateIcon } from '../../ui/StateIcon';
 import { AgentBlockRow } from '../agents/AgentView';
 import { isAtBottom } from '../agents/agent-trail';
 import Block from '../conversation/Block';
@@ -48,6 +49,7 @@ import {
   runWindow,
   sumTokens,
   waitingBannerLabel,
+  workflowStateKind,
   type WorkflowScriptState,
   type WorkflowTranscriptState,
 } from './workflow-detail';
@@ -242,7 +244,7 @@ function RunHeader({
   return (
     <div className="wfd-run">
       <div className="wfd-run__row">
-        <StatusDot color={color} size={7} pulsing={status === 'running'} />
+        <StateIcon kind={workflowStateKind(status)} size={13} />
         <span className="wfd-run__name truncate">{run?.name ?? 'workflow'}</span>
         <span className="wfd-run__status" style={{ color }}>
           {status}
@@ -252,7 +254,10 @@ function RunHeader({
       {run && run.description !== '' && <div className="wfd-run__description">{run.description}</div>}
 
       <div className="wfd-run__meta">
-        <span>◷ {formatElapsed(elapsedMs)}</span>
+        <span className="wfd-run__clock">
+          <Icon name="clock" size={11} />
+          {formatElapsed(elapsedMs)}
+        </span>
         <span className="wfd-run__meta-sep">·</span>
         <span>{agentCountLabel(agents)}</span>
         <span className="wfd-run__meta-sep">·</span>
@@ -290,14 +295,17 @@ function TranscriptHeader({ agent, now }: { agent: WorkflowAgentInfo; now: numbe
   return (
     <div className="wfd-col__head">
       <div className="wfd-col__head-row">
-        <StatusDot color={color} size={7} pulsing={agent.status === 'running'} />
+        <StateIcon kind={workflowStateKind(agent.status)} size={13} />
         <span className="wfd-col__type">{agent.agentType}</span>
         {agent.model && <span className="wfd-agent__model">{agent.model}</span>}
         <span className="wfd-col__status" style={{ color }}>
           {agent.status}
         </span>
         <span className="wfd-agent__spacer" />
-        <span className="wfd-col__elapsed">◷ {formatElapsed(agentElapsedMs(agent, now))}</span>
+        <span className="wfd-col__elapsed">
+          <Icon name="clock" size={11} />
+          {formatElapsed(agentElapsedMs(agent, now))}
+        </span>
       </div>
       {agent.prompt !== '' && <div className="wfd-col__prompt truncate">{agent.prompt}</div>}
     </div>

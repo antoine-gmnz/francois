@@ -7,7 +7,8 @@
 // Nothing here is stored: every value is derived from the core's `WorkflowDetail`
 // plus the run's own `WorkflowRun` (spec §6, "Derived, not stored").
 
-import type { AppError, Result } from '../../../contract/common';
+import type { AppError, Result, WorkflowStatus } from '../../../contract/common';
+import type { StateKind } from '../../ui/state-kind';
 import type { AgentBlock } from '../../../contract/agent-tab';
 import type {
   WorkflowAgentInfo,
@@ -395,4 +396,18 @@ export const SCRIPT_TOGGLE_LABEL = 'script';
 /** FR-17: the dim leading row when the core's window dropped older blocks. */
 export function earlierBlocksNotice(dropped: number): string | null {
   return dropped > 0 ? `… ${dropped} earlier block${dropped === 1 ? '' : 's'}` : null;
+}
+
+/**
+ * Graphite redesign: the state GLYPH a run or one of its agents wears (the
+ * design system's rule — state is a StateIcon, never a coloured dot). A
+ * `waiting` agent is blocked on you, so it takes the attention glyph; a
+ * `stopped` one settles to idle, since the journal records no failure (FR-4).
+ */
+export function workflowStateKind(status: WorkflowStatus | WorkflowAgentStatus): StateKind {
+  if (status === 'running') return 'running';
+  if (status === 'done') return 'done';
+  if (status === 'error') return 'failed';
+  if (status === 'waiting') return 'approval';
+  return 'idle';
 }

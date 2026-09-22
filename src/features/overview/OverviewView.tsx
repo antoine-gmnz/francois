@@ -1,105 +1,119 @@
-// overview — the OVERVIEW main tab: a cross-project dashboard of what is
-// happening everywhere, shown instead of the last-selected session's transcript
-// when the board is scoped to "All projects".
+// overview — the OVERVIEW main tab, redesign "Graphite & Signal" (Figma
+// "15 · Overview" 138:6405): a headline that answers "does anything need me?",
+// a grid of session cards, and the activity trail underneath.
 //
-// It owns NO subscription and NO IPC call. Everything it renders is already in
-// the store: the session cache, the fleet board's per-session derived figures,
-// the project registry, and the activity ring buffer — all written by the ONE
-// session/diff event subscription pane [1] owns. The tab is therefore free to
-// mount and unmount without disturbing a thing.
+//   Header   "3 sessions need you" + what is not asking for you
+//            (2 running with 3 subagents · 3 idle · 1 failed — across …),
+//            then the project filter, By state | By project, and New task.
+//   Cards    by state: every session that is doing or asking something —
+//            approvals, questions, finished work to review, running, failed —
+//            most urgent first (the quiet ones are counted, not carded).
+//            by project: every session, carded under its project, so the old
+//            per-project rollup is still one click away.
+//   Trail    the activity ring buffer, "Earlier today".
+//
+// It owns NO subscription and NO IPC call beyond the inline approval answer
+// (the same reply path the roster uses). Everything it renders is already in
+// the store: the session cache, the fleet board's derived figures, the roster
+// signals, the project registry, and the activity log.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionMeta } from '../../../contract/common';
+import type { SessionDerived } from '../../../contract/fleet-board';
 import {
-  STATUS_COLOR,
-  STATUS_LABEL,
-  formatRelativeTime,
-  statusPulses,
-  type SessionDerived,
-} from '../../../contract/fleet-board';
-import { formatContextTokens } from '../../../contract/conversation-view';
-import { displayWslCwd } from '../../../contract/wsl-filesystem';
-import {
-  ACTIVITY_LABEL,
   activityTone,
   computeFleetTotals,
   filterActivityByProject,
   groupSessionsByProject,
-  needsAttention,
   type ActivityEntry,
-  type ActivityTone,
-  type AttentionItem,
-  type DerivedMap,
   type OverviewGroup,
 } from '../../../contract/overview';
+import { useDismiss } from '../../lib/hooks/useDismiss';
+import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useStore } from '../../lib/store';
-import { abbreviate } from '../../lib/path';
-import { toneVar } from '../../lib/tone';
-import { formatMetricTokens } from '../sessions/runtime-metrics';
-import { ListRow } from '../../ui/ListRow';
-import { StatusDot } from '../../ui/StatusDot';
-import { formatGroupSubtitle, totalsSegments, type TotalsSegment } from './overview';
+import { Button } from '../../ui/Button';
+import { Icon } from '../../ui/Icon';
+import { Tab, TabGroup } from '../../ui/Tab';
+import { OverviewCard } from './OverviewCard';
+import {
+  ACTIVITY_ICON,
+  ACTIVITY_SENTENCE,
+  activityClock,
+  activityHeading,
+  cardTicks,
+  GROUP_BY_KEY,
+  needsYou,
+  overviewHeadline,
+  overviewSubtitle,
+  parseGroupBy,
+  rankCards,
+  stateCards,
+  type OverviewCard as Card,
+  type OverviewGroupBy,
+} from './overview-cards';
 import './overview.css';
-import { sessionIsRetired } from '../../lib/runtimeCapability';
 
-// toneVar on every STATUS_COLOR read: the contract map is the DARK palette, and
-// these tones sit beside literal tokens in the same record (lib/tone.ts).
-const TONE_COLOR: Record<TotalsSegment['tone'], string> = {
-  active: toneVar(STATUS_COLOR.running),
-  blocked: toneVar(STATUS_COLOR.awaiting_approval),
-  ready: 'var(--text-muted)',
-  done: toneVar(STATUS_COLOR.done),
-  error: toneVar(STATUS_COLOR.error),
-  neutral: 'var(--text-hint)',
-  accent: 'var(--accent)',
-};
+const TRAIL_LIMIT = 40;
 
-const ACTIVITY_TONE_COLOR: Record<ActivityTone, string> = {
-  error: 'var(--error)',
-  success: 'var(--success)',
-  active: 'var(--accent)',
-  neutral: 'var(--text-faint)',
-};
+function readGroupBy(): OverviewGroupBy {
+  try {
+    return parseGroupBy(localStorage.getItem(GROUP_BY_KEY));
+  } catch {
+    return 'state';
+  }
+}
 
-export default function OverviewView({ home }: { home: string }) {
+// `home` is accepted for MainPaneBody's call shape; the cards show no paths.
+export default function OverviewView(_props: { home: string }) {
   const sessions = useStore((s) => s.sessions);
   const projects = useStore((s) => s.projects);
   const derived = useStore((s) => s.derived);
   const activity = useStore((s) => s.activity);
   const activeProjectId = useStore((s) => s.activeProjectId);
-  const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
   const setMainTab = useStore((s) => s.setMainTab);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const setNewSessionOpen = useStore((s) => s.setNewSessionOpen);
   const setProjectsOpen = useStore((s) => s.setProjectsOpen);
 
-  // Relative times ('2m', '3h') must age without an event, exactly as the fleet
-  // board's cards do (fleet-board FR-25).
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => (t + 1) % 1_000_000), 30_000);
-    return () => clearInterval(id);
-  }, []);
+  const [groupBy, setGroupByState] = useState<OverviewGroupBy>(readGroupBy);
+  const setGroupBy = (next: OverviewGroupBy) => {
+    setGroupByState(next);
+    try {
+      localStorage.setItem(GROUP_BY_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const groups = useMemo(
     () => groupSessionsByProject(sessions, projects, activeProjectId),
     [sessions, projects, activeProjectId],
   );
+  const inScope = useMemo(() => groups.flatMap((g) => g.sessions), [groups]);
   const totals = useMemo(() => computeFleetTotals(groups, derived), [groups, derived]);
-  const attention = useMemo(() => needsAttention(groups, derived), [groups, derived]);
-  const feed = useMemo(() => filterActivityByProject(activity, activeProjectId), [activity, activeProjectId]);
-  const segments = totalsSegments(totals);
+  const cards = useMemo(() => stateCards(inScope, derived), [inScope, derived]);
+  const feed = useMemo(() => filterActivityByProject(activity, activeProjectId).slice(0, TRAIL_LIMIT), [activity, activeProjectId]);
+  const projectNameOf = useMemo(() => {
+    const names = new Map(projects.map((p) => [p.id, p.name]));
+    return (s: SessionMeta) => (s.projectId ? names.get(s.projectId) ?? null : null);
+  }, [projects]);
 
-  // Drilling in from the dashboard: select the session AND leave the tab, which
-  // is the whole point of a row being clickable here.
-  const openSession = (id: string) => {
+  // A running card's clock moves every second; otherwise relative ages only
+  // need to age on a slow cadence (fleet-board FR-25).
+  const anyTicking = inScope.some((s) => cardTicks(s.status));
+  const now = useElapsedClock(true, anyTicking ? 1000 : 30_000);
+
+  const needYouCount = cards.filter((c) => needsYou(c.kind)).length;
+  const activeNames = groups.filter((g) => g.sessions.length > 0 && g.projectId !== null).map((g) => g.name);
+
+  // Drilling in from the dashboard: select the session AND leave the tab.
+  const openSession = (id: string, tab?: 'diff') => {
     setActiveSessionId(id);
-    setMainTab('session');
+    setMainTab(tab ?? 'session');
     setFocusedPane('main');
   };
 
-  const scoped = activeProjectId !== null;
   const nothingAtAll = sessions.length === 0 && projects.length === 0;
 
   return (
@@ -107,303 +121,218 @@ export default function OverviewView({ home }: { home: string }) {
       {nothingAtAll ? (
         <EmptyState onNewSession={() => setNewSessionOpen(true)} onManageProjects={() => setProjectsOpen(true)} />
       ) : (
-        <>
-          <TotalsStrip segments={segments} totals={totals} scoped={scoped} />
-
-          <div className="ov-split ov-content-gap">
-            <div className="ov-main">
-              {attention.length > 0 && (
-                <Section title="NEEDS ATTENTION" count={attention.length}>
-                  {attention.map((item) => (
-                    <AttentionRow key={item.session.id} item={item} onClick={() => openSession(item.session.id)} />
-                  ))}
-                </Section>
-              )}
-
-              <Section title={scoped ? 'PROJECT' : 'PROJECTS'} count={groups.length}>
-                {groups.length === 0 ? (
-                  <Muted>no projects yet · ⌘K → manage projects</Muted>
-                ) : (
-                  groups.map((g) => (
-                    <ProjectGroup
-                      key={g.projectId ?? '__unlinked__'}
-                      group={g}
-                      home={home}
-                      derived={derived}
-                      activeSessionId={activeSessionId}
-                      onOpen={openSession}
-                    />
-                  ))
-                )}
-              </Section>
+        <div className="ov-main">
+          <header className="ov-header">
+            <div className="ov-header__title">
+              <h1 className="ov-headline">{overviewHeadline(needYouCount)}</h1>
+              <p className="ov-subtitle">{overviewSubtitle(totals, activeNames)}</p>
             </div>
+            <ProjectFilter />
+            <TabGroup label="group sessions by" className="ov-group-by">
+              <Tab selected={groupBy === 'state'} onSelect={() => setGroupBy('state')}>
+                By state
+              </Tab>
+              <Tab selected={groupBy === 'project'} onSelect={() => setGroupBy('project')}>
+                By project
+              </Tab>
+            </TabGroup>
+            <Button variant="primary" shortcut="N" title="New session · n" onClick={() => setNewSessionOpen(true)}>
+              New task
+            </Button>
+          </header>
 
-            <div className="ov-rail">
-              <Section title="RECENT ACTIVITY" count={feed.length || undefined}>
-                {feed.length === 0 ? (
-                  <Muted>nothing yet this session</Muted>
-                ) : (
-                  feed.slice(0, 40).map((e) => (
-                    <ActivityRow key={e.id} entry={e} onClick={() => openSession(e.sessionId)} />
-                  ))
-                )}
-              </Section>
-            </div>
-          </div>
-        </>
+          {groupBy === 'state' ? (
+            cards.length === 0 ? (
+              <div className="ov-quiet">No session is running or waiting. Idle sessions are in the sidebar.</div>
+            ) : (
+              <CardGrid cards={cards} derived={derived} projectNameOf={projectNameOf} now={now} onOpen={openSession} />
+            )
+          ) : (
+            groups.map((g) => (
+              <ProjectCards
+                key={g.projectId ?? '__unlinked__'}
+                group={g}
+                derived={derived}
+                projectNameOf={projectNameOf}
+                now={now}
+                onOpen={openSession}
+              />
+            ))
+          )}
+
+          {feed.length > 0 && <Trail feed={feed} now={now} onOpen={(id) => openSession(id)} />}
+        </div>
       )}
     </div>
   );
 }
 
-// ---------- totals strip ----------
-
-function TotalsStrip({
-  segments,
-  totals,
-  scoped,
-}: {
-  segments: TotalsSegment[];
-  totals: ReturnType<typeof computeFleetTotals>;
-  scoped: boolean;
-}) {
-  return (
-    <div className="ov-totals-strip">
-      <span className="ov-totals-label">{scoped ? 'PROJECT' : 'FLEET'}</span>
-      <Figure
-        value={totals.sessions}
-        label={totals.sessions === 1 ? 'session' : 'sessions'}
-        color="var(--text-bright)"
-      />
-      {!scoped && (
-        <Figure
-          value={totals.activeProjects}
-          label={totals.activeProjects === 1 ? 'project' : 'projects'}
-          color="var(--text-bright)"
-        />
-      )}
-      {segments.length > 0 && <span className="ov-totals-divider">│</span>}
-      {segments.map((s) => (
-        <Figure key={s.label} value={s.value} label={s.label} color={TONE_COLOR[s.tone]} />
-      ))}
-      {/* An entirely quiet fleet says so, rather than leaving a bare count row. */}
-      {segments.length === 0 && totals.sessions > 0 && <span className="ov-totals-quiet">all quiet</span>}
-    </div>
-  );
-}
-
-function Figure({ value, label, color }: { value: number; label: string; color: string }) {
-  return (
-    <span className="ov-figure">
-      <span className="ov-figure-value" style={{ color }}>
-        {value}
-      </span>
-      <span className="ov-figure-label">{label}</span>
-    </span>
-  );
-}
-
-// ---------- section shell ----------
-
-function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
-  return (
-    <div className="ov-section">
-      <div className="ov-section-header">
-        <span className="ov-section-title">{title}</span>
-        {count != null && <span className="ov-section-count">{count}</span>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Muted({ children }: { children: React.ReactNode }) {
-  return <div className="ov-muted">{children}</div>;
-}
-
-// ---------- needs attention ----------
+// ---------- header: project filter ----------
 
 /**
- * The rail + detail colour per reason. Parked sessions borrow the status colours
- * so a row here and that session's sidebar card read as the same thing; errors
- * keep red; a merely-dirty session stays neutral so it cannot shout over the two
- * bands above it.
+ * "All projects ▾". A FILTER, not a navigation: it re-scopes the dashboard and
+ * leaves you on it (setActiveProjectId), unlike the roster's scope chips, which
+ * land you inside the project they pick (switchProject, projects FR-39).
  */
-const ATTENTION_COLOR: Record<AttentionItem['reason'], string> = {
-  approval: toneVar(STATUS_COLOR.awaiting_approval),
-  question: toneVar(STATUS_COLOR.awaiting_input),
-  error: 'var(--error)',
-  uncommitted: 'var(--text-disabled)',
-};
+function ProjectFilter() {
+  const projects = useStore((s) => s.projects);
+  const activeProjectId = useStore((s) => s.activeProjectId);
+  const setActiveProjectId = useStore((s) => s.setActiveProjectId);
+  const setProjectsOpen = useStore((s) => s.setProjectsOpen);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, { onEscape: () => setOpen(false), onOutsideClick: () => setOpen(false), enabled: open });
 
-function AttentionRow({ item, onClick }: { item: AttentionItem; onClick: () => void }) {
-  const [hover, setHover] = useState(false);
-  const color = ATTENTION_COLOR[item.reason];
+  const current = projects.find((p) => p.id === activeProjectId);
+  const pick = (id: string | null) => {
+    setOpen(false);
+    setActiveProjectId(id);
+  };
+
   return (
-    <ListRow
-      hovered={hover}
-      className="ov-attention-row"
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={item.detail}
-      // A coloured rail keeps the reasons distinguishable at a glance, in the
-      // same order needsAttention already sorted them.
-      style={{ borderLeft: `2px solid ${color}` }}
-    >
-      <span className="ov-attention-name truncate">{item.session.name}</span>
-      <span
-        className="ov-attention-detail truncate"
-        style={{ color: item.reason === 'uncommitted' ? 'var(--text-hint)' : color }}
+    <div ref={ref} className="ov-filter">
+      <button
+        type="button"
+        className="ov-filter__button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
       >
-        {item.detail}
-      </span>
-      <span className="ov-attention-time">{formatRelativeTime(item.session.lastActivityAt)}</span>
-    </ListRow>
-  );
-}
-
-// ---------- project rollup ----------
-
-function ProjectGroup({
-  group,
-  home,
-  derived,
-  activeSessionId,
-  onOpen,
-}: {
-  group: OverviewGroup;
-  home: string;
-  derived: DerivedMap;
-  activeSessionId: string | null;
-  onOpen: (id: string) => void;
-}) {
-  return (
-    <div className="ov-group">
-      <div className="ov-group-header">
-        <span
-          className="ov-group-name"
-          style={{ color: group.sessions.length > 0 ? 'var(--text-bright)' : 'var(--text-muted)' }}
-        >
-          {group.name}
-        </span>
-        {!group.rootExists && <span className="ov-group-missing">missing</span>}
-        {group.root && <span className="ov-group-root truncate">{abbreviate(group.root, home)}</span>}
-        <span className="ov-group-subtitle">{formatGroupSubtitle(group)}</span>
-      </div>
-      {group.sessions.length === 0 ? (
-        <div className="ov-group-empty">—</div>
-      ) : (
-        group.sessions.map((s) => (
-          <SessionRow
-            key={s.id}
-            s={s}
-            d={derived.get(s.id)}
-            selected={s.id === activeSessionId}
-            onClick={() => onOpen(s.id)}
-          />
-        ))
+        <span className="truncate">{current ? current.name : 'All projects'}</span>
+        <Icon name="chevron-down" size={12} />
+      </button>
+      {open && (
+        <div className="ov-filter__menu" role="listbox">
+          <FilterRow selected={activeProjectId === null} onClick={() => pick(null)}>
+            All projects
+          </FilterRow>
+          {projects.map((p) => (
+            <FilterRow key={p.id} selected={p.id === activeProjectId} onClick={() => pick(p.id)}>
+              {p.name}
+            </FilterRow>
+          ))}
+          <div className="ov-filter__rule" />
+          <button
+            type="button"
+            className="ov-filter__row"
+            onClick={() => {
+              setOpen(false);
+              setProjectsOpen(true);
+            }}
+          >
+            Manage projects…
+          </button>
+        </div>
       )}
     </div>
   );
 }
 
-function SessionRow({
-  s,
-  d,
-  selected,
-  onClick,
-}: {
-  s: SessionMeta;
-  d: SessionDerived | undefined;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const [hover, setHover] = useState(false);
-  const files = d?.fileCount ?? null;
-  const agents = d?.runningAgentCount ?? 0;
-  const sc = toneVar(STATUS_COLOR[s.status] ?? 'var(--text-dim)');
-
+function FilterRow({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <ListRow
-      selected={selected}
-      hovered={hover}
-      className="ov-session-row"
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={selected ? 'ov-filter__row ov-filter__row--on' : 'ov-filter__row'}
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={s.status === 'error' ? s.errorMessage : displayWslCwd(s.cwd) ?? s.cwd}
     >
-      <StatusDot color={sc} size={7} pulsing={statusPulses(s.status)} />
-      <span className="ov-session-name truncate" style={{ color: selected ? 'var(--text-bright)' : 'var(--text)' }}>
-        {s.name}
-      </span>
-      {/* §8: every trailing cell is right-aligned so the rollup reads as a table. */}
-      <span className="ov-session-status" style={{ color: sc }}>
-        {STATUS_LABEL[s.status] ?? s.status}
-      </span>
-      <span className="ov-session-model truncate">{s.model.label}</span>
-      <span className="ov-session-ctx">
-        <span className="ov-session-ctx-label">ctx </span>
-        {/* pi-models-metrics §6: no Claude context fallback for Pi — a Pi
-            session with no reported occupancy reads as an em dash, never the
-            legacy fields' fabricated 0 (runtime-metrics.ts `formatMetricTokens`). */}
-        <span className="ov-session-ctx-value">
-          {sessionIsRetired(s) ? formatMetricTokens(s.metrics?.contextTokens ?? null) : formatContextTokens(s.contextUsedTokens)}
-        </span>
-      </span>
-      {/* The last two cells are fixed-width so the columns line up down the whole
-          rollup even when most rows have neither a diff nor an agent. */}
-      <span className="ov-session-files">{files != null && files > 0 ? `≡ ${files}` : ''}</span>
-      <span className="ov-session-agents">{agents > 0 ? `⇉ ${agents}` : ''}</span>
-      <span className="ov-session-time">{formatRelativeTime(s.lastActivityAt)}</span>
-    </ListRow>
+      <span className="truncate">{children}</span>
+      {selected && <Icon name="check" size={12} />}
+    </button>
   );
 }
 
-// ---------- activity feed ----------
+// ---------- cards ----------
 
-function ActivityRow({ entry, onClick }: { entry: ActivityEntry; onClick: () => void }) {
-  const [hover, setHover] = useState(false);
-  const tone = ACTIVITY_TONE_COLOR[activityTone(entry.kind)];
+interface GridProps {
+  derived: ReadonlyMap<string, SessionDerived>;
+  projectNameOf: (s: SessionMeta) => string | null;
+  now: number;
+  onOpen: (id: string, tab?: 'diff') => void;
+}
+
+function CardGrid({ cards, derived, projectNameOf, now, onOpen }: GridProps & { cards: Card[] }) {
   return (
-    <ListRow
-      hovered={hover}
-      className="ov-activity-row"
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={entry.detail || undefined}
-    >
-      <span className="ov-activity-time">{formatRelativeTime(entry.at)}</span>
-      <span className="ov-activity-text truncate">
-        <span className="ov-activity-session">{entry.sessionName}</span>{' '}
-        <span style={{ color: tone }}>{ACTIVITY_LABEL[entry.kind]}</span>
-        {entry.detail && <span className="ov-activity-detail"> · {entry.detail}</span>}
-      </span>
-    </ListRow>
+    <div className="ov-grid">
+      {cards.map(({ session, kind }) => (
+        <OverviewCard
+          key={session.id}
+          session={session}
+          kind={kind}
+          derived={derived.get(session.id)}
+          projectName={projectNameOf(session)}
+          now={now}
+          onOpen={(tab) => onOpen(session.id, tab)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProjectCards({ group, ...grid }: GridProps & { group: OverviewGroup }) {
+  const cards = rankCards(group.sessions, grid.derived);
+  return (
+    <section className="ov-project">
+      <div className="section-label ov-project__label">
+        <span className="truncate">{group.name}</span>
+        {!group.rootExists && <span className="ov-project__missing">missing</span>}
+        <span className="section-label__count">{group.sessions.length}</span>
+      </div>
+      {cards.length === 0 ? <div className="ov-quiet">No sessions in this project.</div> : <CardGrid cards={cards} {...grid} />}
+    </section>
+  );
+}
+
+// ---------- activity trail ----------
+
+function Trail({ feed, now, onOpen }: { feed: ActivityEntry[]; now: number; onOpen: (id: string) => void }) {
+  return (
+    <section className="ov-trail">
+      <div className="section-label">{activityHeading(feed.map((e) => e.at), now)}</div>
+      {feed.map((e) => {
+        const failed = activityTone(e.kind) === 'error';
+        return (
+          <button
+            key={e.id}
+            type="button"
+            className={failed ? 'ov-event ov-event--failed' : 'ov-event'}
+            title={e.detail || undefined}
+            onClick={() => onOpen(e.sessionId)}
+          >
+            <span className="ov-event__time">{activityClock(e.at, now)}</span>
+            <span className="ov-event__icon">
+              <Icon name={ACTIVITY_ICON[e.kind]} size={14} />
+            </span>
+            <span className="ov-event__session truncate">{e.sessionName}</span>
+            <span className="ov-event__text truncate">
+              {ACTIVITY_SENTENCE[e.kind]}
+              {e.detail && (
+                <>
+                  {failed ? ' — ' : ' '}
+                  <span className="ov-event__detail">{e.detail}</span>
+                </>
+              )}
+            </span>
+          </button>
+        );
+      })}
+    </section>
   );
 }
 
 // ---------- empty state ----------
 
-function EmptyState({
-  onNewSession,
-  onManageProjects,
-}: {
-  onNewSession: () => void;
-  onManageProjects: () => void;
-}) {
+function EmptyState({ onNewSession, onManageProjects }: { onNewSession: () => void; onManageProjects: () => void }) {
   return (
     <div className="ov-empty">
-      <div>nothing running yet</div>
-      <div className="ov-empty-actions">
-        <span onClick={onNewSession} className="ov-empty-action">
-          <span className="ov-empty-action-key">n</span> new session
-        </span>
-        <span onClick={onManageProjects} className="ov-empty-action">
-          <span className="ov-empty-action-key">⊟</span> manage projects
-        </span>
+      <h1 className="ov-headline">Nothing running yet</h1>
+      <p className="ov-subtitle">Start a session, or register the projects you work in.</p>
+      <div className="ov-empty__actions">
+        <Button variant="primary" shortcut="N" onClick={onNewSession}>
+          New task
+        </Button>
+        <Button onClick={onManageProjects}>Manage projects</Button>
       </div>
     </div>
   );

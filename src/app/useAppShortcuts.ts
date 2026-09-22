@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { dismissPalette, isPaletteOpen, showToast, togglePalette } from '../features/palette/palette';
-import { clampPaneIndex, focusedSessionId, focusedTab, layoutRegime, paneCount } from '../lib/layoutStore';
+import { clampPaneIndex, focusedSessionId, focusedTab, paneCount } from '../lib/layoutStore';
 import { sessionCapability } from '../lib/runtimeCapability';
 import { useStore, type MainTab, type Pane } from '../lib/store';
 import { buildShortcutActions } from './appShell';
@@ -130,8 +130,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
 
   // split-by-4 FR-13/FR-20: `d`/`t`/`o` retarget the FOCUSED pane. While split,
   // only the three PaneTab values are reachable — `o` (overview) becomes a real
-  // no-op rather than being clamped into a surprise tab switch — and in the grid
-  // chrome (FR-9) a pane has no tabs at all, so all three are no-ops there.
+  // no-op rather than being clamped into a surprise tab switch.
   const setFocusedPaneTab = (tab: MainTab) => {
     const st = useStore.getState();
     const count = paneCount(st);
@@ -140,7 +139,8 @@ export function useAppShortcuts(state: AppShortcutState): void {
       return;
     }
     if (tab !== 'session' && tab !== 'diff' && tab !== 'shell') return;
-    if (layoutRegime(count) === 'grid') return;
+    // Graphite redesign: grid panes carry the built-in tabs too, so the keys
+    // retarget the focused grid pane exactly as they do at two panes.
     st.setPaneTab(clampPaneIndex(st.focusedPaneIndex, count), tab);
   };
 
@@ -183,6 +183,7 @@ export function useAppShortcuts(state: AppShortcutState): void {
         setNewAgentOpen,
         closeAgentTab: (agentId) => useStore.getState().closeAgentTab(agentId),
         toggleLeftPane: () => useStore.getState().toggleLeftPane(),
+        toggleSessionPanel: () => useStore.getState().toggleSessionPanel(),
         // pi-skills-capabilities FR-4: the same capability the AGENTS tab body
         // and the palette's `new-agent` command read, for the FOCUSED session.
         getSubagentsCapability: () => {

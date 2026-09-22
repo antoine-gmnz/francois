@@ -7,7 +7,7 @@ import {
   cycleShellId,
   neighborAfterClose,
   shellShortcutFor,
-  stripVisible,
+  shellHintText,
   truncateShellLabel,
 } from './shell';
 
@@ -23,11 +23,12 @@ describe('atShellCap', () => {
   });
 });
 
-describe('stripVisible', () => {
-  it('hides at 0 or 1 shells, shows past that (FR-11)', () => {
-    expect(stripVisible([])).toBe(false);
-    expect(stripVisible([shell('a')])).toBe(false);
-    expect(stripVisible([shell('a'), shell('b')])).toBe(true);
+describe('shellHintText', () => {
+  it('names the worktree when the session runs in one (Figma 136:6100)', () => {
+    expect(shellHintText(true)).toBe('Your real shell, in the session’s worktree. The agent can’t see it unless you paste output.');
+  });
+  it('names the working directory otherwise', () => {
+    expect(shellHintText(false)).toBe('Your real shell, in the session’s directory. The agent can’t see it unless you paste output.');
   });
 });
 

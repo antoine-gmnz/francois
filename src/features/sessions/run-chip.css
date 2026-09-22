@@ -1,6 +1,6 @@
-/* design 11c, amended by session-settings-sheet FR-20 — the run chip is now a
-   thin, stateless readout: clicking it opens the session settings sheet
-   (SessionSettingsSheet.tsx) rather than a popover of its own. */
+/* The composer's run chip + its run settings popover — redesign "Graphite &
+   Signal", Figma "Composer" 128:110 ("Run chip") and "20 · Run settings"
+   139:7373 (light 142:16053). */
 
 .run-chip {
   display: flex;
@@ -10,43 +10,166 @@
 .run-chip__chip {
   display: flex;
   align-items: center;
-  gap: var(--space-7);
-  height: 26px;
-  padding: 0 var(--space-9);
-  background: var(--bg-raised);
-  border-radius: var(--radius-base);
+  gap: 0;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small);
   cursor: pointer;
   white-space: nowrap;
 }
-.run-chip__chip:hover {
-  background: var(--bg-hover);
+.run-chip__chip:hover,
+.run-chip__chip--open {
+  background: var(--bg-raised);
 }
-.run-chip__model {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-2);
-}
-/* Effort rides WITH the model, on both the chip and the row — it is a property of
-   the model, not a fourth thing the bar tracks. */
-.run-chip__effort-tag {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
+/* The parts read as one phrase: `Opus 5 · low · bypass`. */
+.run-chip__effort-tag::before,
+.run-chip__mode::before,
+.run-chip__response::before {
+  content: ' · ';
+  white-space: pre;
   color: var(--text-muted);
 }
-.run-chip__mode {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-dim);
+.run-chip__model,
+.run-chip__effort-tag,
+.run-chip__mode,
+.run-chip__response {
+  color: var(--text-muted);
 }
 .run-chip__mode--danger {
-  color: var(--error-bright);
+  color: var(--state-danger);
 }
-/* response-mode FR-15: the face carries the mode's short only when it is not
-   `default`, so the common case never widens the row. Quieter than the permission
-   mode beside it — how the answer READS matters less at a glance than what the
-   session is allowed to do. */
-.run-chip__response {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
+.run-chip__caret {
+  margin-left: var(--space-6);
   color: var(--text-muted);
+}
+
+/* ── run settings popover (139:7373) — a floating layer, so it keeps a shadow ── */
+.run-settings {
+  position: fixed;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-8);
+  box-shadow: var(--shadow-overlay);
+  text-align: left;
+}
+.run-settings__section {
+  padding: var(--space-12) var(--space-14) var(--space-6);
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.run-settings__group {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-6);
+}
+.run-settings__rule {
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--line-subtle);
+}
+
+.run-settings__option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+  border: 1px solid transparent;
+  border-radius: var(--radius-5);
+  color: var(--text-primary);
+}
+.run-settings__option:hover {
+  background: var(--bg-raised);
+}
+/* the selected model carries its effort track on a raised fill */
+.run-settings__option--on {
+  background: var(--bg-raised);
+}
+.run-settings__option--danger,
+.run-settings__option--danger:hover {
+  gap: var(--space-4);
+  background: var(--tint-danger);
+  border-color: var(--tint-danger-line);
+}
+.run-settings__option--danger .run-settings__label {
+  color: var(--state-danger-text);
+}
+
+.run-settings__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.run-settings__head:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.run-settings__label {
+  flex-shrink: 0;
+  color: inherit;
+  font: var(--type-ui-medium);
+}
+.run-settings__note {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.run-settings__since {
+  padding-left: 26px;
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+
+.run-settings__effort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  padding-left: 26px;
+}
+/* the segmented track can outgrow the 340px popover (five effort levels) — let it
+   shrink and scroll instead of spilling past the edge, unreachable. */
+.run-settings__effort .tab-group {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.run-settings__effort-label {
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+
+.run-settings__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-14);
+  border-top: 1px solid var(--line-subtle);
+}
+.run-settings__footer-text {
+  flex: 1;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.run-settings__footer-text--error {
+  color: var(--state-danger-text);
 }

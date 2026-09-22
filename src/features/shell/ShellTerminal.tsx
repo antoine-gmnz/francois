@@ -10,6 +10,10 @@ import { dispatchShellShortcut } from './shellActions';
 import { useShellStore } from './shellStore';
 import { buildTheme } from './xterm-theme';
 import { useStore } from '../../lib/store';
+import './shell.css';
+
+/** 22px rows over a 12.5px font — the design's Mono Code line (Figma 136:6083). */
+const SHELL_LINE_HEIGHT = 22 / 12.5;
 
 const FAINT = '\x1b[38;2;107;115;133m'; // #6b7385 — design-refresh FR-13, new --text-muted
 const RESET = '\x1b[0m';
@@ -79,11 +83,12 @@ export default function ShellTerminal({ owner, shellId, visible, canFocus = true
 
   useEffect(() => {
     const term = new Terminal({
-      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+      fontFamily: "'Geist Mono', ui-monospace, monospace",
       fontSize: 12.5,
       fontWeight: '400',
       fontWeightBold: '700',
-      lineHeight: 1.35,
+      // Figma 136:6083 — 12.5px Geist Mono on a 22px line (Graphite/Mono Code).
+      lineHeight: SHELL_LINE_HEIGHT,
       letterSpacing: 0,
       cursorBlink: true,
       cursorStyle: 'block',
@@ -325,5 +330,5 @@ export default function ShellTerminal({ owner, shellId, visible, canFocus = true
     if (term) term.options.theme = buildTheme();
   }, [theme]);
 
-  return <div ref={hostRef} style={{ position: 'absolute', inset: '14px 16px', display: visible ? undefined : 'none' }} />;
+  return <div ref={hostRef} className={visible ? 'shell-terminal-host' : 'shell-terminal-host shell-terminal-host--hidden'} />;
 }

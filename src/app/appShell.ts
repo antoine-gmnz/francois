@@ -20,7 +20,7 @@ import type { MainTab, Pane } from '../lib/store';
  * The width both side columns fold to. A hidden column is never GONE — it keeps
  * this rail, so [1] and [3]–[6] stay one click away in every regime.
  */
-const RAIL = '46px';
+const RAIL = '56px';
 /**
  * The middle track's width — resizable-sidebar FR-1: this reproduces the 12px
  * `gap` the grid used to have between its two tracks, and IS the drag handle's
@@ -50,7 +50,7 @@ export interface ShellColumns {
  *
  * design 7a dissolved the right column into the roster's own rows, so the only
  * column left to size is the roster. Its rule survives 7a unchanged: **folded
- * means the 46px rail, not nothing**, at any pane count — the grid used to drop
+ * means the 56px rail, not nothing**, at any pane count — the grid used to drop
  * it outright, which left `[` toggling something that looked like a crash.
  *
  * resizable-sidebar: the roster's width is now user-set, not regime-picked.
@@ -272,6 +272,8 @@ export interface ShortcutActionsContext {
   setNewAgentOpen: (open: boolean) => void;
   closeAgentTab: (agentId: string) => void;
   toggleLeftPane: () => void;
+  /** redesign: `]` shows / hides the right-hand session panel. */
+  toggleSessionPanel: () => void;
   /**
    * pi-skills-capabilities FR-4: the same `subagents` capability the AGENTS
    * tab body and the palette's `new-agent` command gate through
@@ -365,9 +367,10 @@ export function buildShortcutActions(ctx: ShortcutActionsContext): Record<string
     O: toggleOverviewTab,
     w: closeActiveAgentTab,
     W: closeActiveAgentTab,
-    // design 7a: `]` and `c` went with the right column they acted on — there
-    // is no second column to hide and no card left to collapse. `[` still folds
-    // the roster; the session row's chevron is the same control.
+    // `[` folds the roster; `]` (redesign "Graphite & Signal") shows / hides the
+    // right-hand session panel — the Figma panel's own "Hidden with ]". `c` stays
+    // gone with the 7a right column it collapsed.
     '[': ctx.toggleLeftPane,
+    ']': ctx.toggleSessionPanel,
   };
 }

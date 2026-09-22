@@ -1,0 +1,118 @@
+/* The folded roster (SessionRail.tsx) — Figma "Sidebar / Rail" 128:68: 56px of
+   --bg-rail with a --line-subtle right edge, 8px between 34px tiles.
+   No `grid-row` — see the placement note on .app-col-left in app.css. */
+.session-rail {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) 0;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line-subtle);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.session-rail::-webkit-scrollbar {
+  display: none;
+}
+.session-rail__new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-5);
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  cursor: pointer;
+}
+.session-rail__new:hover {
+  background: color-mix(in srgb, var(--action-primary) 88%, var(--bg-canvas));
+}
+.session-rail__divider {
+  width: 24px;
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--line-default);
+}
+.session-rail__tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-5);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.session-rail__tile:hover {
+  background: var(--bg-raised);
+}
+/* Blocked on you: the attention wash, like the roster's approval card. */
+.session-rail__tile--attention,
+.session-rail__tile--attention:hover {
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+}
+/* Raised while a pane is showing it — the rail's job is "where is everything". */
+.session-rail__tile--paned {
+  background: var(--bg-strong);
+}
+.session-rail__tile--focused::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--text-primary);
+}
+/* The State glyph in a 16px rail-coloured notch, bottom-right. */
+.session-rail__badge {
+  position: absolute;
+  left: 22px;
+  top: 22px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-4);
+  background: var(--bg-rail);
+}
+/* The seam between the PINNED (paned) tiles and the rest of the fleet. */
+.session-rail__hairline {
+  width: 24px;
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--line-subtle);
+}
+.session-rail__expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.session-rail__expand:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}

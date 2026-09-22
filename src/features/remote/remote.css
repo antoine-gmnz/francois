@@ -15,6 +15,7 @@
   cursor: pointer;
   opacity: 1;
   color: var(--text-faint);
+  font: var(--type-small);
 }
 .rc-chip--busy {
   cursor: default;

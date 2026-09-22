@@ -26,6 +26,7 @@ import { createProfilesSlice, type ProfilesSlice } from './profilesStore';
 import { createProjectsSlice } from './projectsStore';
 import { createRemoteSlice, type RemoteSlice } from './remoteStore';
 import { createRosterSlice, type RosterSlice } from './rosterStore';
+import { createSessionPanelSlice, type SessionPanelSlice } from './sessionPanelStore';
 import { createSessionsSlice, type SessionsSlice } from './sessionsStore';
 import { createThemeSlice, type Theme, type ThemeSlice } from './theme';
 import { createUpdateSlice, type UpdateSlice } from './updateStore';
@@ -48,6 +49,7 @@ export type AppState = SessionsSlice &
   AccountsSlice &
   UpdateSlice &
   ProfilesSlice &
+  SessionPanelSlice &
   ProjectsState;
 
 export const useStore = create<AppState>()(
@@ -65,6 +67,7 @@ export const useStore = create<AppState>()(
   ...createAccountsSlice(set, get, api),
   ...createUpdateSlice(set, get, api),
   ...createProfilesSlice(set, get, api),
+  ...createSessionPanelSlice(set, get, api),
   ...createProjectsSlice(set, get, api),
   })),
 );

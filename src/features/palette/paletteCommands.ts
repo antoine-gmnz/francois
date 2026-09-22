@@ -12,6 +12,8 @@ import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../li
 import { useNotificationsStore } from '../../lib/notificationsStore';
 import { sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
+import { statusNeedsAttention } from '../../../contract/fleet-board';
+import { focusedSessionId } from '../../lib/layoutStore';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
@@ -122,8 +124,13 @@ export function registerBuiltinCommands(): void {
   registerPaletteCommand({
     id: 'new-session',
     glyph: '＋',
-    name: 'New session',
-    hint: () => 'spin up in cwd',
+    // redesign "Graphite & Signal" (Figma 136:5239): the flow is called a task now,
+    // and the hint names the project it will land in.
+    name: 'New task',
+    hint: () => {
+      const st = useStore.getState();
+      return st.projects.find((p) => p.id === st.activeProjectId)?.name ?? 'spin up in cwd';
+    },
     run: () => {
       useStore.getState().setNewSessionOpen(true);
     },
@@ -163,6 +170,12 @@ export function registerBuiltinCommands(): void {
     id: 'switch-model',
     glyph: '⇄',
     name: 'Switch model',
+    // Figma 136:5253: what is running now — `Opus 5 · low`.
+    hint: () => {
+      const st = useStore.getState();
+      const s = st.sessions.find((x) => x.id === focusedSessionId(st));
+      return s ? [s.model.label, s.effort].filter(Boolean).join(' · ') : '';
+    },
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: (ctx) => ctx.activeSessionId ? modelCatalogStep(ctx.activeSessionId) : undefined,
   });
@@ -186,8 +199,11 @@ export function registerBuiltinCommands(): void {
   registerPaletteCommand({
     id: 'run-skill',
     glyph: '✦',
-    name: 'Run skill',
-    hint: () => 'browse installed',
+    name: 'Run a skill',
+    hint: () => {
+      const n = getPaletteSkills(focusedSessionId(useStore.getState())).length;
+      return n > 0 ? `${n} installed` : 'browse installed';
+    },
     enabled: (ctx) => ctx.activeSessionId !== null,
     run: (ctx) => {
       const sid = ctx.activeSessionId;
@@ -220,10 +236,10 @@ export function registerBuiltinCommands(): void {
   registerPaletteCommand({
     id: 'view-diff',
     glyph: '≡',
-    name: 'View diff',
+    name: 'Review changes',
     hint: () => {
       const n = getPaletteDiffCount();
-      return `${n} file${n === 1 ? '' : 's'} changed`;
+      return `${n} file${n === 1 ? '' : 's'}`;
     },
     run: () => {
       const st = useStore.getState();
@@ -241,7 +257,11 @@ export function registerBuiltinCommands(): void {
     name: 'Overview',
     hint: () => {
       const st = useStore.getState();
-      const n = st.activeProjectId === null ? st.sessions.length : st.sessions.filter((s) => s.projectId === st.activeProjectId).length;
+      const scoped = st.activeProjectId === null ? st.sessions : st.sessions.filter((s) => s.projectId === st.activeProjectId);
+      // Figma 136:5274: the reason to go there, when there is one.
+      const waiting = scoped.filter((s) => statusNeedsAttention(s.status)).length;
+      if (waiting > 0) return `${waiting} session${waiting === 1 ? '' : 's'} need${waiting === 1 ? 's' : ''} you`;
+      const n = scoped.length;
       return `${n} session${n === 1 ? '' : 's'} across projects`;
     },
     run: () => {

@@ -1,4 +1,4 @@
-// project-groups FR-19/FR-20: the Projects modal's left-column GROUPS block —
+// project-groups FR-19/FR-20: the project settings' GROUPS block (General tab) —
 // each group as a row with inline rename, a typed-confirm-pattern remove (the
 // same expand-in-place RemoveControl projects use), and "+ New group" styled
 // after NewProjectControl. Group rows are not selectable into the config pane
@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import type { ProjectGroup } from '../../../contract/projects';
+import { Icon } from '../../ui/Icon';
 import { RemoveControl } from '../../ui/RemoveControl';
 import { InlineError } from './InlineError';
 import { removeGroupConfirmText } from './projects';
@@ -30,7 +31,7 @@ export function GroupsSection({
 }) {
   return (
     <div className="pj-groups">
-      <span className="pj-group-label pj-groups-label">GROUPS</span>
+      <span className="settings-field__label">Groups</span>
       {groups.map((g) => (
         <GroupRow key={g.id} group={g} onRename={(name) => onRename(g.id, name)} onRemove={() => onRemove(g.id)} />
       ))}
@@ -55,12 +56,13 @@ export function GroupsSection({
             }
             if (e.key === 'Escape') setNewGroupDraft(null);
           }}
-          className="pj-input pj-new-group-input"
+          className="settings-input pj-new-group-input"
         />
       ) : (
-        <div onClick={() => setNewGroupDraft('')} className="pj-new-group">
-          + New group
-        </div>
+        <button type="button" onClick={() => setNewGroupDraft('')} className="pj-new-group">
+          <Icon name="plus" size={12} />
+          New group
+        </button>
       )}
       {error !== null && <InlineError>{error}</InlineError>}
     </div>

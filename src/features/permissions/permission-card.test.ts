@@ -248,14 +248,14 @@ describe('composer placeholder (FR-23)', () => {
     expect(hasPendingPermissionBlock([])).toBe(false);
 
     expect(composerPlaceholder('running', undefined, false, true)).toBe(
-      'approve or deny the request above — typed messages will queue',
+      'Allow above, or type a reply…',
     );
-    expect(composerPlaceholder('running', undefined, false, false)).toBe('send a follow-up, or run a command…');
+    expect(composerPlaceholder('running', undefined, false, false)).toBe('Send a follow-up, or type / for commands');
   });
 
   it('lets a pending question win so the two hints never fight', () => {
     expect(composerPlaceholder('running', undefined, true, true)).toBe(
-      'answer the question above — typed messages will queue',
+      'Answer above, or type a reply…',
     );
   });
 

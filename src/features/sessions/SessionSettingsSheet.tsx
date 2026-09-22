@@ -1,72 +1,58 @@
 import { reconcileCatalogModel } from '../../lib/model-catalog';
-// session-settings-sheet — one component, two modes (FR-7). Create mode is
-// NewSessionModal's own logic (FR-22: behaviour-identical, apart from the field
-// order and PROFILE sitting after ACCOUNT), reordered per FR-7/FR-8. Edit mode
-// is new: a live draft diffed against the session's current values (FR-14),
-// applied in one atomic `session_update_settings` patch (FR-16).
+// session-settings-sheet — one component, two modes (FR-7). Create mode is the
+// redesign's New task dialog (NewTaskDialog.tsx — FR-22's create logic, moved
+// there and regrouped per Figma "19 · New task"). Edit mode is a live draft
+// diffed against the session's current values (FR-14), applied in one atomic
+// `session_update_settings` patch (FR-16).
 //
-// Two internal render functions, one exported component — CreateSheet and
-// EditSheet share no state (a session-settings-sheet in one mode never becomes
-// the other without unmounting: "New session from these ↗" hands control back
-// to the parent, which swaps which one is mounted, see App.tsx) but do share
-// every field subcomponent, ChipGroup option table and CSS class below.
+// The two share no state (one never becomes the other without unmounting:
+// "New session from these ↗" hands control back to the parent, which swaps
+// which one is mounted, see App.tsx) but do share the field subcomponents,
+// ChipGroup option tables and CSS classes.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AppError, ClaudeRuntime, PermissionMode, ResponseMode, SessionId, SessionMeta } from '../../../contract/common';
+import type { SessionId, SessionMeta } from '../../../contract/common';
 import { STATUS_COLOR, statusPulses } from '../../../contract/fleet-board';
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import { RESPONSE_MODE_OPTIONS } from '../../../contract/response-mode';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
-import { isWslUncPath } from '../../../contract/wsl-filesystem';
-import { accountIdForSessionCreate, modelPickerProviderHeading } from '../../lib/account-selection';
-import { projectUpdate, sessionCreate, sessionUpdateSettings } from '../../lib/api';
+import { modelPickerProviderHeading } from '../../lib/account-selection';
+import { projectUpdate, sessionUpdateSettings } from '../../lib/api';
 import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useTimedError } from '../../lib/hooks/useTimedError';
-import { IS_WINDOWS } from '../../lib/platform';
+import { sessionIsRetired } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { toneVar } from '../../lib/tone';
 import { Button } from '../../ui/Button';
 import { ChipGroup } from '../../ui/ChipGroup';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { StatusDot } from '../../ui/StatusDot';
-import { AccountField } from './AccountField';
-import { DirectoryField } from './DirectoryField';
 import { ModelField } from './ModelField';
 import { NameField } from './NameField';
-import { modelSelectionMismatch, profileRuntimeMismatch } from './new-session-form';
-import { ProfileField } from './ProfileField';
-import { ProjectField } from './ProjectField';
+import { NewTaskDialog } from './NewTaskDialog';
 import { SESSION_NAME_MAX, canCommitRename, nameLength } from './rename';
 import {
-    RUNTIME_CHIP_OPTIONS,
-    SET_PROJECT_DEFAULT_COPY,
-    SET_PROJECT_DEFAULT_TITLE,
-    buildPatch,
-    canSetProjectDefault,
-    carryOverToCreate,
-    changeCountLabel,
-    dirtyKeys,
-    draftFromSession,
-    effortSupportedByModel,
-    fixedAtSpawnLines,
-    nextProjectDefaults,
-    rebaseDraft,
-    settingCapability,
-    submitSettingsOnEnter,
-    timingLine,
-    type SessionSettingsCarryOver,
-    type SettingsDraft,
+  SET_PROJECT_DEFAULT_COPY,
+  SET_PROJECT_DEFAULT_TITLE,
+  buildPatch,
+  canSetProjectDefault,
+  carryOverToCreate,
+  changeCountLabel,
+  dirtyKeys,
+  draftFromSession,
+  effortSupportedByModel,
+  fixedAtSpawnLines,
+  nextProjectDefaults,
+  rebaseDraft,
+  settingCapability,
+  submitSettingsOnEnter,
+  timingLine,
+  type SessionSettingsCarryOver,
+  type SettingsDraft,
 } from './session-settings';
 import './session-settings-sheet.css';
 import { GitRow, PermissionsRow, ResponseRow } from './SharedSettingsRows';
-import { useDirectoryPicker } from './useDirectoryPicker';
-import { useProjectDefaults } from './useProjectDefaults';
-import { useProjectList } from './useProjectList';
-import { useWorktreeGroup } from './useWorktreeGroup';
-import { submitErrorBanner, worktreeBranchInUsePath } from './worktree';
-import { WorktreeField } from './WorktreeField';
-import { sessionIsRetired, accountIsRetired, profileIsRetired } from '../../lib/runtimeCapability';
 
 export type SessionSettingsSheetProps =
   | { mode: 'create'; seed?: SessionSettingsCarryOver; onClose: () => void; onCreated: (meta: SessionMeta) => void }
@@ -74,393 +60,8 @@ export type SessionSettingsSheetProps =
 
 export default function SessionSettingsSheet(props: SessionSettingsSheetProps) {
   if (props.mode === 'edit') return <EditSheet sessionId={props.sessionId} onClose={props.onClose} onCarryOver={props.onCarryOver} />;
-  return <CreateSheet seed={props.seed} onClose={props.onClose} onCreated={props.onCreated} />;
-}
-
-// ============================================================================
-// Create mode
-// ============================================================================
-
-function CreateSheet({
-  seed,
-  onClose,
-  onCreated,
-}: {
-  seed?: SessionSettingsCarryOver;
-  onClose: () => void;
-  onCreated: (meta: SessionMeta) => void;
-}) {
-  const [cwd, setCwd] = useState(seed?.projectId ? '' : (seed?.cwd ?? ''));
-  const [name, setName] = useState(seed?.name ?? '');
-  const [nameTouched, setNameTouched] = useState(seed?.name !== undefined);
-  // §7 case 22: a project default naming a model the catalog no longer lists.
-  const [staleModelId, setStaleModelId] = useState<string | null>(null);
-  const [effort, setEffort] = useState(seed?.effort ?? ''); // '' = model default
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>(seed?.permissionMode ?? 'default');
-  const [responseMode, setResponseMode] = useState<ResponseMode>(seed?.responseMode ?? 'default');
-  const [allowGit, setAllowGit] = useState(seed?.allowGit ?? false);
-  const [runtime, setRuntime] = useState<ClaudeRuntime>(seed?.runtime ?? 'native');
-  const [runtimeTouched, setRuntimeTouched] = useState(seed?.runtime !== undefined);
-  const [accountId, setAccountId] = useState<string>(seed?.accountId ?? DEFAULT_ACCOUNT_ID);
-  const [accountFromProject, setAccountFromProject] = useState(false);
-  const [profileId, setProfileId] = useState(seed?.profileId ?? '');
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<AppError | null>(null);
-  const openRef = useMounted();
-  const cwdSeededRef = useRef(false);
-
-  const accounts = useStore((s) => s.accounts);
-  const providerHeading = modelPickerProviderHeading(accounts, accountId);
-
-  const activeProjectId = useStore((s) => s.activeProjectId);
-  const { projects, projectId, setProjectId, recoverFromProjectError } = useProjectList(
-    activeProjectId,
-    openRef,
-    seed ? { projectId: seed.projectId } : undefined,
-  );
-
-  const project = projects.find((p) => p.id === projectId) ?? null;
-  const projectRootMissing = project !== null && !project.rootExists;
-  const [replacedDefaultProject, setReplacedDefaultProject] = useState<string | null>(null);
-  const retiredDefault = !!project?.defaults.runtimeModel && replacedDefaultProject !== projectId;
-  const catalogState = useModelCatalog(accountId, seed?.modelId, retiredDefault);
-  const { models, modelsLoading, modelId, setModelId } = catalogState;
-
-  // session-settings-sheet FR-13: the seeded project's root fills `cwd` once the
-  // list resolves, without re-running (or being overridden by) the normal
-  // project-defaults effect below.
-  useEffect(() => {
-    if (!seed?.projectId || cwdSeededRef.current) return;
-    const p = projects.find((pr) => pr.id === seed.projectId);
-    if (!p) return;
-    cwdSeededRef.current = true;
-    setCwd(p.root);
-  }, [projects, seed?.projectId]);
-
-  const profiles = useStore((s) => s.profiles);
-
-  // pi-skills-capabilities FR-5/FR-7: whether the SELECTED account is a Pi
-  // account — the field, and the notice replacing the permission chips, only
-  // ever render for one. Keyed on the account's kind, never on a runtime
-  // literal (the session does not exist yet, so there is no agentRuntime to read).
-  const selectedAccount = accounts.find((a) => a.id === accountId) ?? null;
-  const isPiAccount = selectedAccount !== null && accountIsRetired(selectedAccount);
-
-  const pendingNewSessionProfileId = useStore((s) => s.pendingNewSessionProfileId);
-  const setPendingNewSessionProfileId = useStore((s) => s.setPendingNewSessionProfileId);
-  useEffect(() => {
-    if (!pendingNewSessionProfileId) return;
-    const picked = profiles.find((p) => p.id === pendingNewSessionProfileId) ?? null;
-    if (!picked) return;
-    setProfileId(picked.id);
-    setPendingNewSessionProfileId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingNewSessionProfileId, profiles]);
-
-  useProjectDefaults({
-    accountId,
-    defaultModelId: catalogState.catalog?.defaultModelId ?? null,
-    projectId,
-    project,
-    models,
-    modelsLoading,
-    nameTouched,
-    runtimeTouched,
-    setModelId,
-    setEffort,
-    setPermissionMode,
-    setResponseMode,
-    setAllowGit,
-    setStaleModelId,
-    setRuntime,
-    setCwd,
-    setName,
-    accounts,
-    setAccountId,
-    setAccountFromProject,
-    profiles,
-    setProfileId,
-    pendingProfileId: pendingNewSessionProfileId,
-    seeded: seed !== undefined,
-  });
-
-  const { picking, pickerError, applyCwd, browse } = useDirectoryPicker({ nameTouched, runtimeTouched, setCwd, setName, setRuntime });
-
-  const sessions = useStore((s) => s.sessions);
-  const worktree = useWorktreeGroup({
-    cwd,
-    name,
-    nameTouched,
-    setName,
-    openRef,
-    // pi-models-metrics FR-4: this gate only ever checks non-emptiness (worktree.ts
-    // `canOpenWorktreeRecovery`) — the legacy `modelId` is always '' for a Pi
-    // account (its catalog is a different command), so the worktree-recovery
-    // race-condition card would otherwise stay permanently blocked for one.
-    modelId: modelId,
-    projectRootMissing,
-    submitting,
-    sessions,
-    caseInsensitive: IS_WINDOWS,
-  });
-
-  const selectedModel = models.find((m) => m.id === modelId);
-  const modelEfforts = selectedModel?.efforts ?? [];
-
-  // Reset effort if the newly selected model doesn't support the current level
-  // — guarded on the catalog having actually loaded, so a SEEDED effort isn't
-  // cleared by the one-render window before `models` resolves (FR-13).
-  useEffect(() => {
-    if (modelsLoading || !catalogState.catalog) return;
-    if (effort && !modelEfforts.includes(effort)) setEffort('');
-  }, [modelId, models, modelsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
-  // pi-migration-rollout §7: a legacy profile on a Pi account (or the
-  // reverse) is refused by the core as PROFILE_RUNTIME_MISMATCH — surfaced
-  // here so Create is disabled pre-emptively, same reason ProfileField's own
-  // inline warning already names.
-  const profileMismatch = profileRuntimeMismatch(selectedProfile, selectedAccount);
-  // pi-models-metrics FR-4: belt-and-suspenders against the exact shape the
-  // core itself validates (SessionCreateInput) — the branches below never
-  // construct a mismatched payload, but this keeps the guard honest if that
-  // ever changes. A5 (review addendum): fed the RAW selection on both tracks
-  // (not the already-sanitized values `createSession` sends) — the helper is
-  // the one place that decides, so a future bug in those branches still trips
-  // this guard instead of being validated against dead-code inputs.
-  const modelMismatch = modelSelectionMismatch(selectedAccount, modelId, retiredDefault ? project?.defaults.runtimeModel : undefined);
-  const canCreate =
-    !isPiAccount && selectedAccount !== null &&
-    cwd.trim() !== '' &&
-    name.trim() !== '' &&
-    ( models.some((m) => m.id === modelId)) &&
-    (!profileId || selectedProfile !== null) &&
-    profileMismatch === null &&
-    modelMismatch === null &&
-    !submitting &&
-    !projectRootMissing &&
-    !worktree.blocked;
-  const cwdIsWsl = isWslUncPath(cwd);
-
-  const createSession = async (overrideCwd: string, worktreeOpts?: { branch: string; baseRef: string; adopt?: boolean }) => {
-    if (retiredDefault || isPiAccount || profileIsRetired(selectedProfile)) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    // pi-migration-rollout §5: a legacy profile sends its own systemPrompt/extraArgs
-    // (unchanged); a Pi profile sends its typed settings as `piProfile` and NEVER
-    // systemPrompt/extraArgs — the two are mutually exclusive on the wire.
-    const res = await sessionCreate({
-      cwd: overrideCwd,
-      name,
-      // pi-models-metrics FR-4: `runtimeModel` for a Pi account, `modelId`
-      // for everyone else — the two are mutually exclusive on the wire, and a
-      // Pi account's identity is never `modelId` alone.
-      modelId: modelId,
-      effort: effort || undefined,
-      permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
-      responseMode: responseMode !== 'default' ? responseMode : undefined,
-      runtime: runtime !== 'native' ? runtime : undefined,
-      allowGit: allowGit || undefined,
-      projectId: projectId || undefined,
-      worktree: worktreeOpts,
-      accountId: accountIdForSessionCreate(accountId),
-      profileId: profileId || undefined,
-      systemPrompt: selectedProfile?.kind === 'legacy' ? selectedProfile.systemPrompt : undefined,
-      extraArgs: selectedProfile?.kind === 'legacy' ? selectedProfile.extraArgs : undefined,
-    });
-    if (!openRef.current) {
-      if (res.ok) onCreated(res.data);
-      return;
-    }
-    setSubmitting(false);
-    worktree.setRecovering(false);
-    if (res.ok) {
-      onCreated(res.data);
-      onClose();
-    } else {
-      setSubmitError(submitErrorBanner(res.error));
-      if (res.error.code === 'PROJECT_NOT_FOUND' || res.error.code === 'PROJECT_ROOT_MISSING') {
-        await recoverFromProjectError();
-      } else if (res.error.code === 'WORKTREE_NOT_FOUND' && worktree.mode === 'attach') {
-        worktree.reprobe();
-      } else {
-        const racePath = worktreeBranchInUsePath(res.error);
-        if (racePath) worktree.applyRacePath(racePath);
-      }
-    }
-  };
-
-  const submit = async () => {
-    if (!canCreate) return;
-    if (worktree.mode === 'attach' && worktree.selectedPath) {
-      await createSession(worktree.selectedPath, { branch: '', baseRef: '', adopt: true });
-      return;
-    }
-    const worktreeOpts =
-      worktree.mode === 'create' && worktree.probe?.isRepo
-        ? { branch: worktree.branch.trim(), baseRef: worktree.baseRef.trim() || worktree.probe.defaultBranch || 'main' }
-        : undefined;
-    await createSession(cwd.trim(), worktreeOpts);
-  };
-
-  const openRecoverySession = async () => {
-    if (!worktree.recoveryPath || !worktree.canOpenRecovery) return;
-    worktree.setRecovering(true);
-    await createSession(worktree.recoveryPath, { branch: worktree.branch.trim(), baseRef: worktree.baseRef.trim(), adopt: true });
-  };
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      } else if (e.key === 'Enter' && canCreate) {
-        submitSettingsOnEnter(e, submit);
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  });
-
-  return (
-    <Modal onClose={onClose} width={480} closeOnEscape={false} closeOnBackdropClick={true}>
-      <ModalHeader>
-        <div className="session-settings-sheet__title-row">
-          <span className="new-session-modal__title">
-            <span className="new-session-modal__title-accent">›</span> new session
-          </span>
-          {project && <span className="new-session-modal__hint">defaults from {project.name}</span>}
-        </div>
-      </ModalHeader>
-
-      <ModalBody>
-        {/* FR-7/FR-8: PROJECT+NAME share one row. */}
-        <div className="session-settings-sheet__pair session-settings-sheet__pair--even">
-          <ProjectField
-            projects={projects}
-            projectId={projectId}
-            project={project}
-            projectRootMissing={projectRootMissing}
-            staleModelId={staleModelId}
-            onChange={(id) => { setReplacedDefaultProject(null); setProjectId(id); }}
-          />
-          <NameField
-            name={name}
-            onChange={(value) => {
-              setName(value);
-              setNameTouched(true);
-            }}
-          />
-        </div>
-
-        {project === null && (
-          <DirectoryField cwd={cwd} onChange={applyCwd} onBrowse={() => void browse()} picking={picking} pickerError={pickerError} />
-        )}
-
-        {/* FR-7/FR-8: EFFORT joins MODEL's row, fixed width, right — and renders no
-            track at all when the model advertises none, per the existing rule.
-            pi-models-metrics FR-1/FR-4: a Pi account gets its own provider-grouped
-            track instead — its descriptor advertises no discrete effort list at
-            all (runtime-model.ts), so this row never grows an EFFORT half for it. */}
-        <div className={modelEfforts.length > 0 ? 'session-settings-sheet__pair session-settings-sheet__pair--effort' : undefined}>
-          { (
-            <ModelField catalogState={catalogState} models={models} modelId={modelId} loading={modelsLoading} onChange={setModelId} providerHeading={providerHeading} />
-          )}
-          {modelEfforts.length > 0 && (
-            <div>
-              <label className="new-session-modal__label">EFFORT</label>
-              <div className="new-session-modal__chip-row new-session-modal__chip-row--wrap">
-                <ChipGroup
-                  options={[{ value: '', label: selectedModel?.defaultEffort ? `Model default · ${selectedModel.defaultEffort}` : 'Model default' }, ...modelEfforts.map((e) => ({ value: e, label: e }))]}
-                  value={effort}
-                  onChange={setEffort}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {retiredDefault && <div className="new-session-modal__hint new-session-modal__hint--error">Saved Pi model {project?.defaults.runtimeModel?.providerId} / {project?.defaults.runtimeModel?.modelId} · Unavailable. Choose an available account explicitly.</div>}
-        <AccountField
-          accounts={accounts}
-          accountId={accountId}
-          unavailableDefault={retiredDefault}
-          fromProject={accountFromProject}
-          onChange={(id) => {
-            setAccountId(id);
-            setReplacedDefaultProject(projectId);
-            setAccountFromProject(false);
-          }}
-        />
-
-        <ProfileField
-          profiles={profiles}
-          profileId={profileId}
-          onChange={setProfileId}
-          accounts={accounts}
-          accountId={accountId}
-        />
-
-        {IS_WINDOWS && (
-          <div>
-            <label className="new-session-modal__label">RUNTIME</label>
-            <div className="new-session-modal__chip-row">
-              <ChipGroup
-                options={RUNTIME_CHIP_OPTIONS}
-                value={runtime}
-                onChange={(value) => {
-                  setRuntime(value);
-                  setRuntimeTouched(true);
-                }}
-              />
-            </div>
-            {runtime === 'wsl' ? (
-              <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-                {cwdIsWsl
-                  ? 'WSL directory — claude will run inside your default distro'
-                  : 'runs `claude` inside your default WSL distro (wsl.exe translates the directory)'}
-              </div>
-            ) : (
-              cwdIsWsl && (
-                <div className="new-session-modal__hint new-session-modal__hint--below-chips new-session-modal__hint--error">
-                  Windows tools will access this directory over 9P — expect slow git and no live diff updates
-                </div>
-              )
-            )}
-          </div>
-        )}
-
-        {/* pi-skills-capabilities FR-5: a Pi session has no François-enforced
-            permission mode to pick — the notice + project-resources choice
-            replace the plan/accept-edits/bypass chips rather than sitting
-            disabled beside them. */}
-        { (
-          <PermissionsRow value={permissionMode} onChange={setPermissionMode} />
-        )}
-
-        <ResponseRow value={responseMode} onChange={setResponseMode} />
-
-        <GitRow value={allowGit} onChange={setAllowGit} />
-
-        <WorktreeField worktree={worktree} onOpenRecovery={() => void openRecoverySession()} />
-
-        {submitError && <div className="form-error">{submitError.message}</div>}
-      </ModalBody>
-
-      <ModalFooter>
-        <div className="new-session-modal__actions">
-          <span className="session-settings-sheet__foot-hint">⏎ create</span>
-          <span className="app-flex-spacer" />
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={() => void submit()} disabled={!canCreate}>
-            {submitting ? 'creating…' : 'Create session'}
-          </Button>
-        </div>
-      </ModalFooter>
-    </Modal>
-  );
+  // Create mode is the redesign's New task dialog (NewTaskDialog.tsx).
+  return <NewTaskDialog seed={props.seed} onClose={props.onClose} onCreated={props.onCreated} />;
 }
 
 // ============================================================================

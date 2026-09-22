@@ -1,0 +1,288 @@
+/* New task dialog — redesign "Graphite & Signal", Figma "19 · New task"
+   (139:6889; light 142:15513). The shell is src/ui/Modal; everything inside it
+   is this file. A floating layer: it keeps its border and shadow. */
+
+.new-task-backdrop {
+  background: var(--overlay-scrim);
+  padding-top: 110px;
+}
+.new-task-backdrop .modal-panel {
+  max-width: calc(100vw - 32px);
+  background: var(--bg-card);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-10);
+  box-shadow: var(--shadow-overlay);
+}
+
+.new-task {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text-primary);
+}
+
+/* ── head (139:6890) ── */
+.new-task__head {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: var(--space-20) var(--space-24) 0;
+}
+.new-task__title {
+  flex: 1;
+  margin: 0;
+  color: var(--text-primary);
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+}
+
+/* ── body (139:6895) ── */
+.new-task__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px var(--space-24) 22px;
+}
+.new-task__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.new-task__field--grow {
+  flex: 1;
+}
+.new-task__field--model {
+  width: 200px;
+  flex-shrink: 0;
+}
+.new-task__field--model:only-child {
+  width: 100%;
+}
+.new-task__label {
+  color: var(--text-muted);
+  font: var(--type-small-medium);
+}
+.new-task__pair {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+}
+
+.new-task__prompt {
+  height: 108px;
+  padding: var(--space-12) var(--space-14);
+  resize: vertical;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-6);
+  outline: none;
+  color: var(--text-primary);
+  font: var(--type-body);
+}
+.new-task__prompt::placeholder {
+  color: var(--text-faint);
+}
+
+/* A styled face with the native <select> laid invisibly over it, so picking
+   stays the platform's accessible control. */
+.new-task__select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 38px;
+  padding: 0 var(--space-12);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+}
+.new-task__select:focus-within {
+  border-color: var(--line-strong);
+}
+.new-task__select-value {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font: var(--type-ui);
+}
+.new-task__select-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font: var(--type-mono);
+}
+.new-task__select-caret {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+.new-task__select-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The model picker's trigger, restyled to the same select face. */
+.new-task .model-picker__trigger {
+  height: 38px;
+  padding: 0 var(--space-12);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+  font: var(--type-ui);
+}
+.new-task .model-picker__trigger-label--selected {
+  color: var(--text-primary);
+}
+.new-task .model-picker__caret {
+  color: var(--text-muted);
+}
+
+/* ── where it works (139:6917) ── */
+.new-task__where {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+}
+.new-task__option {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+  padding: var(--space-14);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.new-task__option--on {
+  background: var(--bg-raised);
+  border-color: var(--line-strong);
+}
+.new-task__option-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  font: var(--type-ui-strong);
+}
+.new-task__option-desc {
+  padding-left: 26px;
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+.new-task__code {
+  color: var(--text-secondary);
+  font: var(--type-mono-small);
+}
+.new-task__branch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 28px;
+  margin: var(--space-4) 0 0 26px;
+  padding: 0 var(--space-8);
+  background: var(--bg-canvas);
+  border-radius: var(--radius-4);
+  color: var(--text-muted);
+  cursor: text;
+}
+.new-task__branch-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: var(--type-mono);
+}
+.new-task__note {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.new-task__note--error {
+  color: var(--state-danger-text);
+}
+.new-task__note--path {
+  overflow: hidden;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-mono-small);
+}
+.new-task__link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.new-task__link:hover {
+  color: var(--text-primary);
+}
+.new-task__link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── advanced (139:6942) ── */
+.new-task__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  padding-top: var(--space-14);
+  border-top: 1px solid var(--line-subtle);
+}
+.new-task__advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.new-task__advanced-toggle:hover {
+  color: var(--text-primary);
+}
+.new-task__advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  padding-left: var(--space-20);
+}
+
+/* ── footer (139:6946) ── */
+.new-task__footer {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--space-8);
+  padding: var(--space-14) var(--space-24);
+  background: var(--bg-input);
+  border-top: 1px solid var(--line-subtle);
+}
+.new-task__footer-note {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.new-task__footer-note--error {
+  color: var(--state-danger-text);
+}

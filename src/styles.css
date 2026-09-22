@@ -10,280 +10,140 @@
 }
 /* Stop every looping animation while the window is hidden/minimized — no wasted
    repaints, and no compositor backlog to flush (and re-lag) on restore. Toggled by
-   the visibilitychange handler in main.tsx. */
-html[data-hidden='1'] [style*='animation'] {
+   the visibilitychange handler in main.tsx. The class-declared loops (the running
+   state glyph, the pulsing dot) are listed explicitly: the attribute selector only
+   ever matched INLINE animations. */
+html[data-hidden='1'] [style*='animation'],
+html[data-hidden='1'] .state-icon--running,
+html[data-hidden='1'] .status-dot--pulsing {
   animation-play-state: paused !important;
 }
-/* ── Self-hosted fonts (webview-hardening FR-1/FR-2) ─────────────────────────
-   12 committed woff2 files (src/assets/fonts/) — IBM Plex Sans 400/500/600 and
-   JetBrains Mono 400/500/700, each split into `latin` + `latin-ext` subsets so
-   the browser only fetches the subset a glyph actually needs. `unicode-range`
-   values are copied verbatim from the upstream Google Fonts / fontsource CSS —
-   do not hand-edit them. `font-display: block` briefly hides text rather than
-   swapping, which is what we want for a *local* asset (no cross-origin latency
-   to hide) and what makes a corrupted/missing file fall through to the
-   `system-ui`/`ui-monospace` chain below (FR-6) instead of flashing a fallback
-   face first. JetBrains Mono 700 exists only because xterm requests
-   `fontWeightBold: '700'` directly — it is outside the --font-ui/--font-mono
-   token system, which tops out at 600 (see FR-4). */
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-style: normal;
-  font-weight: 400;
-  font-display: block;
-  src: url('./assets/fonts/ibm-plex-sans-latin-ext-400-normal.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-style: normal;
-  font-weight: 400;
-  font-display: block;
-  src: url('./assets/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url('./assets/fonts/ibm-plex-sans-latin-ext-500-normal.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url('./assets/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-style: normal;
-  font-weight: 600;
-  font-display: block;
-  src: url('./assets/fonts/ibm-plex-sans-latin-ext-600-normal.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'IBM Plex Sans';
-  font-style: normal;
-  font-weight: 600;
-  font-display: block;
-  src: url('./assets/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: block;
-  src: url('./assets/fonts/jetbrains-mono-latin-ext-400-normal.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: block;
-  src: url('./assets/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url('./assets/fonts/jetbrains-mono-latin-ext-500-normal.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url('./assets/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  /* keyword, not the numeric literal — this face is exempt from FR-4's grep
-     check for the 16 off-system sites, and `bold` is numerically identical. */
-  font-weight: bold;
-  font-display: block;
-  src: url('./assets/fonts/jetbrains-mono-latin-ext-700-normal.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: bold;
-  font-display: block;
-  src: url('./assets/fonts/jetbrains-mono-latin-700-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
 
-/* ── Theme tokens ───────────────────────────────────────────────────────────
-   :root holds the DARK palette (design-refresh: the values from `Francois
-   Redesign.dc.html` variant 3a — see specs/design/design-refresh.md's table).
-   :root[data-theme='light'] overrides them with a cohesive light palette.
-   Every component references these via var(--…); main.tsx sets data-theme before
-   first paint and store.ts flips it at runtime. */
+/* ══ Design tokens — "Redesign · Graphite & Signal" ═══════════════════════════
+   Source of truth: Figma file YEY4c6AiWq1bKYuaju9qdV, page "Redesign · Graphite &
+   Signal" (124:2). Every token below is a Figma variable, renamed `a/b` → `--a-b`
+   (e.g. `bg/rail` → `--bg-rail`, `state/attention-text` → `--state-attention-text`).
+   :root is the DARK theme (the default); :root[data-theme='light'] is the light
+   one. `data-theme` is set on <html> before first paint (main.tsx) and flipped by
+   the store's theme slice (src/lib/theme.ts). Colour NEVER comes from a literal
+   in a feature stylesheet — only from these.
+
+   FAMILIES
+   · --bg-*        surfaces, darkest → lightest in dark: canvas (the reading
+                   surface / app bar), rail (sidebar, session panel, tool groups),
+                   input (fields, segmented tracks), card (user message, framed
+                   blocks), raised (hover / chips / tags), selected (the chosen
+                   tab or row), strong (count pills, avatar, meter-less tracks).
+   · --line-*      1px strokes. `subtle` separates regions (bar bottoms, panel
+                   edges, card borders); `default` outlines a control (secondary
+                   button, composer).
+   · --text-*      primary › secondary › muted › faint › disabled, plus
+                   line-number (gutters) and inverse (text on --action-primary).
+   · --action-primary  the ONE strong action per view (ivory in dark, ink in
+                   light). Text on it is --text-inverse.
+   · --state-*     running (cyan — the live thing), attention (violet — a session
+                   blocked on you: approvals + questions), success, danger, idle,
+                   info (modified files). `-text` variants are the legible step on
+                   a tint; --state-attention-on is text ON a solid attention fill.
+   · --tint-*      translucent washes of a state: a chip or card background
+                   (`tint-X`) and its 1px edge (`tint-X-line`).
+   · --diff-*      diff rows: add/remove backgrounds + text (aliases of tints).
+   · --space-N     N px (2 4 6 7 8 10 11 12 14 16 20 24 28 32 in the design; the
+                   in-between steps are the older scale, kept).
+   · --radius-N    N px (3 4 5 6), plus the older role names (sm/base/…).
+   · --font-*      --font-ui (Geist), --font-mono (Geist Mono).
+   · --type-*      the Figma text styles as `font` shorthands: use
+                   `font: var(--type-ui)` and, for --type-label, also
+                   `letter-spacing: var(--tracking-label); text-transform: uppercase`.
+
+   LEGACY ALIASES — the pre-redesign names (--bg-panel, --text-dim, --accent,
+   --attn, --success, …) are kept at the bottom of each block and re-pointed at
+   the new tokens, so a screen that has not been converted yet still themes. New
+   code should use the new names. */
 :root {
-  /* fonts (design-refresh FR-2): IBM Plex Sans is the UI chrome font (labels,
-     buttons, body copy, panel headers); JetBrains Mono is demoted to
-     code/paths/numbers/badges/hotkey glyphs — xterm keeps it unconditionally
-     via its own fontFamily option, not this token. */
-  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-ui: 'Geist', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, monospace;
+
+  /* type roles (Figma text styles) — theme-invariant */
+  --type-title: 600 15px/20px var(--font-ui);
+  --tracking-title: -0.01em;
+  /* Graphite/Heading — the welcome heading (Figma 11 · 136:5727). */
+  --type-heading: 600 20px/28px var(--font-ui);
+  --tracking-heading: -0.015em;
+  --type-body: 400 14px/22.4px var(--font-ui);
+  --type-ui: 400 13px/18px var(--font-ui);
+  --type-ui-medium: 500 13px/18px var(--font-ui);
+  --type-ui-strong: 600 13px/18px var(--font-ui);
+  --type-small: 400 12px/16px var(--font-ui);
+  --type-small-medium: 500 12px/16px var(--font-ui);
+  --type-label: 600 11px/14px var(--font-ui);
+  --tracking-label: 0.08em;
+  --type-mono: 400 12px/18px var(--font-mono);
+  --type-mono-medium: 500 12px/18px var(--font-mono);
+  --type-mono-small: 400 11px/14px var(--font-mono);
+  --type-mono-code: 400 12.5px/22px var(--font-mono);
 
   /* The SHELL tab's own line height (ShellTerminal.tsx hands xterm the same
-     number, which xterm cannot read from CSS). Anything rendering captured
-     terminal output outside xterm — command-inspect's record body — uses this
-     so a log reads at the same rhythm whether it is live or recalled. */
+     number, which xterm cannot read from CSS). */
   --terminal-line-height: 1.35;
 
-  /* ── surfaces (design 9a "flat") ──────────────────────────────────────────
-     9a rebuilds 7a with no strokes, no shadows: separation comes from tonal
-     steps in the surfaces alone. Four of these are the mock's named tiers and
-     carry its exact values — window --bg-app, chrome --bg-chrome, rails
-     --bg-panel, terminal --bg-canvas. The rest are the interaction ladder that
-     sits on top of a rail, retoned onto the same ramp.
+  /* ── surfaces ── */
+  --bg-canvas: #0c0d0f;
+  --bg-rail: #111215;
+  --bg-input: #131417;
+  --bg-card: #16181b;
+  --bg-raised: #1c1f23;
+  --bg-selected: #24272c;
+  --bg-strong: #2a2d33;
+  /* ── lines ── */
+  --line-subtle: #ffffff0f;
+  --line-default: #ffffff1a;
+  /* ── text ── */
+  --text-primary: #eceae5;
+  --text-secondary: #d8d5cf;
+  --text-muted: #a3a09a;
+  --text-faint: #8a8781;
+  --text-disabled: #6f6d68;
+  --text-line-number: #4a4d53;
+  --text-inverse: #111215;
+  /* ── action ── */
+  --action-primary: #eceae5;
+  /* ── state ── */
+  --state-running: #5ec8e5;
+  --state-attention: #a897ff;
+  --state-attention-text: #c3b8ff;
+  --state-attention-on: #141022;
+  --state-success: #5cc195;
+  --state-success-text: #8fddb8;
+  --state-danger: #ef7a6e;
+  --state-danger-text: #f2a79e;
+  --state-idle: #6f6d68;
+  --state-info: #7aa2f7;
+  /* ── tints ── */
+  --tint-running: #5ec8e51a;
+  --tint-attention: #a897ff12;
+  --tint-attention-strong: #a897ff29;
+  --tint-attention-line: #a897ff42;
+  --tint-success: #5cc19517;
+  --tint-success-line: #5cc19559;
+  --tint-danger: #ef7a6e14;
+  --tint-danger-line: #ef7a6e47;
+  --tint-info: #7aa2f712; /* diff hunk header row (Figma tint/info) */
+  --line-strong: #ffffff38; /* checkbox outline (Figma line/strong) */
+  --bg-terminal: #09090b; /* SHELL tab surface (Figma bg/terminal) */
+  /* floating layers — palette, dialogs, popovers (Figma bg/popover, overlay/scrim) */
+  --bg-popover: #1a1c20;
+  --overlay-scrim: #060708b8;
+  --shadow-overlay: 0 24px 80px 0 rgba(0, 0, 0, 0.55);
+  --shadow-float: 0 18px 48px 0 rgba(0, 0, 0, 0.5);
+  /* ── diff ── */
+  --diff-add-bg: var(--tint-success);
+  --diff-add-text: var(--state-success-text);
+  --diff-remove-bg: var(--tint-danger);
+  --diff-remove-text: var(--state-danger-text);
+  --diff-context-text: var(--text-faint);
 
-     The ramp reads DARKEST at the reading surface and lightest at the chrome:
-     the terminal is the recessed thing, the chrome is raised over it. Anything
-     that used to be told apart by a 1px rule is now told apart by one step on
-     this ladder — so when a border is removed, give the block a surface. */
-  /* the window itself — the frame the panes sit on, and the split gutter */
-  --bg-app: #0d0f13;
-  /* the top app row: the one raised tier, above everything */
-  --bg-chrome: #171b22;
-  /* the reading surface — transcript, diff, terminal. The deepest step. */
-  --bg-canvas: #0a0b0e;
-  /* a recessed block INSIDE a rail or a panel (welcome header, context menus) */
-  --bg-deep: #101319;
-  /* rails: sidebar, session row, composer well, panel host, modal chrome */
-  --bg-panel: #12161c;
-  /* a row hovered on a rail */
-  --bg-elevated: #171c23;
-  /* a filled control (composer input, small chrome buttons) */
-  --bg-raised: #1c212a;
-  /* a chrome item hovered / a filled chip */
-  --bg-hover: #1f242d;
-  /* a chrome item active */
-  --bg-hover-2: #252b35;
-  /* borders — 9a has no strokes, so the two DECORATIVE border tokens resolve
-     to transparent app-wide. That is deliberately done at the token rather
-     than by deleting ~130 declarations: the 1px stays in the box model, so
-     nothing reflows, and a rule that wants its edge back only has to name a
-     different token. --border-emphasis and --border-focus are NOT decorative —
-     they are the scrollbar thumb, the drag handles and the keyboard focus
-     ring, which have to stay visible in a flat scheme too. */
-  --border: transparent;
-  --border-2: transparent;
-  --border-emphasis: #2d333f;
-  --border-focus: #3c4453;
-  /* text */
-  --text-bright: #f2f4f8;
-  --text-strong: #e6e9ef;
-  --text: #d6dae2;
-  --text-2: #c3c9d4;
-  --text-hint: #9aa2b1;
-  --text-dim: #8b93a3;
-  --text-muted: #6b7385;
-  --text-faint: #565e6e;
-  --text-disabled: #3a4049;
-  /* accent — design 9a steps the acid back to an OLIVE. Same role (one per
-     view, the live thing and the recovering action), lower voltage: at #c3f53f
-     the accent out-shouted the amber that actually needs you, which is the one
-     colour in this app that means "come here". #9cb45f also sits closer to the
-     light theme's #4e6a14, so the two themes finally read as one hue. */
-  --accent: #9cb45f;
-  --accent-2: #9cb45f;
-  --accent-bright: #b5cb7c;
-  --accent-soft-bg: #191d10;
-  --accent-soft-edge: #303a1c;
-  /* muted olive — a session spawning its turn. Reads as the accent family without
-     claiming the "one live thing per view" slot, which stays with --accent-2. */
-  --accent-dim: #7f9542;
-  --warn: #d4c46f;
-  /* attention — a session parked on the user (awaiting_approval). Deliberately
-     NOT in the red family: a gate is not a failure. 9a desaturates it a step
-     (#e0a84e → #d0a45c) now that it, not the accent, is the loudest thing on
-     the page, and splits out the two tones it needs at that weight: a text
-     step legible on the fill, and the fill itself. */
-  --attn: #d0a45c;
-  --attn-text: #dcb673;
-  --attn-soft-bg: #231d12;
-  /* logo (consumed by src/ui/Logo.tsx) — the dim slab is the idle session,
-     not a shadow, so it never takes the accent. */
-  --logo-slab: #9cb45f;
-  --logo-slab-dim: #586c30;
-  /* green — "ready" moved off #6fae7d once the accent became acid, so a status
-     dot can never be mistaken for the accent. */
-  --success: #4fae86;
-  --success-bright: #8bc292;
-  --success-dim: #517a55;
-  /* red */
-  --error: #d1685e;
-  --error-bright: #e0918a;
-  --error-dim: #8f3f37;
-  /* hues */
-  --hue-purple: #b39ede;
-  --hue-purple-soft: #cbb9ec;
-  --hue-teal: #8fbab8;
-  --hue-blue: #6f9fd8;
-  --hue-slate: #7c8aa0;
-  /* The warm hue redesign 8b gives the Anthropic provider tile. It sits in the
-     NEUTRAL ramp on purpose: a provider tile carries identity, so it may not
-     borrow --error-bright (which the mock's own #e0918a happens to be) — a
-     vendor mark that reads as a failure state is worse than an off-brand one. */
-  --hue-clay: #cf9d86;
-  /* dimming layer shared by every modal/overlay backdrop */
-  --backdrop: rgba(6, 7, 9, 0.62);
-
-  /* ── Foundational scales ──────────────────────────────────────────────────
-     Derived from actual inline-style usage across src.tsx (grepped
-     fontSize/borderRadius/padding/gap/boxShadow literals), NOT an invented
-     scale — every value below is a px (or shadow) literal that already
-     appears, repeatedly, in the codebase. Spacing, radius and font-size do
-     not differ between themes, so they live only here in :root (no
-     :root[data-theme='light'] mirror needed). Shadows are likewise
-     theme-invariant in current usage (always a black rgba()).
-
-     --space-<n>: the numeric suffix IS the pixel value (not a multiplier),
-     so an inline `padding: '9px 16px'` maps 1:1 to
-     `padding: var(--space-9) var(--space-16)`. Only the distinct px values
-     actually found in gap:/padding: literals are defined.
-     --font-size-<n>: same convention (decimal point becomes a dash), e.g.
-     `fontSize: 10.5` -> var(--font-size-10-5). The distinct sizes found
-     range 8px–17px in 0.5px steps (this app's real type scale, however
-     unsystematic).
-     --radius-<role>: only 7 distinct radii are used app-wide, so these get
-     role names on a conventional xs..2xl ladder instead of raw numbers.
-     --shadow-<role>: the distinct box-shadow values used for floating
-     surfaces (modals, popovers, dropdown cards) plus the one already
-     hardcoded in this file (§slash-menu, see below). */
+  /* ── space (px; the Figma space/* steps plus the older in-between ones) ── */
   --space-1: 1px;
   --space-2: 2px;
   --space-3: 3px;
@@ -300,11 +160,23 @@ html[data-hidden='1'] [style*='animation'] {
   --space-14: 14px;
   --space-16: 16px;
   --space-18: 18px;
-  /* the welcome header's panel padding + column gap (Francois Redesign.dc.html) */
   --space-20: 20px;
   --space-22: 22px;
   --space-24: 24px;
+  --space-28: 28px;
+  --space-32: 32px;
 
+  /* ── radius (Figma radius/*) ── */
+  --radius-3: 3px;
+  --radius-4: 4px;
+  --radius-5: 5px;
+  --radius-6: 6px;
+  --radius-7: 7px;
+  --radius-8: 8px;
+  --radius-10: 10px;
+
+  /* ── font sizes — the pre-redesign scale, kept for unconverted screens. New
+     code should reach for a --type-* role instead. ── */
   --font-size-8: 8px;
   --font-size-8-5: 8.5px;
   --font-size-9: 9px;
@@ -320,123 +192,136 @@ html[data-hidden='1'] [style*='animation'] {
   --font-size-15: 15px;
   --font-size-17: 17px;
 
-  /* xs=2 (rare, UsageBar), sm=3, base=4 (by far the most common — default
-     button/chip/row radius), md=5, lg=6, xl=8 (modals + larger panels),
-     2xl=12 (rare, ConversationView jump-to-latest pill). card=7 (design-refresh
-     FR-1/brief: session/tool-call/prompt cards move off base/lg onto this new
-     step — panels stay on xl, unchanged). */
+  /* ── radius role names (legacy) ── */
   --radius-xs: 2px;
   --radius-sm: 3px;
   --radius-base: 4px;
   --radius-md: 5px;
   --radius-lg: 6px;
-  --radius-card: 7px;
+  --radius-card: 6px;
   --radius-xl: 8px;
   --radius-2xl: 12px;
 
-  /* Named by the kind of floating surface each dresses, not by size.
-
-     design 9a: "no shadows". Applied by the thing being dressed, not blanket —
-     a shadow in 9a's terms is a substitute for a tonal step, and only an
-     element that HAS a surface behind it can take a step instead. So:
-
-     · IN-FLOW elements (--shadow-card/-sm/-bar/-pill) drop to `none`. They sit
-       on a known surface and are now separated by their own tone.
-     · FLOATING layers (modal, popover, dropdown) keep theirs. A dropdown opens
-       over the transcript with no surface of its own to step against, and with
-       9a's strokes gone it would otherwise have nothing at all holding its
-       edge. This is the one place 9a's rule is not applied — the mock draws no
-       overlay, so it does not rule on the case. */
-  --shadow-modal: 0 30px 70px -18px rgba(0, 0, 0, 0.9);
-  --shadow-popover-lg: 0 20px 50px -18px rgba(0, 0, 0, 0.85);
-  --shadow-popover: 0 20px 50px -15px rgba(0, 0, 0, 0.75);
-  --shadow-dropdown: 0 12px 30px -10px rgba(0, 0, 0, 0.7);
+  /* ── shadows: only FLOATING layers (modal, popover, dropdown) carry one —
+     they have no surface behind them to separate against. In-flow blocks are
+     separated by --line-subtle instead. ── */
+  --shadow-modal: 0 24px 60px -16px rgba(0, 0, 0, 0.7);
+  --shadow-popover-lg: 0 20px 50px -18px rgba(0, 0, 0, 0.6);
+  --shadow-popover: 0 16px 40px -14px rgba(0, 0, 0, 0.55);
+  --shadow-dropdown: 0 12px 30px -10px rgba(0, 0, 0, 0.5);
   --shadow-card: none;
   --shadow-card-sm: none;
   --shadow-bar: none;
   --shadow-pill: none;
 
-  /* Native UA-rendered chrome — the <select> option popup, scrollbars, the
-     focus ring — is NOT reachable by the tokens above; it follows this
-     property only. Without it WebView2 renders that popup light-on-light over
-     the dark UI. Flipped alongside the tokens in the light block below. */
+  /* ── hues (identity colours for provider tiles / extension tiles; not states) ── */
+  --hue-purple: #b39ede;
+  --hue-purple-soft: #cbb9ec;
+  --hue-teal: #8fbab8;
+  --hue-blue: #6f9fd8;
+  --hue-slate: #7c8aa0;
+  --hue-clay: #cf9d86;
+  --warn: #d4c46f;
+
+  /* ── LEGACY ALIASES (pre-redesign names → new tokens) ── */
+  --backdrop: var(--overlay-scrim);
+  --bg-app: var(--bg-canvas);
+  --bg-chrome: var(--bg-rail);
+  --bg-panel: var(--bg-rail);
+  --bg-deep: var(--bg-card);
+  --bg-elevated: var(--bg-raised);
+  --bg-hover: var(--bg-selected);
+  --bg-hover-2: var(--bg-strong);
+  --border: var(--line-subtle);
+  --border-2: var(--line-subtle);
+  --border-emphasis: var(--bg-strong);
+  --border-focus: var(--text-faint);
+  --text-bright: var(--text-primary);
+  --text-strong: var(--text-primary);
+  --text: var(--text-secondary);
+  --text-2: var(--text-secondary);
+  --text-hint: var(--text-muted);
+  --text-dim: var(--text-muted);
+  /* The accent is "the live thing" — in this system that is the running cyan. */
+  --accent: var(--state-running);
+  --accent-2: var(--state-running);
+  --accent-bright: var(--state-running);
+  --accent-dim: color-mix(in srgb, var(--state-running) 65%, var(--bg-canvas));
+  --accent-soft-bg: var(--tint-running);
+  --accent-soft-edge: color-mix(in srgb, var(--state-running) 35%, transparent);
+  /* "come here" — a session blocked on the user — is the violet attention family. */
+  --attn: var(--state-attention);
+  --attn-text: var(--state-attention-text);
+  --attn-soft-bg: var(--tint-attention-strong);
+  --success: var(--state-success);
+  --success-bright: var(--state-success-text);
+  --success-dim: color-mix(in srgb, var(--state-success) 55%, var(--bg-canvas));
+  --error: var(--state-danger);
+  --error-bright: var(--state-danger-text);
+  --error-dim: color-mix(in srgb, var(--state-danger) 55%, var(--bg-canvas));
+  /* the app mark (src/ui/Logo.tsx) */
+  --logo-slab: var(--text-primary);
+  --logo-slab-dim: var(--text-primary);
+
+  /* Native UA-rendered chrome (select popups, scrollbars) follows this only. */
   color-scheme: dark;
 }
 :root[data-theme='light'] {
   color-scheme: light;
-  /* ── surfaces (design 9a "flat", light) ───────────────────────────────────
-     9a only draws the dark theme, so this is the same RULE applied here rather
-     than a copy of its values: strokes gone, tonal steps do the separating.
-     That forced a retone — the old light ramp leaned on its borders and stepped
-     #ffffff → #fbfcfd → #f8f9fb, which is invisible without them. The steps
-     below are ~4x wider so each surface stands on its own.
+  /* ── surfaces ── */
+  --bg-canvas: #fafaf8;
+  --bg-rail: #f3f2ef;
+  --bg-input: #ffffff;
+  --bg-card: #ffffff;
+  --bg-raised: #e9e7e2;
+  --bg-selected: #e2e0da;
+  --bg-strong: #dad7d0;
+  /* ── lines ── */
+  --line-subtle: #11121514;
+  --line-default: #11121521;
+  /* ── text ── */
+  --text-primary: #1a1b1e;
+  --text-secondary: #3a3b3f;
+  --text-muted: #5f5d58;
+  --text-faint: #716e68;
+  --text-disabled: #9a978f;
+  --text-line-number: #b5b2ab;
+  --text-inverse: #f3f2ef;
+  /* ── action ── */
+  --action-primary: #1a1b1e;
+  /* ── state ── */
+  --state-running: #0b7fa0;
+  --state-attention: #6b55e0;
+  --state-attention-text: #5440c8;
+  --state-attention-on: #ffffff;
+  --state-success: #1e875a;
+  --state-success-text: #1b7550;
+  --state-danger: #c6443a;
+  --state-danger-text: #ae3a30;
+  --state-idle: #9a978f;
+  --state-info: #3a62c8;
+  /* ── tints ── */
+  --tint-running: #0b7fa01a;
+  --tint-attention: #6b55e00f;
+  --tint-attention-strong: #6b55e01f;
+  --tint-attention-line: #6b55e04d;
+  --tint-success: #1e875a14;
+  --tint-success-line: #1e875a59;
+  --tint-danger: #c6443a14;
+  --tint-danger-line: #c6443a4d;
+  --tint-info: #3a62c812;
+  --line-strong: #11121540;
+  --bg-terminal: #f5f4f1;
+  --bg-popover: #ffffff;
+  --overlay-scrim: #1a1b1e59;
+  --shadow-overlay: 0 24px 80px 0 rgba(17, 18, 21, 0.18);
+  --shadow-float: 0 18px 48px 0 rgba(17, 18, 21, 0.16);
 
-     The ORDER inverts against dark, as it already did: on light the reading
-     surface is the brightest thing (paper), and the chrome recedes. So
-     --bg-canvas is the whitest and --bg-app the greyest, the mirror of the
-     dark ramp rather than a re-mapping of the roles. */
-  --bg-app: #dfe3ea;
-  --bg-chrome: #f4f6f9;
-  --bg-canvas: #ffffff;
-  --bg-deep: #f1f3f7;
-  --bg-panel: #eaedf3;
-  --bg-elevated: #e2e6ed;
-  --bg-raised: #f7f8fa;
-  --bg-hover: #dde1e9;
-  --bg-hover-2: #ccd2dd;
-  /* borders — the two decorative tokens go transparent here too (see :root);
-     emphasis/focus stay real, darkened for a light surface. */
-  --border: transparent;
-  --border-2: transparent;
-  --border-emphasis: #b6bcc7;
-  --border-focus: #14171c54;
-  /* text — inverted ladder: bright is darkest, disabled lightest.
-     Darkened for legibility on white (lighter steps carried too little contrast). */
-  --text-bright: #14161b;
-  --text-strong: #1c1f26;
-  --text: #292c33;
-  --text-2: #33373f;
-  --text-hint: #42464e;
-  --text-dim: #565a63;
-  --text-muted: #6d717a;
-  --text-faint: #878c95;
-  --text-disabled: #b6bac2;
-  /* accent — acid darkens to #4e6a14 for contrast on light (Francois Design
-     System v2 §Colour). accent-2 kept equal to accent (mirroring :root, which
-     also carries them equal) — the design system names only the one
-     darkened value, and this app has no light-theme case that wants them to
-     diverge. accent-bright (hover) darkens further, same relative step
-     :root[data-theme='light'] already used for the amber it replaces: on a
-     light surface "brighter" means "more contrast", not "more luminance".
-     accent-soft-bg is a pale, low-saturation tint of the acid hue — near-black
-     text reads on it easily; accent-soft-edge sits between that tint and the
-     accent for the "working" chip border it pairs with. */
-  --accent: #4e6a14;
-  --accent-2: #4e6a14;
-  --accent-bright: #3e5510;
-  --accent-soft-bg: #eef4e1;
-  --accent-soft-edge: #c9dca3;
-  --accent-dim: #6d8a2a;
-  --warn: #8f7f2e;
-  /* attention — darkened for contrast on a light surface, same step as --warn.
-     The two 9a companions invert with it: on light "text on the fill" means
-     darker than the fill, and the fill is a pale wash rather than a deep one. */
-  --attn: #9a6b12;
-  --attn-text: #7d560c;
-  --attn-soft-bg: #f6ecd8;
-  /* logo (consumed by src/ui/Logo.tsx) */
-  --logo-slab: #4e6a14;
-  --logo-slab-dim: #a8b98a;
-  /* green — darkened and shifted a step toward teal so "ready" stays a
-     distinct signal from the lime accent (same rationale as :root's --success
-     move, carried through to the light palette). */
-  --success: #3b745c;
-  --success-bright: #285024;
-  --success-dim: #7e9b79;
-  /* red */
-  --error: #b0463d;
-  --error-bright: #7d2b24;
-  --error-dim: #c98d87;
+  --shadow-modal: 0 24px 60px -16px rgba(17, 18, 21, 0.28);
+  --shadow-popover-lg: 0 20px 50px -18px rgba(17, 18, 21, 0.24);
+  --shadow-popover: 0 16px 40px -14px rgba(17, 18, 21, 0.22);
+  --shadow-dropdown: 0 12px 30px -10px rgba(17, 18, 21, 0.2);
+
   /* hues — darkened for contrast on light */
   --hue-purple: #6a55a0;
   --hue-purple-soft: #92678b;
@@ -444,9 +329,9 @@ html[data-hidden='1'] [style*='animation'] {
   --hue-blue: #416b8f;
   --hue-slate: #566480;
   --hue-clay: #8d5340;
-  --backdrop: rgba(6, 7, 9, 0.62);
-  /* No light-theme --shadow-card override: it inherits :root's `none` with the
-     rest of the in-flow shadows (design 9a). */
+  --warn: #8f7f2e;
+  /* Every legacy alias is a var() of a new token, so it follows the theme
+     without being restated here. */
 }
 * {
   box-sizing: border-box;
@@ -545,32 +430,6 @@ a {
   .pj-list {
     width: 100%;
     max-height: 160px;
-  }
-}
-/* overview — the OVERVIEW dashboard's two-column split: the project rollup takes
-   the slack, the activity feed sits in a fixed rail beside it. The main pane is a
-   1fr grid column, so its width swings with the [ / ] column toggles; under 860px
-   the rail drops beneath the rollup rather than squeezing both to unreadable. */
-.ov-split {
-  display: flex;
-  gap: 18px;
-  align-items: flex-start;
-}
-.ov-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.ov-rail {
-  flex: 0 0 268px;
-  min-width: 0;
-}
-@media (max-width: 860px) {
-  .ov-split {
-    flex-direction: column;
-  }
-  .ov-rail {
-    flex: 1 1 auto;
-    width: 100%;
   }
 }
 
@@ -767,7 +626,6 @@ a {
    stay on the call site. */
 .list-row {
   display: flex;
-  align-items: flex-;
   cursor: pointer;
   background: transparent;
 }
@@ -868,71 +726,112 @@ a {
   overflow: hidden;
 }
 
-/* Selectable option pill (NewSessionModal.tsx:388-407, 415-435, 445-458,
-   469-491 — effort/permission/git/runtime chips). `chip--danger` only takes
-   effect combined with `chip--selected`, matching the bypassPermissions
-   chip, which is only recolored red once chosen. */
-/* design 9a: an unselected chip is a filled surface, not an outline, and
-   selection is carried by a stronger fill + the accent text rather than by an
-   accent EDGE — there are no edges left to colour. */
+/* Selectable option pill (src/ui/Chip.tsx — effort/permission/git/runtime
+   chips). Graphite: an unselected chip is outlined by --line-subtle; the chosen
+   one takes the --bg-selected fill (the same "chosen" surface as a Tab), never an
+   accent. `chip--danger` only takes effect combined with `chip--selected`. */
 .chip {
-  font-size: var(--font-size-11);
-  padding: var(--space-4) var(--space-9);
-  border-radius: var(--radius-base);
+  font: var(--type-small);
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-4);
   cursor: pointer;
-  border: 0;
-  background: var(--bg-raised);
-  color: var(--text-dim);
+  border: 1px solid var(--line-subtle);
+  background: transparent;
+  color: var(--text-muted);
 }
-.chip--selected {
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg-raised));
-  color: var(--accent);
+.chip:hover {
+  background: var(--bg-raised);
+}
+.chip--selected,
+.chip--selected:hover {
+  background: var(--bg-selected);
+  border-color: transparent;
+  color: var(--text-primary);
+  font: var(--type-small-medium);
 }
 .chip--danger.chip--selected {
-  background: color-mix(in srgb, var(--error) 18%, var(--bg-raised));
-  color: var(--error);
+  background: var(--tint-danger);
+  border-color: var(--tint-danger-line);
+  color: var(--state-danger-text);
 }
 
-/* Button (NewSessionModal.tsx:546-573 — the btn()/createBtn() factories, now
-   src/ui/Button.tsx). `.btn` carries the shared sizing; `--ghost` is the
-   neutral outline look (btn()/Cancel), `--primary` is the filled accent
-   action (createBtn()). Button.tsx pairs the native `disabled` attribute
-   with an explicit `is-disabled` class, so the disabled recolor is keyed off
-   `.is-disabled` (not `:disabled`) — and, because a disabled button must
-   look muted/recolored rather than translucent, `.btn.is-disabled` opts back
-   out of the generic `.is-disabled` dimming below (opacity/pointer-events),
-   which would otherwise double up with the recolor. */
+/* Button (src/ui/Button.tsx) — Figma "Button" 125:7935: Kind = Primary ·
+   Secondary · Ghost · Attention · Danger, Size = Md (30px) · Sm (26px).
+   Primary is the ONE strong action per view (ivory in dark, ink in light);
+   Attention answers a blocked session; Danger is destructive. Button.tsx pairs
+   the native `disabled` with an explicit `is-disabled` class, so the disabled
+   look is keyed off `.is-disabled`, and `.btn.is-disabled` opts back out of the
+   generic `.is-disabled` dimming below so the two do not double up. */
 .btn {
-  border-radius: var(--radius-base);
-  font-size: var(--font-size-12);
-  font-family: inherit;
-  height: 32px;
-  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  flex-shrink: 0;
+  height: 30px;
   padding: 0 var(--space-12);
+  border-radius: var(--radius-5);
+  border: 1px solid transparent;
+  font: var(--type-ui-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  background: transparent;
+  color: var(--text-primary);
 }
-/* 9a: the secondary action is a filled neutral, not an outlined one. */
-.btn--ghost {
-  background: var(--bg-raised);
-  border: 0;
-  color: var(--text-2);
+.btn--sm {
+  height: 26px;
+  padding: 0 var(--space-10);
+  border-radius: var(--radius-4);
+  font: var(--type-small-medium);
 }
-.btn--ghost:hover {
-  background: var(--bg-hover);
+.btn__shortcut {
+  font: var(--type-mono-small);
+  opacity: 0.55;
 }
 .btn--primary {
-  background: var(--accent);
-  border: none;
-  color: var(--bg-canvas);
-  font-weight: 600;
-  padding: 0 var(--space-14);
+  background: var(--action-primary);
+  color: var(--text-inverse);
+}
+.btn--primary:hover {
+  background: color-mix(in srgb, var(--action-primary) 88%, var(--bg-canvas));
+}
+.btn--secondary {
+  border-color: var(--line-default);
+  color: var(--text-primary);
+}
+.btn--secondary:hover {
+  background: var(--bg-raised);
+}
+.btn--ghost {
+  color: var(--text-muted);
+}
+.btn--ghost:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.btn--attention {
+  background: var(--state-attention);
+  color: var(--state-attention-on);
+}
+.btn--attention:hover {
+  background: color-mix(in srgb, var(--state-attention) 88%, var(--text-primary));
+}
+.btn--danger {
+  background: var(--tint-danger);
+  border-color: var(--tint-danger-line);
+  color: var(--state-danger-text);
+}
+.btn--danger:hover {
+  background: color-mix(in srgb, var(--state-danger) 16%, transparent);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
 }
 .btn.is-disabled {
-  opacity: 1;
+  opacity: 0.45;
   cursor: default;
-}
-.btn--primary.is-disabled {
-  background: var(--text-disabled);
-  color: var(--text-muted);
+  pointer-events: none;
 }
 
 /* Modal shell (AgentsPanel.tsx:588-611, NewSessionModal.tsx:274-297,
@@ -1051,11 +950,4 @@ a {
 }
 .agent-kill-action:hover {
   color: var(--error);
-}
-/* ConversationView.tsx:397-414 — "jump to latest" pill, raised -> hover bg. */
-.jump-to-latest-btn {
-  background: var(--bg-raised);
-}
-.jump-to-latest-btn:hover {
-  background: var(--bg-hover);
 }

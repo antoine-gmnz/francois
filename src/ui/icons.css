@@ -1,0 +1,50 @@
+/* The Graphite icon set as CSS masks (src/ui/Icon.tsx, src/ui/StateIcon.tsx).
+   The component sets `--icon-src` to the exported Figma asset's URL (icons.ts
+   resolves it) and `--icon-size`; `.icon` paints `currentColor` through the mask,
+   so every glyph follows the theme. The files are emitted as same-origin assets
+   (vite.config.ts: assetsInlineLimit 0) because the CSP refuses data: images. */
+.icon,
+.state-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  width: var(--icon-size, 16px);
+  height: var(--icon-size, 16px);
+  background-color: currentColor;
+  -webkit-mask: var(--icon-src) center / contain no-repeat;
+  mask: var(--icon-src) center / contain no-repeat;
+}
+
+/* Session state glyphs (Figma "State" 125:7904). The colour is the state's own
+   token; Running is the spinner. */
+.state-icon--running {
+  color: var(--state-running);
+}
+.state-icon--approval {
+  color: var(--state-attention);
+}
+.state-icon--question {
+  color: var(--state-attention);
+}
+.state-icon--done {
+  color: var(--state-success);
+}
+.state-icon--failed {
+  color: var(--state-danger);
+}
+.state-icon--idle {
+  color: var(--state-idle);
+}
+.state-icon--pending {
+  color: var(--text-line-number);
+}
+/* Twelve discrete steps rather than a smooth spin: a continuous transform
+   repaints every frame under WebView2's software compositing (see the `pulse`
+   note at the top of styles.css). Paused while the window is hidden. */
+.state-icon--running {
+  animation: state-icon-spin 1.2s steps(12, end) infinite;
+}
+@keyframes state-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

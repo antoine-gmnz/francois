@@ -1,0 +1,208 @@
+/* Project scope picker — redesign "Graphite & Signal", Figma "24 · Sidebar /
+   Project scope picker" (134:4687; light 142:17085). A floating layer, so it
+   keeps its shadow. Placed at runtime (fixed left/top) under the scope chips. */
+
+.project-scope {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 304px;
+  max-height: calc(100vh - 24px);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-8);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  animation: dropIn 90ms ease-out;
+}
+
+/* ── search (134:4688) ── */
+.project-scope__search-wrap {
+  padding: var(--space-8);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.project-scope__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 30px;
+  padding: 0 var(--space-10);
+  background: var(--bg-rail);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+}
+.project-scope__search-icon {
+  color: var(--text-faint);
+}
+.project-scope__input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-ui);
+}
+.project-scope__input::placeholder {
+  color: var(--text-faint);
+}
+.project-scope__total {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+
+/* ── the list (134:4695) ── */
+.project-scope__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+}
+.project-scope__tier {
+  padding: var(--space-8) var(--space-10) var(--space-4);
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.project-scope__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 30px;
+  padding: 0 var(--space-4) 0 var(--space-10);
+  border-radius: var(--radius-4);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.project-scope__row--cursor {
+  background: var(--bg-selected);
+}
+.project-scope__state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+.project-scope__name {
+  min-width: 0;
+  font: var(--type-ui);
+}
+.project-scope__row--current .project-scope__name {
+  font: var(--type-ui-medium);
+}
+.project-scope__tag {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.project-scope__count {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+.project-scope__disclosure {
+  flex-shrink: 0;
+  color: var(--text-disabled);
+  font: var(--type-small);
+}
+.project-scope__pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-3);
+  background: transparent;
+  color: var(--text-disabled);
+  cursor: pointer;
+}
+.project-scope__pin:hover {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.project-scope__pin--on {
+  color: var(--text-secondary);
+}
+.project-scope__more {
+  padding: var(--space-4) var(--space-10) var(--space-2);
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.project-scope__empty {
+  padding: var(--space-12) var(--space-10);
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+
+/* ── row flyout: a project row's own sessions by name, opened on hover ── */
+.project-scope__flyout {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  background: var(--bg-popover);
+  box-shadow: var(--shadow-float);
+}
+.project-scope__flyout-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 28px;
+  padding: 0 var(--space-8);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-secondary);
+  font: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.project-scope__flyout-item:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.project-scope__flyout-name {
+  min-width: 0;
+}
+
+/* ── footer (134:4799) ── */
+.project-scope__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: var(--space-8) var(--space-12);
+  border-top: 1px solid var(--line-subtle);
+}
+.project-scope__manage {
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small);
+  text-align: left;
+  cursor: pointer;
+}
+.project-scope__manage:hover {
+  color: var(--text-primary);
+}
+.project-scope__keys {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}

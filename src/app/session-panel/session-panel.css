@@ -1,0 +1,59 @@
+/* The session panel shell (SessionPanel.tsx) — Figma "Session panel" 130:378:
+   300px, --bg-rail, a --line-subtle left edge, a 44px tab strip. Section bodies
+   and footers are styled by src/ui/SidePanel.tsx's classes (ui.css) plus their
+   own feature stylesheet. */
+.session-panel {
+  width: 300px;
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-rail);
+  border-left: 1px solid var(--line-subtle);
+}
+.session-panel__tabs {
+  height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-8);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.session-panel__spacer {
+  flex: 1;
+}
+.session-panel__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 28px;
+  padding: 0 var(--space-8);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.session-panel__tab:hover {
+  color: var(--text-primary);
+}
+.session-panel__tab--on,
+.session-panel__tab--on:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.session-panel__tab-label {
+  font: var(--type-small-medium);
+}
+.session-panel__tab-count {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.session-panel__tab--on .session-panel__tab-count {
+  color: var(--text-muted);
+}
+.session-panel__tab-count:empty {
+  display: none;
+}

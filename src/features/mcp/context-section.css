@@ -1,0 +1,135 @@
+/* The session panel's Context section (ContextSection.tsx) — redesign
+   "Graphite & Signal", Figma "18 · Panel / Context — MCP down" 134:4077 (light
+   142:15063). 30px rows 6px in from the rail edge; a danger-tinted banner per
+   MCP server that is down. Colour from theme tokens only. */
+
+/* ── the "is down" banner ── */
+.context-down-wrap {
+  padding: var(--space-12) var(--space-12) var(--space-2);
+}
+.context-down {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--tint-danger-line);
+  border-radius: var(--radius-6);
+  background: var(--tint-danger);
+}
+.context-down__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.context-down__icon {
+  display: inline-flex;
+  color: var(--state-danger);
+}
+.context-down__title {
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.context-down__name {
+  font: var(--type-mono-medium);
+}
+.context-down__body,
+.context-down__failed {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.context-down__failed {
+  color: var(--state-danger-text);
+}
+.context-down__actions {
+  display: flex;
+  gap: var(--space-6);
+}
+
+/* ── rows ── */
+.context-row-wrap {
+  padding: 0 var(--space-6);
+}
+.context-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 30px;
+  min-width: 0;
+  padding: 0 var(--space-8) 0 var(--space-10);
+  border-radius: var(--radius-4);
+  color: var(--text-muted);
+}
+.context-row--button {
+  cursor: pointer;
+}
+.context-row--button:hover {
+  background: var(--bg-raised);
+}
+.context-row__name {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-mono);
+  color: var(--text-primary);
+}
+.context-row__note {
+  flex-shrink: 0;
+  font: var(--type-small);
+  white-space: nowrap;
+}
+.context-row__note--faint {
+  color: var(--text-faint);
+}
+.context-row__note--danger {
+  color: var(--state-danger);
+}
+.context-row__note--attention {
+  color: var(--state-attention-text);
+}
+
+/* "+ Attach a server to this session" · "Browse 6 more · run one" */
+.context-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 26px;
+  padding: var(--space-2) var(--space-16) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small);
+  text-align: left;
+  cursor: pointer;
+}
+.context-link:hover {
+  color: var(--text-primary);
+}
+
+/* ── footer facts ── */
+.context-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+.context-fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  min-width: 0;
+  font: var(--type-small);
+}
+.context-fact__label {
+  flex: 1;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.context-fact__value {
+  min-width: 0;
+  color: var(--text-secondary);
+  text-align: right;
+}
+.context-fact__danger {
+  color: var(--state-danger);
+}

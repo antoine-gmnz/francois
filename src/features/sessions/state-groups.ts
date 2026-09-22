@@ -26,7 +26,7 @@ export type SessionState = 'attention' | 'running' | 'idle' | 'archived';
 export const STATE_ORDER: readonly SessionState[] = ['attention', 'running', 'idle', 'archived'];
 
 export const STATE_LABEL: Record<SessionState, string> = {
-  attention: 'waiting on you',
+  attention: 'needs you',
   running: 'running',
   idle: 'idle',
   archived: 'archived',

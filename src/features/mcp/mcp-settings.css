@@ -1,0 +1,131 @@
+/* Settings / MCP servers (Figma 23 · 140:7929, light 142:16828). Tokens only. */
+
+.mcps-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  max-width: 920px;
+}
+.mcps-page > .settings-header {
+  max-width: none;
+}
+
+/* Filters: the scope track, a spacer, the health summary. */
+.mcps-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+}
+.mcps-filters__spacer {
+  flex: 1;
+}
+.mcps-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text-muted);
+  font: var(--type-small);
+  white-space: nowrap;
+}
+
+/* The table: a --line-default frame, a --bg-rail head, --bg-canvas rows
+   separated by --line-subtle. Columns follow Figma's cell widths (the 44px
+   switch column is not drawn — see the page's header comment). */
+.mcps-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  overflow: hidden;
+}
+.mcps-row {
+  display: grid;
+  grid-template-columns: minmax(0, 250px) 90px 80px 70px minmax(0, 1fr) 92px;
+  align-items: center;
+  min-height: 56px;
+  padding: 0 var(--space-12) 0 var(--space-16);
+  border-top: 1px solid var(--line-subtle);
+  background: var(--bg-canvas);
+}
+.mcps-row--head {
+  min-height: 36px;
+  border-top: 0;
+  background: var(--bg-rail);
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.mcps-row--failed {
+  background: var(--tint-danger);
+}
+.mcps-row--off .mcps-server__name,
+.mcps-row--off .mcps-server__launch {
+  color: var(--text-faint);
+}
+.mcps-server {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-right: var(--space-12);
+}
+.mcps-server__name {
+  color: var(--text-primary);
+  font: var(--type-ui-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcps-server__launch {
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcps-mono {
+  color: var(--text-secondary);
+  font: var(--type-mono);
+}
+.mcps-mono--muted {
+  color: var(--text-muted);
+}
+.mcps-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  min-width: 0;
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+.mcps-status__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcps-status--danger {
+  color: var(--state-danger);
+}
+.mcps-status--attention {
+  color: var(--state-attention-text);
+}
+.mcps-status--faint {
+  color: var(--text-faint);
+}
+.mcps-action {
+  display: flex;
+  justify-content: flex-end;
+}
+.mcps-empty {
+  padding: var(--space-16);
+  border-top: 1px solid var(--line-subtle);
+  background: var(--bg-canvas);
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.mcps-error {
+  color: var(--state-danger-text);
+  font: var(--type-small);
+}

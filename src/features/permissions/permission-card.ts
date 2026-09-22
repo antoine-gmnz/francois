@@ -148,3 +148,68 @@ export async function submitDecision(a: DecideArgs): Promise<void> {
 export function hasPendingPermissionBlock(blocks: ConversationBlock[]): boolean {
   return blocks.some((b) => b.kind === 'permission' && b.state === 'pending');
 }
+
+// ---------- Graphite & Signal (Figma 04–08) ----------
+
+/** The button face for each offered decision (Figma 04 action row). */
+export function actionFace(decision: PermissionDecision): string {
+  switch (decision) {
+    case 'allowOnce':
+      return 'Allow once';
+    case 'allowAlways':
+      return 'Always allow';
+    case 'denyOnce':
+      return 'Deny';
+    case 'denyAlways':
+      return 'Always deny';
+    default:
+      return 'Cancel turn';
+  }
+}
+
+/**
+ * Figma 04: allow-once is the one Attention fill (it answers the blocked
+ * session), always-deny is the quiet ghost, everything else is outlined.
+ */
+export function actionButtonKind(decision: PermissionDecision): 'attention' | 'secondary' | 'ghost' {
+  if (decision === 'allowOnce') return 'attention';
+  if (decision === 'denyAlways') return 'ghost';
+  return 'secondary';
+}
+
+/**
+ * Figma 06–08: a resolved ask collapses to one outcome line. Whether the
+ * decision was "once" or "always" is read off the rule it wrote — FR-22 says a
+ * rule is present iff an always decision wrote one.
+ */
+export function outcomeLabel(state: PermissionState, rule?: PermissionRule): string {
+  switch (state) {
+    case 'allowed':
+      return rule !== undefined && rule.effect === 'allow' ? 'Always allowed' : 'Allowed once';
+    case 'denied':
+      return rule !== undefined && rule.effect === 'deny' ? 'Always denied' : 'Denied';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return '';
+  }
+}
+
+/** The state glyph on the card's head (pending) or its outcome line. */
+export function outcomeStateKind(state: PermissionState): 'approval' | 'done' | 'failed' | 'idle' {
+  switch (state) {
+    case 'allowed':
+      return 'done';
+    case 'denied':
+      return 'failed';
+    case 'cancelled':
+      return 'idle';
+    default:
+      return 'approval';
+  }
+}
+
+/** Figma 04: the end of "Always allow adds the rule … to this project." */
+export function rulePreviewScope(tier: PermissionTier): string {
+  return `to ${tierLabel(tier)}`;
+}

@@ -87,7 +87,7 @@ export default function SplitDivider({ axis, area }: SplitDividerProps) {
       tabIndex={0}
       title="Drag to resize · double-click to even out"
       className={
-        (axis === 'x' ? 'app-split-divider' : 'app-split-divider app-split-divider--y') +
+        (axis === 'x' ? 'app-split-divider split-divider' : 'app-split-divider app-split-divider--y split-divider') +
         (dragging ? ' app-split-divider--dragging' : '')
       }
       style={area}

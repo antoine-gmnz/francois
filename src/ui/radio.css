@@ -1,0 +1,20 @@
+/* Radio (src/ui/Radio.tsx) — Figma "Radio": 16px ring, 8px dot when on. */
+.radio {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+.radio--on {
+  border-color: currentColor;
+}
+.radio--on::after {
+  content: '';
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: currentColor;
+}

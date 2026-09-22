@@ -1,4 +1,3 @@
-import { Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isBusyStatus } from '../../../contract/fleet-board';
 import type { EditorId } from '../../../contract/open-in-vscode';
@@ -32,8 +31,9 @@ import { useRowCursorClamp } from './useRowCursorClamp';
 import { useSessionFleetSync } from './useSessionFleetSync';
 import { useSidebarKeyboard } from './useSidebarKeyboard';
 import { sessionIsRetired } from '../../lib/runtimeCapability';
-
-const ICON = { size: 13, strokeWidth: 1.75 } as const;
+import { Icon } from '../../ui/Icon';
+import { IconButton } from '../../ui/IconButton';
+import { ScopeChips } from './ScopeChips';
 
 /**
  * design 7a: the right column is dissolved into four destinations under the
@@ -45,10 +45,8 @@ const ICON = { size: 13, strokeWidth: 1.75 } as const;
  * clipped to "Age…" is worse than no icon at all.
  */
 const PANE_ROWS: readonly { pane: CountedPane; label: string; key: number }[] = [
-  { pane: 'agents', label: 'Agents', key: 3 },
   { pane: 'mcp', label: 'MCP', key: 4 },
   { pane: 'skills', label: 'Skills', key: 5 },
-  { pane: 'workflows', label: 'Flows', key: 6 },
 ];
 
 // pane [1] — the fleet board (Mission Control). Evolves the sessions-sidebar row
@@ -317,35 +315,36 @@ export default function Sidebar({ home }: { home: string }) {
           .join(' ')
       }
     >
-      {/* header — design 7a: title, a count pill, then the affordances the mock
-          puts on the right (search, adopt, new). Sentence-case title, not the
-          uppercase pane label: there is no longer a numbered pane grid to key
-          it into. */}
+      {/* header — redesign "Graphite & Signal" (Sidebar / Sessions 127:28): the
+          title, then search · adopt · new on the right, and under them the
+          project scope chips (which replace the title-bar project switcher). */}
       <div className="sidebar__header">
-        <span className={focused ? 'sidebar__title sidebar__title--focused' : 'sidebar__title'}>Sessions</span>
-        {/* projects FR-27: the count is post-filter — project scope AND '/' query. */}
-        <span className="sidebar__count">{inScope.length}</span>
-        <span className="app-flex-spacer" />
-        <span
-          className={sidebarFilter !== null ? 'sidebar__act sidebar__act--on' : 'sidebar__act'}
-          title="filter sessions · /"
-          onClick={() => {
-            setSidebarFilter(sidebarFilter === null ? '' : null);
-            setFocusedPane('sidebar');
-          }}
-        >
-          <Search {...ICON} />
-        </span>
-        {/* cloud-sessions FR-14: the adopt action, beside "new session". Quiet
-            next to the accent `+` — adopting is the rarer of the two starts. */}
-        <AdoptCloudButton />
-        <span
-          className="sidebar__act sidebar__act--accent"
-          title="new session · n"
-          onClick={() => useStore.getState().setNewSessionOpen(true)}
-        >
-          +
-        </span>
+        <div className="sidebar__title-row">
+          <span
+            className={focused ? 'sidebar__title sidebar__title--focused' : 'sidebar__title'}
+            // projects FR-27: the count is post-filter — project scope AND '/' query.
+            title={`${inScope.length} session${inScope.length === 1 ? '' : 's'} in view`}
+          >
+            Sessions
+          </span>
+          <IconButton
+            on={sidebarFilter !== null}
+            title="Filter sessions · /"
+            onClick={() => {
+              setSidebarFilter(sidebarFilter === null ? '' : null);
+              setFocusedPane('sidebar');
+            }}
+          >
+            <Icon name="search" size={14} />
+          </IconButton>
+          {/* cloud-sessions FR-14: the adopt action, beside "new session" — the
+              rarer of the two starts, so it stays quiet. */}
+          <AdoptCloudButton />
+          <IconButton title="New session · n" onClick={() => useStore.getState().setNewSessionOpen(true)}>
+            <Icon name="plus" size={15} />
+          </IconButton>
+        </div>
+        <ScopeChips home={home} />
       </div>
 
       {/* filter */}
@@ -399,6 +398,10 @@ export default function Sidebar({ home }: { home: string }) {
           usually read '—'. Same four destinations, same keys, one strip. */}
       <div className="sidebar__footer">
         <PaneRows />
+        <span className="app-flex-spacer" />
+        <IconButton size={24} title="Collapse the sidebar · [" onClick={() => useStore.getState().toggleLeftPane()}>
+          <Icon name="panel-left" size={14} />
+        </IconButton>
       </div>
 
       {/* context menu */}
@@ -474,6 +477,8 @@ function PaneRows() {
   const sessionId = useStore((s) => focusedSessionId(s));
   const counts = useStore((s) => (sessionId ? (s.panelCounts.get(sessionId) ?? EMPTY_PANEL_COUNTS) : EMPTY_PANEL_COUNTS));
   const runningAgents = useStore((s) => (sessionId ? (s.derived.get(sessionId)?.runningAgentCount ?? 0) : 0));
+  const profileCount = useStore((s) => s.profiles.length);
+  const setProfilesOpen = useStore((s) => s.setProfilesOpen);
 
   return (
     <>
@@ -512,6 +517,15 @@ function PaneRows() {
           </div>
         );
       })}
+      {/* redesign: session profiles sit on the same strip (the Profiles modal). */}
+      <div
+        className={profileCount === 0 ? 'roster-pane roster-pane--empty' : 'roster-pane'}
+        title={profileCount > 0 ? `Profiles · ${profileCount}` : 'Profiles'}
+        onClick={() => setProfilesOpen(true)}
+      >
+        <span className="roster-pane__label">Profiles</span>
+        {profileCount > 0 && <span className="roster-pane__count">{profileCount}</span>}
+      </div>
     </>
   );
 }

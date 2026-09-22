@@ -1,147 +1,143 @@
-/* command-palette overlay + toast host — static styling for PaletteView.tsx,
-   extracted off the inline `style={{}}` + local `const C` alias pattern.
+/* Command palette + toast host — redesign "Graphite & Signal", Figma
+   "10 · Command palette" (136:5213; light 142:12392).
    The overlay/panel are NOT built on src/ui/Modal: Modal's `closeOnEscape`
    defaults off, and this file's own keydown handler plus app-shell's
    capture-phase Escape/⌘K listener already own dismissal — layering Modal's
    click-based backdrop dismissal (vs. this component's mousedown-based one)
-   would be a behavior change, not a pure move. See the handoff. */
+   would be a behaviour change, not a restyle. */
 
 .palette-backdrop {
   position: fixed;
   inset: 0;
-  background: var(--backdrop);
+  background: var(--overlay-scrim);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 118px;
+  padding-top: 110px;
   z-index: 1000;
   animation: fadeIn 120ms ease-out;
 }
 .palette-panel {
-  width: min(588px, calc(100vw - 32px));
-  background: var(--bg-panel);
-  border: 1px solid var(--bg-hover-2);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  width: min(620px, calc(100vw - 32px));
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-10);
+  box-shadow: var(--shadow-overlay);
   overflow: hidden;
   animation: palettePop 120ms ease-out;
 }
 
-/* ── input row ── */
+/* ── input row (136:5214) ── */
 .palette-input-row {
   display: flex;
   align-items: center;
-  gap: var(--space-11);
-  padding: var(--space-14) var(--space-16);
-  background: var(--bg-deep);
+  gap: var(--space-10);
+  height: 52px;
+  padding: 0 var(--space-16);
+  border-bottom: 1px solid var(--line-subtle);
 }
-.palette-chevron {
-  color: var(--accent);
-  font-size: var(--font-size-15);
+.palette-input-row__icon {
+  color: var(--text-muted);
 }
 .palette-parent-pill {
-  font-size: var(--font-size-10);
-  color: var(--text-hint);
-  background: var(--bg-hover);
-  border-radius: var(--radius-xl);
-  padding: var(--space-1) var(--space-6);
   flex-shrink: 0;
-}
-.palette-input-wrap {
-  position: relative;
-  flex: 1;
-  display: flex;
-  align-items: center;
+  padding: 1px var(--space-6);
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font: var(--type-small);
 }
 .palette-input {
   flex: 1;
+  min-width: 0;
   border: none;
   outline: none;
-  padding: 0; /* text starts at left:0 so the block caret aligns with the mirror */
+  padding: 0;
   background: transparent;
-  font-family: inherit;
-  font-size: var(--font-size-14);
-  color: var(--text-strong);
-  caret-color: transparent;
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+  font: var(--type-body);
 }
-.palette-mirror {
-  position: absolute;
-  visibility: hidden;
-  white-space: pre;
-  font-family: inherit;
-  font-size: var(--font-size-14);
-  left: 0;
-}
-/* `--caret-x` is set inline per render (measured from the mirror) — the one
-   genuinely dynamic value in this row. */
-.palette-caret {
-  position: absolute;
-  left: var(--caret-x, 0px);
-  width: 8px;
-  height: 16px;
-  background: var(--accent);
-  animation: blink 1s step-end infinite;
-  pointer-events: none;
-}
-.palette-esc-hint {
-  font-size: var(--font-size-10);
+.palette-input::placeholder {
   color: var(--text-faint);
 }
+.palette-scope {
+  flex-shrink: 1;
+  max-width: 40%;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
 
-/* ── result list ── */
+/* ── results (136:5222) ── */
 .palette-list {
   padding: var(--space-6);
-  max-height: 336px;
+  max-height: 414px;
   overflow-y: auto;
 }
-.palette-empty {
-  padding: var(--space-10) var(--space-12);
-  font-size: var(--font-size-13);
+.palette-section-label {
+  padding: var(--space-8) var(--space-10) var(--space-4);
   color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.palette-empty {
+  padding: var(--space-16) var(--space-10);
+  color: var(--text-faint);
+  font: var(--type-ui);
   text-align: center;
 }
 
-/* Row: built on src/ui/ListRow for the selected/transparent background
-   structure, with the selected color pinned back to --bg-hover (ListRow's
-   own `.list-row--selected` uses --bg-raised, a different token — this
-   override keeps the palette's original color exactly). */
 .palette-row {
-  gap: var(--space-12);
-  padding: var(--space-10) var(--space-12);
-  border-radius: var(--radius-md);
+  gap: var(--space-10);
+  height: 36px;
+  padding: 0 var(--space-10);
+  border-radius: var(--radius-5);
+  cursor: pointer;
 }
 .palette-row.list-row--selected {
-  background: var(--bg-hover);
+  background: var(--bg-selected);
 }
-.palette-row-glyph {
-  width: var(--space-16);
-  text-align: center;
-  font-size: var(--font-size-12);
-  color: var(--text-dim);
+.palette-row__icon {
+  color: var(--text-muted);
+}
+.palette-row__name {
   flex-shrink: 0;
+  max-width: 60%;
+  color: var(--text-secondary);
+  font: var(--type-ui);
 }
-.palette-row.list-row--selected .palette-row-glyph {
-  color: var(--accent);
+.palette-row.list-row--selected .palette-row__icon,
+.palette-row.list-row--selected .palette-row__name {
+  color: var(--text-primary);
 }
-.palette-row-name {
-  font-size: var(--font-size-13);
-  color: var(--text);
-  flex-shrink: 0;
-}
-.palette-row.list-row--selected .palette-row-name {
-  color: var(--text-bright);
-}
-.palette-row-hint {
-  font-size: var(--font-size-11);
-  color: var(--text-faint);
+.palette-row__hint {
   flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
   text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-/* ── toasts (FR-24/FR-25) ── */
+/* ── footer (136:5293) ── */
+.palette-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+  padding: var(--space-8) var(--space-14);
+  border-top: 1px solid var(--line-subtle);
+}
+.palette-footer__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+
+/* ── toasts (FR-24/FR-25) — a floating layer, so it keeps its shadow ── */
 .palette-toast-host {
   position: fixed;
   bottom: 48px;
@@ -159,30 +155,31 @@
   display: flex;
   align-items: center;
   gap: var(--space-10);
-  background: var(--bg-elevated);
-  border-radius: var(--radius-lg);
-  padding: var(--space-10) var(--space-16);
-  font-size: var(--font-size-12);
-  color: var(--text-bright);
-  box-shadow: var(--shadow-modal);
+  max-width: min(520px, calc(100vw - 40px));
+  padding: var(--space-10) var(--space-14);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font: var(--type-ui);
   cursor: pointer;
   animation: toastIn 140ms ease-out;
-  max-width: min(520px, calc(100vw - 40px));
 }
-/* `--toast-color`/`--toast-border` are set inline per toast kind (error /
-   info / success) — the genuinely dynamic part of the glyph. */
-.palette-toast-glyph {
-  width: var(--space-12);
-  text-align: center;
-  font-size: var(--font-size-11);
-  color: var(--toast-color);
-  border: var(--toast-border);
-  border-radius: 50%;
-  line-height: 14px;
-  height: var(--space-14);
-  box-sizing: content-box;
+.palette-toast__icon {
+  color: var(--text-muted);
 }
-.palette-toast-message {
+.palette-toast--error {
+  background: color-mix(in srgb, var(--state-danger) 8%, var(--bg-popover));
+  border-color: var(--tint-danger-line);
+}
+.palette-toast--error .palette-toast__icon {
+  color: var(--state-danger-text);
+}
+.palette-toast--success .palette-toast__icon {
+  color: var(--state-success-text);
+}
+.palette-toast__message {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

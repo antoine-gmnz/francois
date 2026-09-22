@@ -1,0 +1,93 @@
+/* Loaded from main.tsx ahead of styles.css. */
+/* ── Self-hosted fonts (webview-hardening FR-1/FR-2) ─────────────────────────
+   Redesign "Graphite & Signal": Geist is the UI face, Geist Mono the code /
+   figure / path face. 9 committed woff2 files in src/assets/fonts/, taken from
+   the @fontsource/geist-sans + @fontsource/geist-mono packages (OFL — see
+   Geist-OFL.txt). Geist Sans ships a single `latin` subset upstream, so it has no
+   unicode-range; Geist Mono is split into `latin` + `latin-ext` exactly as
+   fontsource publishes it (ranges copied verbatim — do not hand-edit). No
+   runtime network fetch: the CSP's `font-src 'self'` would refuse one anyway.
+   `font-display: block` hides text briefly rather than flashing a fallback face
+   for a LOCAL asset, and lets a missing file fall through to the system chain.
+   Geist Mono 700 exists only because xterm requests `fontWeightBold: '700'`
+   directly — it is outside the --font-* token system, which tops out at 600. */
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./geist-sans-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('./geist-sans-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url('./geist-sans-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./geist-mono-latin-ext-400-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./geist-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('./geist-mono-latin-ext-500-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('./geist-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  /* keyword, not the numeric literal — this face is outside the token system
+     (xterm's bold), and `bold` is numerically identical. */
+  font-weight: bold;
+  font-display: block;
+  src: url('./geist-mono-latin-ext-700-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: bold;
+  font-display: block;
+  src: url('./geist-mono-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

@@ -1,0 +1,39 @@
+/* The Settings view (SettingsView.tsx; Figma "Body" 140:7635): a 256px nav on
+   --bg-rail, then the page on the canvas. Flush, no card — the tonal step and
+   the one --line-subtle rule are the separation. */
+
+.settings-view {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 256px minmax(0, 1fr);
+  background: var(--bg-canvas);
+}
+.settings-view__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-20) var(--space-10);
+  border-right: 1px solid var(--line-subtle);
+  background: var(--bg-rail);
+}
+.settings-view__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 36px 56px;
+}
+.settings-view__page {
+  max-width: 1072px;
+}
+
+@media (max-width: 960px) {
+  .settings-view {
+    grid-template-columns: 208px minmax(0, 1fr);
+  }
+  .settings-view__content {
+    padding: var(--space-28) var(--space-24);
+  }
+}

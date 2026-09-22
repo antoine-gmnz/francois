@@ -1,0 +1,147 @@
+/* The app bar (AppBar.tsx) — redesign "Graphite & Signal", Figma "App bar"
+   126:158. 48px, --bg-canvas, a --line-subtle bottom edge, 20px between groups.
+   Fixed height in every state so nothing below it ever reflows. */
+.app-bar {
+  height: 48px;
+  flex: 0 0 48px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-20);
+  padding: 0 var(--space-14);
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.app-bar__brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+.app-bar__wordmark {
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+}
+.app-bar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.app-bar__nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 30px;
+  padding: 0 var(--space-11);
+  border: 0;
+  border-radius: var(--radius-5);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-ui);
+  cursor: pointer;
+}
+.app-bar__nav-item:hover {
+  color: var(--text-primary);
+}
+.app-bar__nav-item--on,
+.app-bar__nav-item--on:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+/* The attention count on Overview — violet, because it counts sessions blocked on you. */
+.app-bar__badge {
+  padding: 0 5px;
+  border-radius: var(--radius-3);
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+  font: var(--type-mono-small);
+}
+.app-bar__badge:hover {
+  background: var(--state-attention);
+  color: var(--state-attention-on);
+}
+.app-bar__spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* The command search — a button that opens the palette, drawn as a field. */
+.app-bar__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  flex: 0 1 440px;
+  min-width: 160px;
+  height: 30px;
+  padding: 0 var(--space-10);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  background: var(--bg-input);
+  color: var(--text-faint);
+  font: var(--type-ui);
+  text-align: left;
+  cursor: text;
+}
+.app-bar__search:hover {
+  border-color: var(--line-default);
+}
+.app-bar__search-text {
+  flex: 1;
+  min-width: 0;
+}
+.app-bar__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.app-bar__avatar {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  background: var(--bg-strong);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.app-bar__avatar:hover {
+  background: var(--bg-selected);
+}
+/* NEEDS LOGIN — an attention ring (the title also says it in words). */
+.app-bar__avatar--alert {
+  box-shadow: 0 0 0 1.5px var(--state-attention);
+}
+
+/* Below ~1120px the bar sheds the least useful pieces first: the search field's
+   copy (the ⌘K keycap still says what it is), then the plan meters' trailing
+   freshness readout. */
+@media (max-width: 1120px) {
+  .app-bar {
+    gap: var(--space-12);
+  }
+  .app-bar__search {
+    flex-basis: 220px;
+  }
+  .app-bar .usage-fresh {
+    display: none;
+  }
+}
+@media (max-width: 840px) {
+  .app-bar__search-text {
+    display: none;
+  }
+  .app-bar__search {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  .app-bar__wordmark {
+    display: none;
+  }
+}

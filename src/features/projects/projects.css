@@ -12,7 +12,7 @@
 .pj-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -77,12 +77,6 @@
   font-size: var(--font-size-11);
   color: var(--text-faint);
 }
-.pj-list-error {
-  padding: var(--space-6) var(--space-12);
-  font-size: var(--font-size-10-5);
-  color: var(--error);
-  flex-shrink: 0;
-}
 .pj-project-row {
   height: 44px;
   display: flex;
@@ -127,9 +121,6 @@
   flex-direction: column;
   margin-top: var(--space-10);
   flex-shrink: 0;
-}
-.pj-groups-label {
-  padding: var(--space-10) var(--space-12) var(--space-4);
 }
 .pj-group-row {
   height: 32px;
@@ -198,12 +189,6 @@
   display: flex;
   align-items: center;
 }
-.pj-row-label {
-  width: 120px;
-  flex-shrink: 0;
-  font-size: var(--font-size-10-5);
-  color: var(--text-muted);
-}
 .pj-input {
   flex: 1;
   min-width: 0;
@@ -216,24 +201,15 @@
   font-family: inherit;
   outline: none;
 }
-.pj-input--unset {
-  color: var(--text-faint);
-}
 .pj-textarea {
   flex: none;
   min-height: 64px;
   resize: vertical;
   line-height: 1.6;
 }
-.pj-rule-input {
-  flex: none;
-}
 .pj-inline-error {
   font-size: var(--font-size-10-5);
   color: var(--error);
-}
-.pj-inline-error--indented {
-  padding-left: 120px;
 }
 .pj-rules {
   display: flex;
@@ -290,135 +266,4 @@
   gap: var(--space-2);
   font-size: var(--font-size-10);
   color: var(--text-faint);
-}
-.pj-missing-tag {
-  font-size: var(--font-size-9);
-  color: var(--error);
-  flex-shrink: 0;
-}
-
-/* ── title-bar switcher toggle (titlebar-project-switcher FR-1/FR-14) ──────
-   Re-sited from usage.css: this is the app's only project control, mounted
-   inside UsageBar's `.titlebar-brand` cluster (ProjectSwitcher.tsx). Class
-   names kept from design-refresh FR-4 so its earlier references still resolve. */
-.titlebar-path-wrap {
-  position: relative;
-  display: flex;
-  min-width: 0;
-}
-/* A real button, per the mock: 24px tall, --bg-hover fill inside a
-   --border-emphasis outline. */
-.titlebar-path {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  height: 24px;
-  min-width: 0;
-  max-width: 320px;
-  background: var(--bg-hover);
-  border: 0;
-  padding: 0 var(--space-9);
-  border-radius: var(--radius-base);
-  cursor: pointer;
-  font-family: inherit;
-}
-.titlebar-path--hover {
-  background: var(--bg-hover-2);
-}
-.titlebar-path-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-/* FR-5: the only always-visible signal a scoped project's checkout is gone. */
-.titlebar-path-dot--ok {
-  background: var(--success);
-}
-.titlebar-path-dot--missing {
-  background: var(--error);
-}
-.titlebar-path-dot--none {
-  background: var(--text-muted);
-}
-/* FR-15: it names a project now, not a path — --font-ui, not --font-mono. */
-.titlebar-path-text {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-11);
-  color: var(--text-2);
-}
-.titlebar-path-caret {
-  font-size: var(--font-size-9);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-/* ── ProjectMenu (the shared "All projects | <name> | Manage projects…" dropdown) ── */
-.pjsw-dropdown {
-  position: absolute;
-  top: 100%;
-  /* FR-9: anchored under the toggle and sized to its own content — it no
-     longer stretches `left: 0; right: 0` across a 26px sidebar strip. */
-  left: 0;
-  min-width: 260px;
-  max-width: 420px;
-  margin-top: var(--space-4);
-  z-index: 40;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-md);
-  padding: var(--space-4) 0;
-  animation: dropIn 90ms ease-out;
-}
-.pjsw-listbox {
-  max-height: 260px;
-  /* Vertical scroll only — a row must never widen the panel and mint a
-     horizontal scrollbar; long names and roots ellipsize in place. */
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-.pjsw-row {
-  height: 24px;
-  gap: var(--space-7);
-  padding: 0 var(--space-12);
-  display: flex;
-  align-items: center;
-}
-.pjsw-row.list-row--hovered {
-  background: var(--bg-hover);
-}
-.pjsw-row-mark {
-  width: 8px;
-  flex-shrink: 0;
-  font-size: var(--font-size-9);
-  color: var(--accent);
-}
-.pjsw-row-name {
-  /* The NAME is the primary information: it takes the slack and is the
-     last thing to be truncated. `min-width: 0` is what actually lets it
-     ellipsize instead of collapsing. */
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--font-size-11);
-  color: var(--text);
-}
-.pjsw-row-name--missing {
-  color: var(--text-muted);
-}
-.pjsw-row-root {
-  /* The root is secondary: it shrinks and ellipsizes first, and is capped
-     so a deep path can never crowd out the name. */
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 52%;
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
-  text-align: right;
-}
-.pjsw-divider {
-  margin: var(--space-8) 0 0;
-}
-.pjsw-manage-label {
-  font-size: var(--font-size-11);
-  color: var(--text-dim);
 }

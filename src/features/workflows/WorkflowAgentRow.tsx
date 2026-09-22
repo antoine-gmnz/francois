@@ -7,15 +7,15 @@
 import { useRef } from 'react';
 import { formatElapsed } from '../../../contract/conversation-view';
 import type { WorkflowAgentInfo } from '../../../contract/workflow-details';
-import { StatusDot } from '../../ui/StatusDot';
+import { StateIcon } from '../../ui/StateIcon';
 import {
   agentElapsedMs,
-  agentStatusColor,
   formatTokens,
   resultPreview,
   spanBar,
   spanFillColor,
   sumTokens,
+  workflowStateKind,
 } from './workflow-detail';
 import './workflow-detail.css';
 
@@ -29,7 +29,6 @@ export interface WorkflowAgentRowProps {
 }
 
 export default function WorkflowAgentRow({ agent, run, now, selected, onSelect }: WorkflowAgentRowProps) {
-  const color = agentStatusColor(agent.status);
   const waiting = agent.status === 'waiting';
 
   // §2b: the bar keeps its live fill while waiting but must stop extending.
@@ -51,8 +50,8 @@ export default function WorkflowAgentRow({ agent, run, now, selected, onSelect }
       className={selected ? 'wfd-agent wfd-agent--selected' : 'wfd-agent'}
     >
       <div className="wfd-agent__head">
-        {/* waiting is stalled, not working — the dot stops pulsing (§2b) */}
-        <StatusDot color={color} size={7} pulsing={agent.status === 'running'} />
+        {/* waiting is stalled, not working — it takes the attention glyph, not the spinner (§2b) */}
+        <StateIcon kind={workflowStateKind(agent.status)} size={13} />
         <span className="wfd-agent__type truncate">{agent.agentType}</span>
         {agent.model && <span className="wfd-agent__model">{agent.model}</span>}
         <span className="wfd-agent__spacer" />

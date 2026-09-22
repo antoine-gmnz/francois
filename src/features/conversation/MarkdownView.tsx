@@ -3,7 +3,7 @@ import { parseInline, parseMarkdown, type MdBlock, type MdInline, type TableAlig
 import './conversation.css';
 
 // Renders the Markdown AST with the terminal palette. The whole app is set in
-// JetBrains Mono, so code is set apart by a panel/background rather than a font
+// Geist Mono, so code is set apart by a panel/background rather than a font
 // switch. Links are shown styled but do NOT navigate the webview (no opener
 // plugin is wired) — the full URL rides in the title tooltip.
 

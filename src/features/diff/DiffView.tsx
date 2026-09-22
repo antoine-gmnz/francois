@@ -1,10 +1,13 @@
 import { useCallback, useRef, useState } from 'react';
-import type { DiffSummary } from '../../../contract/diff-view';
+import type { DiffFileSummary, DiffSummary } from '../../../contract/diff-view';
 import { diffCommit, diffStageAll } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { Button } from '../../ui/Button';
+import { Meter } from '../../ui/Meter';
 import { IS_WINDOWS } from '../../lib/platform';
 import { siblingWorktreeSummaryLine } from '../sessions/worktree';
 import { DiffListBody } from './DiffListBody';
+import { reviewProgress, useDiffReviewStore, useReviewMarks, type ReviewProgress } from './review-state';
 import { useDiffFeed } from './useDiffFeed';
 import { useDiffKeyboard } from './useDiffKeyboard';
 import { useDiffNavigator } from './useDiffNavigator';
@@ -130,12 +133,36 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
     onCursorEnter: navigator.onCursorEnter,
   });
 
+  // "Mark reviewed" (review-state.ts): in-memory, per session.
+  const reviewMarks = useReviewMarks(sessionId);
+  const toggleReviewedFile = useCallback((file: DiffFileSummary) => useDiffReviewStore.getState().toggle(sessionId, file), [sessionId]);
+  const progress = reviewProgress(files, reviewMarks);
+
   // ---------- render ----------
 
   return (
     <div className="diff-view">
+      {/* review bar (Figma 135:5161) — hidden entirely for a non-repo (nothing actionable) */}
+      {!notRepo && (
+        <ReviewBar
+          summary={summary}
+          progress={progress}
+          commit={commit}
+          setMessage={(m) => setCommit((c) => ({ ...c, message: m }))}
+          onCommit={doCommit}
+          onCancel={closeCommit}
+          onStage={stageAll}
+          onOpenCommit={openCommit}
+          inputRef={commitInputRef}
+          stageInert={requestBusy || files.length === 0}
+          commitInert={requestBusy || selectedCount === 0}
+          selectedCount={selectedCount}
+          totalFiles={files.length}
+          hiddenChecked={navigator.hiddenChecked}
+        />
+      )}
       {/* session-worktree FR-15: read-only — no links, no buttons, no hover affordance.
-          design brief §Notes: a truncated value always carries its full text in a title. */}
+          A truncated value always carries its full text in a title. */}
       {siblingLine && (
         <div className="diff-sibling-line" title={siblingLine}>
           {siblingLine}
@@ -158,31 +185,16 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
         onSelectPath={setSelectedPath}
         onToggleFile={toggleFile}
         onToggleAll={toggleAll}
+        reviewMarks={reviewMarks}
+        onToggleReviewed={toggleReviewedFile}
       />
-
-      {/* footer / commit bar — hidden entirely for a non-repo (nothing actionable) */}
-      {!notRepo && (
-        <Footer
-          summary={summary}
-          commit={commit}
-          setMessage={(m) => setCommit((c) => ({ ...c, message: m }))}
-          onCommit={doCommit}
-          onCancel={closeCommit}
-          onStage={stageAll}
-          onOpenCommit={openCommit}
-          inputRef={commitInputRef}
-          stageInert={requestBusy || files.length === 0}
-          commitInert={requestBusy || selectedCount === 0}
-          selectedCount={selectedCount}
-          hiddenChecked={navigator.hiddenChecked}
-        />
-      )}
     </div>
   );
 }
 
-function Footer({
+function ReviewBar({
   summary,
+  progress,
   commit,
   setMessage,
   onCommit,
@@ -193,9 +205,11 @@ function Footer({
   stageInert,
   commitInert,
   selectedCount,
+  totalFiles,
   hiddenChecked,
 }: {
   summary: DiffSummary | null;
+  progress: ReviewProgress;
   commit: CommitState;
   setMessage: (m: string) => void;
   onCommit: () => void;
@@ -206,51 +220,67 @@ function Footer({
   stageInert: boolean;
   commitInert: boolean;
   selectedCount: number;
+  totalFiles: number;
   hiddenChecked: number;
 }) {
   const totalAdd = summary?.totalAdd ?? 0;
   const totalDel = summary?.totalDel ?? 0;
   const nFiles = summary?.files.length ?? 0;
+  // "Commit…" commits the files ticked in the tree; say how many when it is not all of them.
+  const commitLabel = selectedCount > 0 && selectedCount < totalFiles ? `Commit ${selectedCount}…` : 'Commit…';
 
   return (
-    <div className="diff-footer">
-      <span>
+    <div className="diff-review-bar">
+      <span className="diff-review-bar__stat">
         <span className="diff-color-add">+{totalAdd}</span> <span className="diff-color-del">−{totalDel}</span>
-        <span> across {nFiles} files</span>
       </span>
-      <span className="diff-footer__spacer" />
+      <span className="diff-review-bar__count">
+        {nFiles} {nFiles === 1 ? 'file' : 'files'} · {progress.reviewed} reviewed
+      </span>
+      {nFiles > 0 && (
+        <Meter
+          fraction={progress.fraction}
+          width={120}
+          className="diff-review-bar__meter"
+          title={`${progress.reviewed} of ${progress.total} files reviewed`}
+        />
+      )}
+      {/* diff-navigator FR-26: a statement, not an alarm — nothing is blocked. */}
+      {hiddenChecked > 0 && <span className="diff-review-bar__hidden">{hiddenChecked} in commit but hidden by the filter</span>}
+      <span className="diff-review-bar__spacer" />
 
       {commit.open ? (
         commit.success ? (
-          <span className="diff-color-add">committed {commit.success}</span>
+          <span className="diff-review-bar__committed">Committed {commit.success}</span>
         ) : (
           <div className="diff-commit-form">
             <div className="diff-commit-row">
-              <span className="diff-commit-prompt">›</span>
               <input
                 ref={inputRef}
                 className="diff-commit-input"
                 value={commit.message}
-                placeholder="commit message…"
+                placeholder="Commit message"
+                aria-label="Commit message"
                 onChange={(e) => setMessage(e.target.value)}
-                style={{ color: commit.message ? 'var(--text-bright)' : 'var(--text-faint)' }}
               />
-              <span onClick={onCommit} className="diff-commit-action">⏎ commit</span>
-              <span onClick={onCancel} className="diff-commit-action">esc cancel</span>
+              <Button variant="ghost" onClick={onCancel} shortcut="esc">
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={onCommit} disabled={commit.message.trim() === ''} shortcut="⏎">
+                Commit
+              </Button>
             </div>
             {commit.error && <span className="diff-commit-error">{commit.error}</span>}
           </div>
         )
       ) : (
         <>
-          <span onClick={() => !stageInert && onStage()} className={`diff-footer__hint${stageInert ? ' diff-footer__hint--inert' : ''}`}>
-            [s] stage all
-          </span>
-          <span onClick={() => !commitInert && onOpenCommit()} className={`diff-footer__hint${commitInert ? ' diff-footer__hint--inert' : ''}`}>
-            [c] commit {selectedCount > 0 ? `${selectedCount} ` : ''}…
-          </span>
-          {/* diff-navigator FR-26: a statement, not an alarm — nothing is blocked. */}
-          {hiddenChecked > 0 && <span className="diff-footer__hidden-warn">· {hiddenChecked} hidden by filter</span>}
+          <Button onClick={onStage} disabled={stageInert} title="Stage all  [s]">
+            Stage all
+          </Button>
+          <Button variant="primary" onClick={onOpenCommit} disabled={commitInert} title="Commit the files ticked in the tree  [c]">
+            {commitLabel}
+          </Button>
         </>
       )}
     </div>

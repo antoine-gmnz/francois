@@ -1,4 +1,4 @@
-// projects — ProjectsModal's STANDARDS group: notes + the rule list, written
+// projects — the project settings' Standards tab: notes + the rule list, written
 // into <root>/CLAUDE.md's managed block. Disabled until the on-disk read
 // lands (an interactive editor rendering from an empty fallback invites a
 // commit that would overwrite the real block). Split out of ProjectsModal's
@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { MAX_RULES } from '../../../contract/projects';
 import { Action } from '../../ui/Action';
+import { SettingsField } from '../../ui/Settings';
 import { InlineError } from './InlineError';
 import { STANDARDS_FOOTER_NOTE, addRule, dropRule, moveRule, replaceRule, standardsFooterPath } from './projects';
 
@@ -44,41 +45,45 @@ export function StandardsSection({
   disabled: boolean;
 }) {
   return (
-    <div className={disabled ? 'pj-group is-disabled' : 'pj-group'}>
-      <span className="pj-group-label">STANDARDS</span>
-      <textarea
-        value={notes}
-        placeholder="notes for every session in this project…"
-        onChange={(e) => onNotesChange(e.target.value)}
-        onBlur={onNotesCommit}
-        className="pj-input pj-textarea"
-      />
+    <div className={disabled ? 'pj-form is-disabled' : 'pj-form'}>
+      <SettingsField label="Notes">
+        <textarea
+          value={notes}
+          placeholder="Notes for every session in this project…"
+          onChange={(e) => onNotesChange(e.target.value)}
+          onBlur={onNotesCommit}
+          className="settings-input"
+        />
+      </SettingsField>
 
-      <div className="pj-rules">
-        {rules.map((text, i) => (
-          <RuleRow
-            key={`${i}-${text}`}
-            text={text}
-            editing={editIndex === i}
-            draft={editDraft}
-            onDraft={setEditDraft}
-            onEdit={() => {
-              setEditIndex(i);
-              setEditDraft(text);
-            }}
-            onCommit={() => {
-              setEditIndex(-1);
-              onCommitRules(replaceRule(rules, i, editDraft));
-            }}
-            onUp={() => onCommitRules(moveRule(rules, i, -1))}
-            onDown={() => onCommitRules(moveRule(rules, i, 1))}
-            onDrop={() => onCommitRules(dropRule(rules, i))}
-          />
-        ))}
-        {rules.length === 0 && <span className="pj-rules-empty">no rules yet</span>}
+      <div className="settings-field">
+        <span className="settings-field__label">Rules</span>
+        <div className="pj-rules">
+          {rules.map((text, i) => (
+            <RuleRow
+              key={`${i}-${text}`}
+              text={text}
+              editing={editIndex === i}
+              draft={editDraft}
+              onDraft={setEditDraft}
+              onEdit={() => {
+                setEditIndex(i);
+                setEditDraft(text);
+              }}
+              onCommit={() => {
+                setEditIndex(-1);
+                onCommitRules(replaceRule(rules, i, editDraft));
+              }}
+              onUp={() => onCommitRules(moveRule(rules, i, -1))}
+              onDown={() => onCommitRules(moveRule(rules, i, 1))}
+              onDrop={() => onCommitRules(dropRule(rules, i))}
+            />
+          ))}
+          {rules.length === 0 && <span className="pj-rules-empty">No rules yet.</span>}
+        </div>
         <input
           value={newRule}
-          placeholder="add a rule…"
+          placeholder="Add a rule and press Enter…"
           onChange={(e) => setNewRule(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== 'Enter') return;
@@ -94,7 +99,7 @@ export function StandardsSection({
             setNewRule('');
             onCommitRules(next);
           }}
-          className="pj-input pj-rule-input"
+          className="settings-input"
         />
       </div>
 
@@ -160,13 +165,13 @@ function RuleRow({
         className="pj-rule-actions"
         style={{ opacity: showActions ? 1 : 0, pointerEvents: showActions ? 'auto' : 'none' }}
       >
-        <Action color="var(--text-faint)" hoverColor="var(--accent)" onClick={onUp} title="move rule up" size={10}>
+        <Action color="var(--text-faint)" hoverColor="var(--text-primary)" onClick={onUp} title="move rule up" size={10}>
           ↑
         </Action>
-        <Action color="var(--text-faint)" hoverColor="var(--accent)" onClick={onDown} title="move rule down" size={10}>
+        <Action color="var(--text-faint)" hoverColor="var(--text-primary)" onClick={onDown} title="move rule down" size={10}>
           ↓
         </Action>
-        <Action color="var(--text-faint)" hoverColor="var(--error)" onClick={onDrop} title="remove rule" size={10}>
+        <Action color="var(--text-faint)" hoverColor="var(--state-danger)" onClick={onDrop} title="remove rule" size={10}>
           ×
         </Action>
       </span>

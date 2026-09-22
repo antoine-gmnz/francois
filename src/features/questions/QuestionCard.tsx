@@ -1,33 +1,40 @@
 import { questionAnswerKey } from '../../lib/question-answers';
 import { requestReplyAvailable, requestReplyPending, submitRequestReply } from '../../lib/request-replies';
 import { useStore } from '../../lib/store';
-// session-questions — question card renderer for the SESSION transcript
-// (spec §8 design brief, redrawn to design turn 13c "keep the table, fix the
-// table"). All submit/selection logic is pure in ./question-card
-// (unit-tested); this file is DOM assembly + card-local UI state (picks,
-// free-text drafts, hover, in-flight flag). Styling lives in ./questions.css.
+// session-questions — question card renderer for the SESSION transcript, drawn
+// to Graphite & Signal (Figma 02 "Question / Pending", 03 "Question / Answered").
+// A pending card shows ONE question at a time — head (`Question · 1 of 2` +
+// Accept recommended), the question as a title, the options as full-width rows
+// with a radio/checkbox and a keycap, the always-open "Something else" field,
+// and a footer with the Answer button. An answered card collapses to one
+// record per question. All selection/submit logic is pure in ./question-card
+// (unit-tested); this file is DOM assembly + card-local UI state.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { QuestionOption, SessionQuestion } from '../../../contract/common';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
 import { sessionAnswerQuestion } from '../../lib/api';
+import { focusedSessionId } from '../../lib/layoutStore';
+import { Button } from '../../ui/Button';
+import { Kbd } from '../../ui/Kbd';
+import { StateIcon } from '../../ui/StateIcon';
 import { InlineMarkdown } from '../conversation/MarkdownView';
 import {
     acceptRecommended,
+    advanceStep,
     allComplete,
-    answeredCount,
-    answeredSelection,
+    answerSummary,
     buildAnswers,
-    commitFreeText,
     currentSection,
     displayLabel,
-    hasMultiSelect,
-    initSelections,
+    initialSelections,
     isRecommended,
+    isRecommendedSelection,
     pickOption,
+    questionHeading,
     recommendedCount,
-    sectionOrdinal,
-    shouldAutoSubmit,
+    sectionComplete,
+    setFreeText,
     submitAnswers,
     type SectionSelection,
 } from './question-card';
@@ -40,352 +47,322 @@ export default function QuestionCard({
   b: QuestionConversationBlock;
   sessionId: string;
 }) {
-  const [sel, setSel] = useState<SectionSelection[]>(() => initSelections(block.questions));
+  if (block.state !== 'pending') return <ResolvedQuestion block={block} />;
+  return <PendingQuestion block={block} sessionId={sessionId} />;
+}
+
+// ---------- answered / cancelled (Figma 03) ----------
+
+function ResolvedQuestion({ block }: { block: QuestionConversationBlock }) {
+  const cancelled = block.state === 'cancelled';
+  return (
+    <div className={'qdone' + (cancelled ? ' qdone--cancelled' : '')}>
+      {block.questions.map((q, i) => {
+        // FR-19: the record is rebuilt from the persisted answer string, so it
+        // survives hydration with no card-local state.
+        const summary = cancelled ? null : answerSummary(q, block.answers?.[questionAnswerKey(q)]);
+        return (
+          <div key={q.id ?? i} className="qdone__item">
+            <div className="qdone__head">
+              <StateIcon kind={cancelled ? 'idle' : 'done'} size={14} className="qdone__glyph" />
+              <span className="qdone__q">
+                <InlineMarkdown text={q.question} />
+              </span>
+              {i === 0 && <span className="qdone__meta">{cancelled ? 'cancelled' : 'answered'}</span>}
+            </div>
+            {summary !== null && summary.text !== '' && (
+              <div className="qdone__answer">
+                <span className="qdone__value">{summary.text}</span>
+                {summary.recommended && <span className="qdone__note">· recommended</span>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- pending (Figma 02) ----------
+
+function PendingQuestion({ block, sessionId }: { block: QuestionConversationBlock; sessionId: string }) {
+  const [sel, setSel] = useState<SectionSelection[]>(() => initialSelections(block.questions));
+  const [step, setStep] = useState(0);
   const [inFlight, setInFlight] = useState(false);
-  const [otherOpen, setOtherOpen] = useState<Record<number, boolean>>({});
-  const [drafts, setDrafts] = useState<Record<number, string>>({});
-  const [hovered, setHovered] = useState<Record<number, string | null>>({});
+  const [hovered, setHovered] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const otherRef = useRef<HTMLInputElement>(null);
 
   // FR-21 race check: the failure path must not re-enable a card an event
   // already resolved. Ref, so the async submit sees the CURRENT block state.
-  const resolvedRef = useRef(block.state !== 'pending');
-  resolvedRef.current = block.state !== 'pending' || !requestReplyPending(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId);
+  const resolvedRef = useRef(false);
+  resolvedRef.current = !requestReplyPending(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId);
 
   const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId));
   const writable = requestReplyPending(meta, block.blockId);
-  const hasSecrets = block.questions.some(q => q.isSecret);
+  const hasSecrets = block.questions.some((q) => q.isSecret);
   useEffect(() => {
-    if (hasSecrets && (!writable || block.state !== 'pending')) {
-      setDrafts({});
-      setSel(initSelections(block.questions));
-    }
-  }, [hasSecrets, writable, block.state, block.questions]);
-  const interactive = writable && block.state === 'pending' && !inFlight;
+    // A secret must not linger in card state once the card can no longer send it.
+    if (hasSecrets && !writable) setSel(initialSelections(block.questions));
+  }, [hasSecrets, writable, block.questions]);
+  const interactive = writable && !inFlight;
 
-  const submit = (answers: Record<string, string>) =>
-    interactive && requestReplyAvailable(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId) && submitAnswers({
-      answers,
-      answer: (ans) => submitRequestReply(useStore.getState().sessions.find(s => s.id === sessionId), block.blockId, () => sessionAnswerQuestion(sessionId, block.blockId, ans)),
-      setInFlight,
-      isResolved: () => resolvedRef.current,
-      log: (m) => console.error(hasSecrets ? 'Could not submit question answer.' : m),
-      onSubmitted: () => {
-        setDrafts({});
-        if (hasSecrets) setSel(initSelections(block.questions));
-      },
-    });
-
-  // FR-18: apply a selection change; on a pure single-select card the change
-  // that completes the last section submits immediately.
-  const applySel = (next: SectionSelection[]) => {
-    setSel(next);
-    if (shouldAutoSubmit(block.questions, next)) void submit(buildAnswers(block.questions, next));
-  };
-
-  const onPick = (i: number, label: string) => {
-    if (!interactive) return;
-    applySel(pickOption(block.questions, sel, i, label));
-  };
-
-  const onCommitOther = (i: number) => {
-    if (!interactive) return;
-    const text = drafts[i] ?? '';
-    if (text.trim() === '') return;
-    setOtherOpen((o) => ({ ...o, [i]: false }));
-    applySel(commitFreeText(block.questions, sel, i, text));
-  };
-
-  const cardClass =
-    'qcard' +
-    (block.state === 'pending' ? ' qcard--pending' : '') +
-    (block.state === 'cancelled' ? ' qcard--cancelled' : '') +
-    (block.state === 'pending' && inFlight ? ' qcard--inflight' : '');
-
-  const showSubmit = hasMultiSelect(block.questions) && block.state === 'pending'; // §8.6: never for pure single-select
-  const submitEnabled = allComplete(sel);
   const total = block.questions.length;
-  const done = answeredCount(sel);
-  // 13c: the ordinal of the section the block is waiting on. Only a live card
-  // has a "where you are" — a resolved one is a record, not a form.
-  const current = block.state === 'pending' ? currentSection(sel) : -1;
+  const shown = Math.min(step, Math.max(0, total - 1));
+  const q = block.questions[shown];
+  const cur = sel[shown] ?? { selected: [], freeText: '' };
   const recCount = recommendedCount(block.questions);
 
-  const onAcceptAll = () => {
+  const submit = useCallback(
+    (answers: Record<string, string>) =>
+      interactive &&
+      requestReplyAvailable(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId) &&
+      submitAnswers({
+        answers,
+        answer: (ans) =>
+          submitRequestReply(useStore.getState().sessions.find((s) => s.id === sessionId), block.blockId, () =>
+            sessionAnswerQuestion(sessionId, block.blockId, ans),
+          ),
+        setInFlight,
+        isResolved: () => resolvedRef.current,
+        log: (m) => console.error(hasSecrets ? 'Could not submit question answer.' : m),
+        onSubmitted: () => {
+          if (hasSecrets) setSel(initialSelections(block.questions));
+        },
+      }),
+    [interactive, sessionId, block.blockId, block.questions, hasSecrets],
+  );
+
+  const answer = useCallback(() => {
     if (!interactive) return;
-    applySel(acceptRecommended(block.questions, sel));
+    const next = advanceStep(sel, shown);
+    if (next.kind === 'next') setStep(next.step);
+    else if (next.kind === 'submit') void submit(buildAnswers(block.questions, sel));
+  }, [interactive, sel, shown, submit, block.questions]);
+
+  const acceptAll = () => {
+    if (!interactive) return;
+    const next = acceptRecommended(block.questions, sel);
+    setSel(next);
+    if (allComplete(next)) void submit(buildAnswers(block.questions, next));
+    else setStep(Math.max(0, currentSection(next)));
   };
 
+  const pick = useCallback(
+    (label: string) => {
+      if (!interactive) return;
+      setSel((s) => pickOption(block.questions, s, shown, label));
+    },
+    [interactive, block.questions, shown],
+  );
+
+  const allowsOther = q !== undefined && (q.options.length === 0 || q.isOther !== false);
+
+  // Figma 02 keycaps: `1`–`N` pick an option, `N+1` jumps into "Something
+  // else", ⏎ answers. Same standing-down rules as the approval card: only for
+  // the focused session, only while this card is actually displayed, and never
+  // while a text field or the terminal holds focus.
+  useEffect(() => {
+    if (!interactive || q === undefined) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+      // A focused button already answers ⏎ with its own click.
+      if (el && el.tagName === 'BUTTON' && e.key === 'Enter') return;
+      // ⏎ on the roster opens the highlighted row — leave it to pane [1].
+      if (e.key === 'Enter' && useStore.getState().focusedPane !== 'main') return;
+      if (el && el.closest('.xterm') !== null) return;
+      if (focusedSessionId(useStore.getState()) !== sessionId) return;
+      if (!rootRef.current || rootRef.current.offsetParent === null) return;
+      let handled = true;
+      if (e.key === 'Enter') answer();
+      else if (/^[1-9]$/.test(e.key)) {
+        const n = Number(e.key) - 1;
+        if (n < q.options.length) pick(q.options[n]!.label);
+        else if (n === q.options.length && allowsOther) otherRef.current?.focus();
+        else handled = false;
+      } else handled = false;
+      if (!handled) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [interactive, q, sessionId, answer, pick, allowsOther]);
+
+  if (q === undefined) return null;
+
+  const advance = advanceStep(sel, shown);
+  const lastStep = advance.kind !== 'next';
+  const multiStep = total > 1;
+  // FR-17: preview of the hovered-or-selected option beneath the options.
+  const preview =
+    (interactive && hovered !== null ? q.options.find((o) => o.label === hovered)?.preview : undefined) ??
+    q.options.find((o) => cur.selected.includes(o.label) && o.preview)?.preview ??
+    null;
+
   return (
-    <div className={cardClass}>
-      {/* 13c: the header states the shape of the block (how many, how far in)
-          and carries the one-click "take my picks". It replaces the old row of
-          chips, which repeated each question's own header text a line above the
-          question itself. */}
+    <div ref={rootRef} className={'qcard' + (inFlight ? ' qcard--inflight' : '')}>
       <div className="qcard__head">
-        <span className="qcard__label">QUESTION</span>
-        <span className="qcard__count">
-          {block.state === 'pending' ? `${total} · ${done} answered` : null}
-          {block.state === 'answered' ? `${total} answered` : null}
-          {block.state === 'cancelled' ? `${total}` : null}
-        </span>
-        {block.state === 'cancelled' && <span className="qcard__note">— cancelled</span>}
-        <span className="qcard__gap" />
-        {block.state === 'pending' && recCount > 0 && (
-          <button
-            type="button"
-            className="qcard__accept"
-            disabled={!interactive}
-            onClick={onAcceptAll}
-          >
-            ✓ Accept {recCount === total ? 'all ' : ''}
-            {recCount} recommended
+        <StateIcon kind="question" size={14} />
+        <span className="qcard__label">{questionHeading(shown, total)}</span>
+        {recCount > 0 && (
+          <button type="button" className="qcard__accept" disabled={!interactive} onClick={acceptAll}>
+            Accept recommended
+            {isRecommendedSelection(block.questions, sel) && lastStep && <Kbd keys="⏎" />}
           </button>
         )}
       </div>
 
-      <div className="qcard__body">
-        {block.questions.map((q, i) => (
-          <Section
-            key={q.id ?? i}
-            q={q}
-            idx={i}
-            block={block}
-            sel={sel[i] ?? { selected: [], freeText: '' }}
-            isCurrent={i === current}
-            interactive={interactive}
-            otherOpen={otherOpen[i] === true}
-            draft={drafts[i] ?? ''}
-            hovered={hovered[i] ?? null}
-            onPick={onPick}
-            onHover={(label) => setHovered((h) => ({ ...h, [i]: label }))}
-            onOpenOther={() => {
-              if (!interactive) return;
-              setDrafts((d) => ({ ...d, [i]: sel[i]?.freeText ?? '' }));
-              setOtherOpen((o) => ({ ...o, [i]: true }));
-            }}
-            onDraft={(text) => setDrafts((d) => ({ ...d, [i]: text }))}
-            onCommit={() => onCommitOther(i)}
-            onDismiss={() => {
-              // §3 flow 4: Escape empties and collapses the row
-              setDrafts((d) => ({ ...d, [i]: '' }));
-              setOtherOpen((o) => ({ ...o, [i]: false }));
-            }}
-          />
-        ))}
+      {/* Backticks in the question set as code (inline markdown). */}
+      <div className="qcard__title">
+        <InlineMarkdown text={q.question} />
       </div>
 
-      {/* 13c: a footer rail so the block always ends on a stated rule rather
-          than trailing off. §8.6 still governs the button — a pure
-          single-select card submits on the click that completes it (FR-18), so
-          a Send there would be an affordance that can never be reached. */}
-      {block.state === 'pending' && (
-        <div className="qcard__foot">
-          {showSubmit && (
-            <button
-              type="button"
-              className="qcard__send"
-              disabled={!interactive || !submitEnabled}
-              onClick={() => {
-                if (!interactive || !submitEnabled) return;
-                void submit(buildAnswers(block.questions, sel));
-              }}
-            >
-              Send {total > 1 ? `${total} answers` : 'answer'}
-            </button>
-          )}
-          <span className="qcard__hint">
-            {showSubmit
-              ? 'pick what applies, then send'
-              : total > 1
-                ? 'pick one per question'
-                : 'pick one'}
-          </span>
+      {q.options.length > 0 && (
+        <div className="qcard__options" role={q.multiSelect ? 'group' : 'radiogroup'} aria-label={q.header || q.question}>
+          {q.options.map((o, oi) => (
+            <Option
+              // Keyed by index, not label: FR-7 renders options verbatim, so two
+              // identical labels are possible and must not collide.
+              key={oi}
+              o={o}
+              index={oi}
+              multi={q.multiSelect}
+              chosen={cur.selected.includes(o.label)}
+              interactive={interactive}
+              onPick={() => pick(o.label)}
+              onHover={setHovered}
+            />
+          ))}
         </div>
       )}
-    </div>
-  );
-}
 
-function Section({
-  q,
-  idx,
-  block,
-  sel,
-  isCurrent,
-  interactive,
-  otherOpen,
-  draft,
-  hovered,
-  onPick,
-  onHover,
-  onOpenOther,
-  onDraft,
-  onCommit,
-  onDismiss,
-}: {
-  q: SessionQuestion;
-  idx: number;
-  block: QuestionConversationBlock;
-  sel: SectionSelection;
-  isCurrent: boolean;
-  interactive: boolean;
-  otherOpen: boolean;
-  draft: string;
-  hovered: string | null;
-  onPick: (i: number, label: string) => void;
-  onHover: (label: string | null) => void;
-  onOpenOther: () => void;
-  onDraft: (text: string) => void;
-  onCommit: () => void;
-  onDismiss: () => void;
-}) {
-  const answered = block.state === 'answered';
-  // FR-19: pending renders from card-local picks; a resolved card reconstructs
-  // its chosen rows from the persisted answer string (survives hydration).
-  const recorded = answered ? answeredSelection(q, block.answers?.[questionAnswerKey(q)]) : null;
-  const chosen = recorded ? recorded.chosen : sel.selected;
-  const freeText = recorded ? recorded.freeText : sel.freeText.trim() !== '' ? q.isSecret ? '[redacted]' : sel.freeText : null;
+      {allowsOther && (
+        <OtherField
+          q={q}
+          inputRef={otherRef}
+          value={cur.freeText}
+          ordinal={q.options.length + 1}
+          interactive={interactive}
+          onChange={(text) => setSel((s) => setFreeText(block.questions, s, shown, text))}
+          onSubmit={answer}
+        />
+      )}
 
-  // FR-17: preview of the hovered-or-selected option beneath the section.
-  let preview: string | null = null;
-  if (interactive && hovered) {
-    preview = q.options.find((o) => o.label === hovered)?.preview ?? null;
-  }
-  if (preview === null) {
-    preview = q.options.find((o) => chosen.includes(o.label) && o.preview)?.preview ?? null;
-  }
+      {preview !== null && <div className="scz qcard__preview">{preview}</div>}
 
-  return (
-    <div className={'qsec' + (isCurrent ? ' qsec--current' : '')}>
-      <div className="qsec__head">
-        <span className="qsec__num">{sectionOrdinal(idx)}</span>
-        {/* 13c: backticks in the question text were rendering as literal
-            characters. Inline markdown, so `SessionMeta` sets as code. */}
-        <span className="qsec__q">
-          <InlineMarkdown text={q.question} />
+      <div className="qcard__foot">
+        <span className="qcard__hint">
+          {block.blocking === false ? 'The session keeps going while this waits' : 'Session is paused until you answer'}
         </span>
+        {multiStep && shown > 0 && (
+          <Button variant="ghost" className="qcard__back" disabled={!interactive} onClick={() => setStep(shown - 1)}>
+            Back
+          </Button>
+        )}
+        <Button
+          variant="attention"
+          className="qcard__answer"
+          shortcut="⏎"
+          disabled={!interactive || !sectionComplete(cur)}
+          onClick={answer}
+        >
+          {lastStep ? (multiStep ? `Answer ${total}` : 'Answer') : 'Next'}
+        </Button>
       </div>
-
-      <div className="qsec__opts">
-        {q.options.map((o, oi) => (
-          <Option
-            // Keyed by index, not label: FR-7 renders options verbatim, so two
-            // identical labels are possible and must not collide.
-            key={oi}
-            o={o}
-            multi={q.multiSelect}
-            chosen={chosen.includes(o.label)}
-            dimmed={answered && !chosen.includes(o.label)} // FR-19: unchosen rows dim
-            interactive={interactive}
-            onClick={() => onPick(idx, o.label)}
-            onHover={onHover}
-          />
-        ))}
-
-        {/* other… free-text row (§8.4; echoes the free-text answer when chosen — FR-19) */}
-        {(q.options.length === 0 || q.isOther !== false || freeText !== null) && ((otherOpen || q.options.length === 0) && interactive ? (
-          <div className="qopt qopt--other qopt--wide">
-            <span className="qopt__label">
-              <span className="qopt__glyph">{q.multiSelect ? '☐' : '○'}</span>
-              <input
-                className="qopt__input"
-                type={q.isSecret ? 'password' : 'text'}
-                aria-label={q.header || q.question}
-                autoComplete="off"
-                value={draft}
-                autoFocus
-                onChange={(e) => onDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    onCommit();
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    onDismiss();
-                  }
-                }}
-              />
-            </span>
-          </div>
-        ) : freeText !== null ? (
-          <div
-            className={'qopt qopt--on qopt--wide' + (interactive ? ' qopt--live' : '')}
-            onClick={onOpenOther}
-          >
-            <span className="qopt__label">
-              <span className="qopt__glyph">{q.multiSelect ? '☑' : '●'}</span>
-              {q.isSecret ? '[redacted]' : freeText}
-            </span>
-          </div>
-        ) : (
-          <div
-            className={'qopt qopt--other' + (interactive ? ' qopt--live' : '')}
-            onClick={onOpenOther}
-          >
-            <span className="qopt__label">
-              <span className="qopt__glyph">{q.multiSelect ? '☐' : '○'}</span>
-              {q.options.length === 0 ? 'Enter an answer…' : 'Something else…'}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {preview !== null && <div className="scz qsec__prev">{preview}</div>}
     </div>
   );
 }
 
-/**
- * 13c: the label rail is a FIXED width, so every description in the block
- * shares one left edge instead of stepping in and out per option. Below the
- * rail's own width the description wraps under the label rather than crushing
- * to one word per line.
- */
 function Option({
   o,
+  index,
   multi,
   chosen,
-  dimmed,
   interactive,
-  onClick,
+  onPick,
   onHover,
 }: {
   o: QuestionOption;
+  index: number;
   multi: boolean;
   chosen: boolean;
-  dimmed: boolean;
   interactive: boolean;
-  onClick: () => void;
+  onPick: () => void;
   onHover: (label: string | null) => void;
 }) {
-  // Recommended-but-unpicked is its own quiet state: an olive ring rather than
-  // a fill, so the block still has exactly one filled row per question and the
-  // suggestion never reads as an answer already given.
-  const rec = !chosen && isRecommended(o);
-  const cls =
-    'qopt' +
-    (chosen ? ' qopt--on' : '') +
-    (rec ? ' qopt--rec' : '') +
-    (dimmed ? ' qopt--dim' : '') +
-    (interactive ? ' qopt--live' : '');
-
   return (
-    <div
-      className={cls}
-      onClick={interactive ? onClick : undefined}
-      aria-disabled={!interactive}
+    <button
+      type="button"
+      role={multi ? 'checkbox' : 'radio'}
+      aria-checked={chosen}
+      className={'qcard__option' + (chosen ? ' qcard__option--on' : '')}
+      disabled={!interactive}
+      onClick={onPick}
       onMouseEnter={interactive ? () => onHover(o.label) : undefined}
       onMouseLeave={interactive ? () => onHover(null) : undefined}
     >
-      <span className="qopt__label">
-        <span className="qopt__glyph">{multi ? (chosen ? '☑' : '☐') : chosen ? '●' : '○'}</span>
-        {displayLabel(o.label)}
-      </span>
-      {o.description !== '' && (
-        <span className="qopt__desc">
-          <InlineMarkdown text={o.description} />
+      <span className={multi ? 'qcard__check' : 'qcard__radio'} aria-hidden />
+      <span className="qcard__text">
+        <span className="qcard__option-title">
+          <span className="qcard__option-label">{displayLabel(o.label)}</span>
+          {isRecommended(o) && <span className="qcard__rec">Recommended</span>}
         </span>
-      )}
-    </div>
+        {o.description !== '' && (
+          <span className="qcard__desc">
+            <InlineMarkdown text={o.description} />
+          </span>
+        )}
+      </span>
+      {index < 9 && <Kbd keys={String(index + 1)} />}
+    </button>
+  );
+}
+
+function OtherField({
+  q,
+  inputRef,
+  value,
+  ordinal,
+  interactive,
+  onChange,
+  onSubmit,
+}: {
+  q: SessionQuestion;
+  inputRef: RefObject<HTMLInputElement>;
+  value: string;
+  ordinal: number;
+  interactive: boolean;
+  onChange: (text: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <label className={'qcard__other' + (value.trim() !== '' ? ' qcard__other--on' : '')}>
+      <input
+        ref={inputRef}
+        className="qcard__other-input"
+        type={q.isSecret ? 'password' : 'text'}
+        aria-label={q.header || q.question}
+        autoComplete="off"
+        placeholder={q.options.length === 0 ? 'Type your answer' : 'Something else — type your own answer'}
+        value={value}
+        disabled={!interactive}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onSubmit();
+          } else if (e.key === 'Escape') {
+            // §3 flow 4: Escape empties the field and hands focus back.
+            e.preventDefault();
+            onChange('');
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      {q.options.length > 0 && ordinal <= 9 && <Kbd keys={String(ordinal)} />}
+    </label>
   );
 }
