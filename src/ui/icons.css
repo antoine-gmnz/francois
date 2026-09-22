@@ -37,11 +37,12 @@
 .state-icon--pending {
   color: var(--text-line-number);
 }
-/* Twelve discrete steps rather than a smooth spin: a continuous transform
-   repaints every frame under WebView2's software compositing (see the `pulse`
-   note at the top of styles.css). Paused while the window is hidden. */
+/* A smooth, continuous spin — the earlier 12-step tick (~10fps) read as lag.
+   `will-change` gives the glyph its own layer so hardware compositing rotates
+   it without a repaint. Paused while the window is hidden. */
 .state-icon--running {
-  animation: state-icon-spin 1.2s steps(12, end) infinite;
+  animation: state-icon-spin 1s linear infinite;
+  will-change: transform;
 }
 @keyframes state-icon-spin {
   to {

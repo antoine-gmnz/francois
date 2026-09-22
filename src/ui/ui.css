@@ -116,13 +116,15 @@
   height: 14px;
   border-radius: 50%;
   background: var(--state-idle);
-  transition: left 120ms ease;
+  /* `transform`, not `left` — `left` is a layout property, so animating it
+     forces a reflow on every frame; `translateX` is compositor-only. */
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .switch--on {
   background: var(--action-primary);
 }
 .switch--on .switch__knob {
-  left: 14px;
+  transform: translateX(12px);
   background: var(--text-inverse);
 }
 .switch:disabled {
