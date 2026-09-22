@@ -1,5 +1,4 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import AccountsModal from '../features/accounts/AccountsModal';
 import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab, tabsForSession } from '../lib/agent-tab';
@@ -14,7 +13,6 @@ import { registerBuiltinCommands } from '../features/palette/paletteCommands';
 import PermissionsModal from '../features/permissions/PermissionsModal';
 import ProfilesModal from '../features/profiles/ProfilesModal';
 import { loadProfiles } from '../features/profiles/profiles';
-import ProjectsModal from '../features/projects/ProjectsModal';
 import SessionSettingsSheet from '../features/sessions/SessionSettingsSheet';
 import type { SessionSettingsCarryOver } from '../features/sessions/session-settings';
 import Sidebar from '../features/sessions/Sidebar';
@@ -30,12 +28,15 @@ import { basename } from '../lib/path';
 import { clampRosterWidth } from '../lib/rosterWidth';
 import { useStore } from '../lib/store';
 import './app.css';
-import AppRow from './AppRow';
+import AppBar from './AppBar';
 import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns, showsPanes } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import RosterDivider from './RosterDivider';
 import SessionRail from './SessionRail';
-import SessionRow from './SessionRow';
+import SessionHeader from './SessionHeader';
+import SessionPanel from './session-panel/SessionPanel';
+import SettingsView from './settings/SettingsView';
+import { isSettingsOpen } from './settings/settings-nav';
 import SplitDivider from './SplitDivider';
 import SplitPane from './SplitPane';
 import { useAppIdentity } from './useAppIdentity';
@@ -89,9 +90,9 @@ export default function App() {
   const setPermissionsOpen = useStore((s) => s.setPermissionsOpen);
   const projects = useStore((s) => s.projects);
   const projectsOpen = useStore((s) => s.projectsOpen);
-  const setProjectsOpen = useStore((s) => s.setProjectsOpen);
   const accountsOpen = useStore((s) => s.accountsOpen);
-  const setAccountsOpen = useStore((s) => s.setAccountsOpen);
+  // Settings (Projects + Accounts + MCP servers) is open while either flag is up.
+  const settingsOpen = isSettingsOpen({ projectsOpen, accountsOpen });
   const profilesOpen = useStore((s) => s.profilesOpen);
   const setProfilesOpen = useStore((s) => s.setProfilesOpen);
   const setProfiles = useStore((s) => s.setProfiles);
@@ -297,29 +298,29 @@ export default function App() {
   }, [permissionsOpen, paneSessionId, setPermissionsOpen]);
 
   const mainFocused = focusedPane === 'main';
+  // redesign "Graphite & Signal": the session header and the right-hand session
+  // panel belong to the Sessions view; the OVERVIEW dashboard takes the whole
+  // workspace.
+  const showSessionPanel = useStore((s) => s.showSessionPanel);
+  const sessionView = mainTab !== 'overview';
 
   return (
     <div className="app-root">
-      {/* design 7a: two tiers of chrome, both full-bleed under the native OS
-          caption. The outer row is app-scoped, the inner one session-scoped. */}
-      <AppRow appVersion={appVersion} />
-      <SessionRow
-        active={active}
-        mainTab={mainTab}
-        setMainTab={setMainTab}
-        diffCount={diffCount}
-        agentTabs={agentTabs}
-        closeAgentTab={closeAgentTab}
-        openExtTab={openExtTab}
-        home={home}
-      />
+      {/* redesign "Graphite & Signal": ONE app bar (app-scoped). The
+          session-scoped chrome is the SessionHeader at the top of the main
+          column, below. */}
+      <AppBar appVersion={appVersion} />
 
       {/* body: roster + one main cell. No right column — 7a folds [3]–[6] into
           the roster's own rows, which is what gives the terminal the width.
           split-by-4 FR-2: split pays ~340px for its second pane by narrowing
-          the roster; folded, the roster is still the 46px rail (shellColumns). */}
-      <div className="app-grid" style={{ gridTemplateColumns: columns.template }}>
-        {/* The folded roster — split-by-4 FR-6's 46px tile rail. Rendered BEFORE
+          the roster; folded, the roster is still the 56px rail (shellColumns). */}
+      {/* redesign Settings 21–23: the Settings view replaces the body while one
+          of its flags is up (settings/settings-nav.ts). The grid stays mounted
+          underneath — the roster owns the session-cache subscriptions. */}
+      {settingsOpen && <SettingsView home={home} paneSessionId={paneSessionId} />}
+      <div className="app-grid" style={{ gridTemplateColumns: columns.template, display: settingsOpen ? 'none' : undefined }}>
+        {/* The folded roster — split-by-4 FR-6's 56px tile rail. Rendered BEFORE
             the column so it takes the first track: a `display:none` element
             generates no grid item. */}
         {columns.leftRail && (
@@ -350,105 +351,124 @@ export default function App() {
           />
         )}
 
-        <div className="app-main-cell">
-          {/* The four dissolved panes. ALWAYS mounted — their feeds publish the
-              counts the roster rows read, and re-subscribing on every tab switch
-              would both flicker the counts and double the IPC.
-              …and always mounted across a SESSION switch too: each panel is
-              handed `sessionId` as a prop rather than keyed by it, because a key
-              here contradicted the sentence above — every switch remounted all
-              four and re-ran four hydrations. Each of them resets its own
-              per-session state off that prop (the feed hooks' `[sessionId]`
-              effects plus the panels' own selection/overlay resets), which is
-              what makes the key unnecessary. */}
-          <section
-            className="app-main-section app-panel-host"
-            style={{ display: panelTab ? undefined : 'none', borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
-            onClick={() => setFocusedPane('main')}
-          >
-            {PANEL_TABS.map((pane) => {
-              const Panel = PANELS[pane];
-              return (
-                <div key={pane} className="app-panel-slot" style={{ display: mainTab === pane ? undefined : 'none' }}>
-                  <Panel sessionId={paneSessionId} />
-                </div>
-              );
-            })}
-          </section>
-
-          <div className="app-main-view" style={{ display: panelTab ? 'none' : undefined }}>
-            {/* split-by-4 FR-1/FR-2: one section per pane, in a 1fr row at two
-                panes and a 2×2 grid above; otherwise the single pane. Each split
-                pane keeps its own header + tab strip — the session row's view
-                segment steps aside (SessionRow). Every split regime is
-                resizable: the panes share the cell in the ratios their dividers
-                were last dragged to (50/50 by default), and each gutter track IS
-                a handle — hence gap: 0 on the modifiers. The 2×2 also splits its
-                rows, so it carries a second handle. */}
-            {split ? (
-              <div
-                className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid app-split-grid--2'}
-                style={{
-                  gridTemplateColumns: `${splitRatio}fr var(--space-12) ${1 - splitRatio}fr`,
-                  ...(regime === 'grid'
-                    ? { gridTemplateRows: `${splitRowRatio}fr var(--space-12) ${1 - splitRowRatio}fr` }
-                    : null),
-                }}
-              >
-                {/* The row handle first, so the column handle — which spans the
-                    full height at four panes — wins the cell where the two cross. */}
-                {regime === 'grid' && <SplitDivider axis="y" area={dividerGridArea('y', panes)} />}
-                {Array.from({ length: panes }, (_, i) => (
-                  <Fragment key={i}>
-                    {/* Placed explicitly above two panes; at two, DOM order
-                        (pane, handle, pane) fills the three tracks by itself. */}
-                    {i === 1 && <SplitDivider axis="x" area={dividerGridArea('x', panes)} />}
-                    <SplitPane
-                      index={i}
-                      area={paneGridArea(i, panes)}
-                      slot={paneSlotAt({ activeSessionId, mainTab, extraPanes }, i)}
-                      focused={focusedPaneIndex === i}
-                      dense={regime === 'grid'}
-                      home={home}
-                      onFocus={() => setFocusedPaneIndex(i)}
-                      onTab={(t) => setPaneTab(i, t)}
-                      // FR-9: a grid pane shows its transcript, so promoting it
-                      // opens on SESSION — its remembered DIFF/SHELL tab was never
-                      // on screen there, and inheriting it would read as a tab the
-                      // user never picked. Review diff is the deliberate way to
-                      // land on DIFF.
-                      onPromote={() => unsplit(i, regime === 'grid' ? 'session' : undefined)}
-                      onClose={() => closePane(i)}
-                      onReviewDiff={() => unsplit(i, 'diff')}
-                      // unbound-panes FR-9: the empty pane's "open a shell here"
-                      // and the pane header menu's "convert to shell" both turn
-                      // THIS pane into a shell pane directly — it is already the
-                      // slot the user picked, so there is no "fill the first
-                      // empty pane" ambiguity here (that's `openShellPane`'s job
-                      // for the palette/roster entry points, which name no pane).
-                      onConvertToShell={(projectId) => convertPaneToShell(i, projectId)}
-                      onShellSpawned={(shellId) => setPaneShellId(i, shellId)}
-                    />
-                  </Fragment>
-                ))}
-              </div>
-            ) : (
-              <section
-                onClick={() => setFocusedPane('main')}
-                className="app-main-section"
-                style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
-              >
-                <MainPaneBody
-                  mainTab={mainTab}
-                  activeAgentId={activeAgentId}
-                  active={active}
-                  home={home}
-                  setMainTab={setMainTab}
-                  projectName={activeProjectName}
-                />
-              </section>
+        <div className="app-workspace">
+          <div className="app-main-cell">
+            {/* Figma 17 · Subagent drill-in: a single pane reading a subagent
+                trades the session header for AgentView's own (back · breadcrumb
+                · name · state · stop). Split panes keep it — there it names the
+                focused session, not the pane reading the agent. */}
+            {sessionView && !(activeAgentId !== null && !split) && (
+              <SessionHeader
+                active={active}
+                mainTab={mainTab}
+                setMainTab={setMainTab}
+                diffCount={diffCount}
+                agentTabs={agentTabs}
+                closeAgentTab={closeAgentTab}
+                openExtTab={openExtTab}
+                home={home}
+              />
             )}
+            <div className="app-main-body">
+              {/* The four dissolved panes. ALWAYS mounted — their feeds publish the
+                  counts the roster rows read, and re-subscribing on every tab switch
+                  would both flicker the counts and double the IPC.
+                  …and always mounted across a SESSION switch too: each panel is
+                  handed `sessionId` as a prop rather than keyed by it, because a key
+                  here contradicted the sentence above — every switch remounted all
+                  four and re-ran four hydrations. Each of them resets its own
+                  per-session state off that prop (the feed hooks' `[sessionId]`
+                  effects plus the panels' own selection/overlay resets), which is
+                  what makes the key unnecessary. */}
+              <section
+                className="app-main-section app-panel-host"
+                style={{ display: panelTab ? undefined : 'none', borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
+                onClick={() => setFocusedPane('main')}
+              >
+                {PANEL_TABS.map((pane) => {
+                  const Panel = PANELS[pane];
+                  return (
+                    <div key={pane} className="app-panel-slot" style={{ display: mainTab === pane ? undefined : 'none' }}>
+                      <Panel sessionId={paneSessionId} />
+                    </div>
+                  );
+                })}
+              </section>
+
+              <div className="app-main-view" style={{ display: panelTab ? 'none' : undefined }}>
+                {/* split-by-4 FR-1/FR-2: one section per pane, in a 1fr row at two
+                    panes and a 2×2 grid above; otherwise the single pane. Each split
+                    pane keeps its own header + tab strip — the session row's view
+                    segment steps aside (SessionRow). Every split regime is
+                    resizable: the panes share the cell in the ratios their dividers
+                    were last dragged to (50/50 by default), and each gutter track IS
+                    a handle — hence gap: 0 on the modifiers. The 2×2 also splits its
+                    rows, so it carries a second handle. */}
+                {split ? (
+                  <div
+                    className={regime === 'grid' ? `app-split-grid app-split-grid--${panes}` : 'app-split-grid app-split-grid--2'}
+                    style={{
+                      gridTemplateColumns: `${splitRatio}fr var(--split-gutter, var(--space-12)) ${1 - splitRatio}fr`,
+                      ...(regime === 'grid'
+                        ? { gridTemplateRows: `${splitRowRatio}fr var(--split-gutter, var(--space-12)) ${1 - splitRowRatio}fr` }
+                        : null),
+                    }}
+                  >
+                    {/* The row handle first, so the column handle — which spans the
+                        full height at four panes — wins the cell where the two cross. */}
+                    {regime === 'grid' && <SplitDivider axis="y" area={dividerGridArea('y', panes)} />}
+                    {Array.from({ length: panes }, (_, i) => (
+                      <Fragment key={i}>
+                        {/* Placed explicitly above two panes; at two, DOM order
+                            (pane, handle, pane) fills the three tracks by itself. */}
+                        {i === 1 && <SplitDivider axis="x" area={dividerGridArea('x', panes)} />}
+                        <SplitPane
+                          index={i}
+                          area={paneGridArea(i, panes)}
+                          slot={paneSlotAt({ activeSessionId, mainTab, extraPanes }, i)}
+                          focused={focusedPaneIndex === i}
+                          dense={regime === 'grid'}
+                          home={home}
+                          onFocus={() => setFocusedPaneIndex(i)}
+                          onTab={(t) => setPaneTab(i, t)}
+                          // Graphite redesign: a grid pane carries its Conversation /
+                          // Changes / Terminal tabs too now, so promoting it keeps the
+                          // tab it was actually showing, as in the two-pane split.
+                          onPromote={() => unsplit(i)}
+                          onClose={() => closePane(i)}
+                          onReviewDiff={() => unsplit(i, 'diff')}
+                          // unbound-panes FR-9: the empty pane's "open a shell here"
+                          // and the pane header menu's "convert to shell" both turn
+                          // THIS pane into a shell pane directly — it is already the
+                          // slot the user picked, so there is no "fill the first
+                          // empty pane" ambiguity here (that's `openShellPane`'s job
+                          // for the palette/roster entry points, which name no pane).
+                          onConvertToShell={(projectId) => convertPaneToShell(i, projectId)}
+                          onShellSpawned={(shellId) => setPaneShellId(i, shellId)}
+                        />
+                      </Fragment>
+                    ))}
+                  </div>
+                ) : (
+                  <section
+                    onClick={() => setFocusedPane('main')}
+                    className="app-main-section"
+                    style={{ borderColor: mainFocused ? 'var(--border-focus)' : 'var(--border-2)' }}
+                  >
+                    <MainPaneBody
+                      mainTab={mainTab}
+                      activeAgentId={activeAgentId}
+                      active={active}
+                      home={home}
+                      setMainTab={setMainTab}
+                      projectName={activeProjectName}
+                    />
+                  </section>
+                )}
+              </div>
+            </div>
           </div>
+          {sessionView && showSessionPanel && <SessionPanel session={active} />}
         </div>
       </div>
 
@@ -513,15 +533,6 @@ export default function App() {
       {permissionsOpen && paneSessionId && (
         <PermissionsModal sessionId={paneSessionId} onClose={() => setPermissionsOpen(false)} />
       )}
-
-      {/* projects FR-31: the Projects modal. Unlike the permissions editor it
-          needs NO session — a project is configured whether or not anything is
-          running — so it is gated on `projectsOpen` alone. */}
-      {projectsOpen && <ProjectsModal home={home} onClose={() => setProjectsOpen(false)} />}
-
-      {/* multi-account FR-34: the Accounts modal. Like Projects it needs NO
-          session — an account is registered whether or not anything is running. */}
-      {accountsOpen && <AccountsModal onClose={() => setAccountsOpen(false)} />}
 
       {/* session-profiles: the Profiles modal, sibling to Projects. Needs NO
           session — a profile is authored whether or not anything is running. */}

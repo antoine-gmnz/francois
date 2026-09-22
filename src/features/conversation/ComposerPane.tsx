@@ -30,6 +30,7 @@ import {
     slashToken,
 } from '../commands/slash-menu';
 import { composerPlaceholder } from '../questions/question-card';
+import RunChip from '../sessions/RunChip';
 import Composer from './Composer';
 import { getDraft, setDraft } from './composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
@@ -415,6 +416,7 @@ export default function ComposerPane({
         readingHint={readingHint}
         onAttachClick={attachments.onAttachClick}
         onRemoveAttachment={attachments.onRemoveAttachment}
+        runChip={meta && !inert ? <RunChip session={meta} /> : undefined}
         onInputChange={(e) => {
           setBrowse(null);
           setInput(e.target.value);

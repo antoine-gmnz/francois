@@ -1,0 +1,279 @@
+/* src/ui kit — the Graphite primitives that are not already in styles.css
+   (.btn / .chip live there because modals everywhere use them). Tokens only;
+   see the token block at the top of src/styles.css. */
+
+/* ── Tab / TabGroup (Figma "Tab" 125:7944, "View tabs") ── */
+.tab-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-input);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  flex-shrink: 0;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 28px;
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tab:hover {
+  color: var(--text-primary);
+}
+.tab--selected,
+.tab--selected:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+.tab--sm {
+  padding: 0 var(--space-8);
+  font: var(--type-small);
+}
+.tab--sm.tab--selected {
+  background: var(--bg-raised);
+  font: var(--type-small-medium);
+}
+.tab__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab__count {
+  padding: 0 5px;
+  border-radius: var(--radius-3);
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font: var(--type-mono-small);
+}
+.tab--selected .tab__count {
+  background: var(--bg-strong);
+}
+.tab:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+/* ── Tag (Figma "Tag" 125:7945) ── */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  white-space: nowrap;
+}
+.tag--new {
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+/* ── Kbd (Figma "Kbd" 125:7947) ── */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font: var(--type-mono-small);
+}
+
+/* ── Switch (Figma "Switch" 125:7953) ── */
+.switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: var(--bg-strong);
+  cursor: pointer;
+}
+.switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--state-idle);
+  transition: left 120ms ease;
+}
+.switch--on {
+  background: var(--action-primary);
+}
+.switch--on .switch__knob {
+  left: 14px;
+  background: var(--text-inverse);
+}
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.switch:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Meter (plan usage / context) ── */
+.meter {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-selected);
+}
+.meter--flex {
+  flex: 1 1 0;
+  min-width: 1px;
+}
+.meter__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--meter-fill, 0%);
+  border-radius: 2px;
+  background: var(--text-primary);
+}
+.meter--danger .meter__fill {
+  background: var(--state-danger);
+}
+.meter--attention .meter__fill {
+  background: var(--state-attention);
+}
+
+/* ── IconButton ── */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-5);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.icon-btn--24 {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-4);
+}
+.icon-btn--28 {
+  width: 28px;
+  height: 28px;
+}
+.icon-btn--30 {
+  width: 30px;
+  height: 30px;
+}
+.icon-btn--34 {
+  width: 34px;
+  height: 34px;
+}
+.icon-btn--on,
+.icon-btn--on:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.icon-btn--framed {
+  border-color: var(--line-default);
+}
+.icon-btn--framed.icon-btn--on {
+  background: var(--bg-raised);
+}
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.icon-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+/* ── Section label (Graphite/Label: 11px/600, 0.08em, uppercase) — the
+   "NEEDS YOU 3" / "RUNNING 2" group headings in the roster and panels. ── */
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.section-label__count {
+  margin-left: auto;
+  font: var(--type-mono-small);
+  letter-spacing: 0;
+}
+
+/* ── SidePanel parts (SidePanel.tsx) — a section of the session panel ── */
+.side-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.side-panel__footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-14) var(--space-14);
+  border-top: 1px solid var(--line-subtle);
+}
+.side-panel__footer > .btn {
+  width: 100%;
+}
+.side-panel__label {
+  padding: var(--space-14) var(--space-14) var(--space-6);
+}
+.side-panel__empty {
+  padding: var(--space-16) var(--space-14);
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.side-panel__meter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.side-panel__meter-label {
+  color: var(--text-faint);
+  font: var(--type-small);
+  flex-shrink: 0;
+}
+.side-panel__meter-figure {
+  color: var(--text-secondary);
+  font: var(--type-mono-small);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

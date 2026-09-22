@@ -1,39 +1,36 @@
-import { requestReplyPending, submitRequestReply } from '../../lib/request-replies';
-import { permissionActions, writesRule } from '../../lib/permission-actions';
-// design 12b — "sorted by what wants you". The roster's state-grouped body:
-// four headings that are STATES, and three row shapes whose weight matches how
-// much the session is asking of you.
+// The roster's state-grouped body — design 12b's "sorted by what wants you",
+// redrawn to redesign "Graphite & Signal" (Figma "Sidebar / Sessions" 127:28):
+// uppercase group labels (NEEDS YOU · RUNNING · IDLE · ARCHIVED) and three row
+// shapes whose weight matches how much the session is asking of you.
 //
-//   WAITING ON YOU  the whole ask, inline, with its Allow / Deny — you never
-//                   have to open the session to unblock it
-//   RUNNING         name, live elapsed, what it is doing right now, context
-//   IDLE / ARCHIVED name + how long it has been settled, then the branch it is
-//                   on with its context, then what its tree is carrying
+//   NEEDS YOU   a parked approval is an attention CARD: the ask as code, then
+//               Allow / Deny / Open — answered from the roster, never opening the
+//               session. A question or a failure says what happened instead.
+//   RUNNING     name + live elapsed, then what it is doing right now.
+//   IDLE / ARCH one line — name + how long it has been settled — plus the
+//               uncommitted work line (+184 −52 · 6 files) when there is any.
 //
-// The settled row is the design's second pass: one line was too little. What it
-// shows now is what you need to decide what to DO with a finished session —
-// which branch, how much context is left in it, and how much uncommitted work is
-// sitting there. What it still does not show is anything identical on every row:
-// the cwd, and a model chip that only appears when the session is NOT on its
-// project's default. Those live in the row's hover title (rowTitle).
-//
-// There is no grouping toggle: pane [1] groups by state, full stop.
+// Every row leads with the Figma State glyph, so the state reads per row as well
+// as per heading. What the redesign took off the rows (cwd, branch, model,
+// context) lives in the row's hover title (rowTitle) — moved, not lost.
 
 import { useState } from 'react';
 import type { PermissionDecision, SessionMeta } from '../../../contract/common';
-import { STATUS_COLOR, formatRelativeTime, statusPulses, type SessionDerived } from '../../../contract/fleet-board';
+import { formatRelativeTime, type SessionDerived } from '../../../contract/fleet-board';
 import { permissionsDecide } from '../../lib/api';
+import { permissionActions, writesRule } from '../../lib/permission-actions';
+import { requestReplyPending, submitRequestReply } from '../../lib/request-replies';
 import type { RosterAsk } from '../../lib/rosterStore';
 import { useStore } from '../../lib/store';
-import { toneVar } from '../../lib/tone';
-import { StatusDot } from '../../ui/StatusDot';
+import { Button } from '../../ui/Button';
+import { StateIcon } from '../../ui/StateIcon';
+import { Tag } from '../../ui/Tag';
 import { sessionAccountBadge } from '../accounts/accounts';
 import '../accounts/accounts.css';
-import { projectMarker } from '../projects/projectMarker';
 import type { RosterGroupTier } from './group-tier';
-import { askLine, formatLineCount, rosterContextReadout, rowTitle, runningContextFigure, workLine } from './roster-row';
+import { askLine, formatLineCount, rowTitle, workLine } from './roster-row';
 import './sidebar.css';
-import { STATE_STATUS, type RosterStateNode, type SessionState } from './state-groups';
+import type { RosterStateNode, SessionState } from './state-groups';
 
 /** What every row shape needs, whatever its state. */
 export interface StateRowContext {
@@ -44,12 +41,11 @@ export interface StateRowContext {
   /** Painted-order index of the row the keyboard cursor is on, or -1. */
   cursorIndex: number;
   activeSessionId: string | null;
-  /** The repo label for a session — rendered as a marker only when the roster
-   *  actually holds more than one project (12b: "project becomes a tag, only
-   *  shown when more than one project is open"). */
+  /** The repo label for a session — rendered as a tag only when the roster
+   *  actually holds more than one project (12b). */
   projectLabelOf: (session: SessionMeta) => string | null;
   /** The model this session's PROJECT defaults to, or null when it declares
-   *  none. A settled row names its model only when the two differ. */
+   *  none. Kept for the hover title's sake; the redesign draws no model chip. */
   projectDefaultModelId: (session: SessionMeta) => string | null;
   paneLabelOf: (session: SessionMeta) => { label: string; accent: boolean; focused: boolean } | null;
   onSelect: (id: string) => void;
@@ -83,7 +79,7 @@ export function StateRosterBody({
       {nodes.map((node) => {
         const isCollapsed = collapsed.has(node.key);
         return (
-          <div key={node.key} className="roster-state">
+          <div key={node.key} className={`roster-state roster-state--${node.state}`}>
             <StateHeading node={node} collapsed={isCollapsed} onToggle={() => onToggle(node.key)} />
             {!isCollapsed &&
               (node.tiers
@@ -91,26 +87,18 @@ export function StateRosterBody({
                     const tierCollapsed = collapsedTiers.has(tier.key);
                     return (
                       <div key={tier.key} className="roster-group">
-                        <GroupHeading
-                          tier={tier}
-                          collapsed={tierCollapsed}
-                          onToggle={() => onToggleTier(tier.key)}
-                        />
+                        <GroupHeading tier={tier} collapsed={tierCollapsed} onToggle={() => onToggleTier(tier.key)} />
                         {!tierCollapsed &&
                           tier.sessions.map((session) => {
                             flatIndex += 1;
-                            return (
-                              <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />
-                            );
+                            return <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />;
                           })}
                       </div>
                     );
                   })
                 : node.sessions.map((session) => {
                     flatIndex += 1;
-                    return (
-                      <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />
-                    );
+                    return <StateRow key={session.id} session={session} state={node.state} index={flatIndex} {...row} />;
                   }))}
           </div>
         );
@@ -119,18 +107,9 @@ export function StateRosterBody({
   );
 }
 
-/** roster-group-tier FR-15/FR-16/FR-19: a thin, neutral row at the rows' own
- *  indent — caret, group name, count. No accent, no status dot, no tint: the
- *  state heading above it already owns the colour. */
-function GroupHeading({
-  tier,
-  collapsed,
-  onToggle,
-}: {
-  tier: RosterGroupTier;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
+/** roster-group-tier FR-15/FR-16/FR-19: a thin, neutral row — caret, group
+ *  name, count. The state heading above it already owns the colour. */
+function GroupHeading({ tier, collapsed, onToggle }: { tier: RosterGroupTier; collapsed: boolean; onToggle: () => void }) {
   return (
     <div className="roster-group__head" role="button" aria-expanded={!collapsed} onClick={onToggle}>
       <span className="roster-state__caret">{collapsed ? '▸' : '▾'}</span>
@@ -140,34 +119,19 @@ function GroupHeading({
   );
 }
 
-/** A state heading. The dot IS the group's colour, so no row under it has to
- *  carry a status tag of its own; collapsed, it swaps for a caret (there is
- *  nothing live to show a dot for). */
-function StateHeading({
-  node,
-  collapsed,
-  onToggle,
-}: {
-  node: RosterStateNode;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  const status = STATE_STATUS[node.state];
-  const color = toneVar(STATUS_COLOR[status]);
-  // Only the two groups that are ASKING something tint their label. A settled
-  // group is a divider — tinting IDLE green would put four coloured headings on
-  // a pane whose whole argument is that one of them should stand out.
-  const loud = node.state === 'attention' || node.state === 'running';
+/** The group label (Graphite/Label). NEEDS YOU takes the attention text colour;
+ *  the others stay faint. Collapsed, it grows a caret so the fold is visible. */
+function StateHeading({ node, collapsed, onToggle }: { node: RosterStateNode; collapsed: boolean; onToggle: () => void }) {
   return (
-    <div className={`roster-state__head roster-state__head--${node.state}`} onClick={onToggle}>
-      {collapsed ? (
-        <span className="roster-state__caret">▸</span>
-      ) : (
-        <StatusDot color={color} size={5} pulsing={statusPulses(status)} />
-      )}
-      <span className="roster-state__label" style={loud && !collapsed ? { color } : undefined}>
-        {node.label}
-      </span>
+    <div
+      className={`roster-state__head roster-state__head--${node.state}`}
+      role="button"
+      aria-expanded={!collapsed}
+      title={collapsed ? 'expand' : 'collapse'}
+      onClick={onToggle}
+    >
+      {collapsed && <span className="roster-state__caret">▸</span>}
+      <span className="roster-state__label">{node.label}</span>
       <span className="roster-state__count">{node.sessions.length}</span>
     </div>
   );
@@ -176,7 +140,11 @@ function StateHeading({
 function StateRow({ session, state, index, ...ctx }: { session: SessionMeta; state: SessionState; index: number } & StateRowContext) {
   const selected = session.id === ctx.activeSessionId;
   const pane = ctx.paneLabelOf(session);
+  const parked = useStore((s) => (session.status === 'awaiting_approval' ? s.pendingAsk.get(session.id) : undefined));
+  const card = state === 'attention' && parked !== undefined;
   const classNames = [`roster-row roster-row--${state}`];
+  if (card) classNames.push('roster-row--card');
+  if (state === 'idle' || state === 'archived') classNames.push('roster-row--quiet');
   if (selected || pane) classNames.push('roster-row--selected');
   if (index === ctx.cursorIndex) classNames.push('roster-row--cursor');
   if (pane?.focused) classNames.push('roster-row--pane-focus');
@@ -184,38 +152,32 @@ function StateRow({ session, state, index, ...ctx }: { session: SessionMeta; sta
   const tags = <RowTags session={session} pane={pane} projectLabel={ctx.projectLabelOf(session)} />;
 
   return (
-    <div
-      className={classNames.join(' ')}
-      title={rowTitle(session, ctx.home)}
-      onClick={() => ctx.onSelect(session.id)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        ctx.onContext(session.id, e.clientX, e.clientY);
-      }}
-    >
-      {state === 'attention' ? (
-        <AttentionBody session={session} tags={tags} now={ctx.now} />
-      ) : state === 'running' ? (
-        <RunningBody session={session} tags={tags} now={ctx.now} />
-      ) : (
-        <QuietBody
-          session={session}
-          state={state}
-          tags={tags}
-          now={ctx.now}
-          derived={ctx.derived.get(session.id)}
-          offDefaultModel={offDefaultModel(session, ctx.projectDefaultModelId(session))}
-        />
-      )}
+    <div className="roster-row-wrap">
+      <div
+        className={classNames.join(' ')}
+        title={rowTitle(session, ctx.home)}
+        onClick={() => ctx.onSelect(session.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          ctx.onContext(session.id, e.clientX, e.clientY);
+        }}
+      >
+        {card ? (
+          <AskCard session={session} parked={parked} tags={tags} now={ctx.now} onOpen={() => ctx.onSelect(session.id)} />
+        ) : state === 'attention' ? (
+          <AttentionBody session={session} tags={tags} now={ctx.now} />
+        ) : state === 'running' ? (
+          <RunningBody session={session} tags={tags} now={ctx.now} />
+        ) : (
+          <QuietBody session={session} state={state} tags={tags} now={ctx.now} derived={ctx.derived.get(session.id)} />
+        )}
+      </div>
     </div>
   );
 }
 
 /** The badges a row carries whatever its shape: a non-default account, the
- *  project (only when more than one is open) and which pane holds the session.
- *  Provenance chips (cloud / profile) are deliberately NOT here — 12b's whole
- *  argument is that a row shows what is true of THIS session now; those live in
- *  the session's own header. */
+ *  project (only when more than one is open) and which pane holds the session. */
 function RowTags({
   session,
   pane,
@@ -236,39 +198,29 @@ function RowTags({
         </span>
       )}
       {projectLabel && (
-        <span className="roster-row__marker" title={projectLabel}>
-          {projectMarker(projectLabel)}
-        </span>
+        <Tag className="roster-row__project" title={projectLabel}>
+          {projectLabel}
+        </Tag>
       )}
-      {pane && (
-        <span className={pane.accent ? 'roster-row__pane roster-row__pane--accent' : 'roster-row__pane'}>
-          {pane.label}
-        </span>
-      )}
+      {pane && <span className={pane.accent ? 'roster-row__pane roster-row__pane--accent' : 'roster-row__pane'}>{pane.label}</span>}
     </>
   );
 }
 
-/**
- * WAITING ON YOU. A parked approval is answered here, in the roster — the
- * design's central claim, and the reason this row is the only one that grows
- * buttons. A question and an error have nothing to answer inline, so they say
- * what happened and the row itself is the way in.
- */
+/** NEEDS YOU without an inline answer: a question or a failure says what happened. */
 function AttentionBody({ session, tags, now }: { session: SessionMeta; tags: JSX.Element; now: number }) {
-  const parked = useStore((s) => s.pendingAsk.get(session.id));
   return (
     <>
-      <div className="roster-row__line">
+      <div className="roster-row__head">
+        <StateIcon status={session.status} />
         <span className="roster-row__name truncate">{session.name}</span>
         {tags}
+        <span className="app-flex-spacer" />
         <span className="roster-row__age">{formatRelativeTime(session.lastActivityAt, now)}</span>
       </div>
-      {session.status === 'awaiting_approval' && parked ? (
-        <AskBody sessionId={session.id} parked={parked} />
-      ) : (
-        <div className="roster-row__says truncate">{attentionNote(session)}</div>
-      )}
+      <div className={session.status === 'error' ? 'roster-row__sub roster-row__sub--danger' : 'roster-row__sub'}>
+        {attentionNote(session)}
+      </div>
     </>
   );
 }
@@ -280,22 +232,39 @@ function attentionNote(session: SessionMeta): string {
   return 'Waiting on an approval.';
 }
 
-/** The ask, plus its two answers. Once-only decisions: a rule written from a
- *  roster row would be a trust decision made without the tool input in front of
- *  you — "always" stays in the transcript's own card, which shows it. */
-function AskBody({ sessionId, parked }: { sessionId: string; parked: RosterAsk }) {
+/**
+ * The approval card. Once-only decisions: a rule written from a roster row would
+ * be a trust decision made without the tool input in front of you — "always"
+ * stays in the transcript's own card, which shows it. `Open` is the way in.
+ */
+function AskCard({
+  session,
+  parked,
+  tags,
+  now,
+  onOpen,
+}: {
+  session: SessionMeta;
+  parked: RosterAsk;
+  tags: JSX.Element;
+  now: number;
+  onOpen: () => void;
+}) {
   const [inFlight, setInFlight] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const line = askLine(parked.ask);
-  const meta = useStore((s) => s.sessions.find((session) => session.id === sessionId));
-  const writable = requestReplyPending(meta, parked.blockId);
-  const actions = permissionActions(parked.ask.allowedDecisions).filter(a => !writesRule(a.decision));
+  const writable = requestReplyPending(session, parked.blockId);
+  const actions = permissionActions(parked.ask.allowedDecisions).filter((a) => !writesRule(a.decision));
 
   const decide = (decision: PermissionDecision) => {
-    if (inFlight || !writable || !actions.some(a => a.decision === decision)) return;
+    if (inFlight || !writable || !actions.some((a) => a.decision === decision)) return;
     setInFlight(true);
     setFailed(null);
-    void submitRequestReply(useStore.getState().sessions.find(s => s.id === sessionId), parked.blockId, () => permissionsDecide(sessionId, parked.blockId, decision, 'local')).then((res) => {
+    void submitRequestReply(
+      useStore.getState().sessions.find((s) => s.id === session.id),
+      parked.blockId,
+      () => permissionsDecide(session.id, parked.blockId, decision, 'local'),
+    ).then((res) => {
       setInFlight(false);
       // The card clears itself on `permission.resolved`; a failure has to say so
       // in place, since the row is the only thing on screen that asked.
@@ -305,114 +274,86 @@ function AskBody({ sessionId, parked }: { sessionId: string; parked: RosterAsk }
 
   return (
     <>
-      <div className="roster-row__says truncate" title={parked.ask.summary || parked.ask.toolName}>
-        {line.lead} {line.code && <code className="roster-row__code">{line.code}</code>}
+      <div className="roster-row__head">
+        <StateIcon kind="approval" />
+        <span className="roster-row__name truncate">{session.name}</span>
+        {tags}
+        <span className="roster-row__lead truncate">{line.lead.toLowerCase()}</span>
+        <span className="roster-row__age">{formatRelativeTime(session.lastActivityAt, now)}</span>
       </div>
+      {line.code && (
+        <div className="roster-row__command" title={parked.ask.summary || parked.ask.toolName}>
+          <code className="truncate">{line.code}</code>
+        </div>
+      )}
       {failed && <div className="roster-row__failed truncate">{failed}</div>}
       <div className="roster-row__actions" onClick={(e) => e.stopPropagation()}>
-        {actions.map(action => (
-          <button
+        {actions.map((action) => (
+          <Button
             key={action.decision}
-            type="button"
-            className={action.allow ? 'roster-row__btn roster-row__btn--allow' : 'roster-row__btn'}
+            size="sm"
+            variant={action.allow ? 'attention' : 'secondary'}
+            className="roster-row__decide"
+            title={action.label}
             disabled={inFlight || !writable}
             onClick={() => decide(action.decision)}
           >
             {action.short}
-          </button>
+          </Button>
         ))}
+        <Button size="sm" variant="ghost" title="open the session" onClick={onOpen}>
+          Open
+        </Button>
       </div>
     </>
   );
 }
 
-/** RUNNING. Live numbers, because they are the only rows whose numbers move:
- *  elapsed since the turn began, what tool is in flight, and the context bar. */
+/** RUNNING. Live numbers — the only rows whose numbers move: elapsed since the
+ *  turn began, and what it is doing right now. */
 function RunningBody({ session, tags, now }: { session: SessionMeta; tags: JSX.Element; now: number }) {
   const since = useStore((s) => s.runningSince.get(session.id));
   const activity = useStore((s) => s.sessionActivity.get(session.id));
   return (
     <>
-      <div className="roster-row__line">
+      <div className="roster-row__head">
+        <StateIcon status={session.status} />
         <span className="roster-row__name truncate">{session.name}</span>
         {tags}
-        <span className="roster-row__age roster-row__age--live">
-          {formatRelativeTime(since ?? session.lastActivityAt, now)}
-        </span>
+        <span className="app-flex-spacer" />
+        <span className="roster-row__age roster-row__age--live">{formatRelativeTime(since ?? session.lastActivityAt, now)}</span>
       </div>
-      {activity && (
-        <div className="roster-row__activity truncate">
-          {activity}
-          <span className="roster-row__caret">▌</span>
-        </div>
-      )}
-      <div className="roster-row__ctx">
-        <ContextBar session={session} wide />
-        <span className="roster-row__figure">{runningContextFigure(session)}</span>
-      </div>
+      {activity && <div className="roster-row__sub truncate">{activity}</div>}
     </>
   );
 }
 
-/**
- * IDLE / ARCHIVED. Three lines, and every one of them is conditional: the row
- * shrinks back toward one when the session has nothing on that line to say.
- */
+/** IDLE / ARCHIVED: one line, plus the uncommitted work when there is any. */
 function QuietBody({
   session,
   state,
   tags,
   now,
   derived,
-  offDefaultModel,
 }: {
   session: SessionMeta;
   state: SessionState;
   tags: JSX.Element;
   now: number;
   derived: SessionDerived | undefined;
-  offDefaultModel: boolean;
 }) {
-  const branch = session.worktree?.branch ?? null;
   const work = workLine(derived);
-  // "idle 5h" reads as one phrase — how long it has been settled — which is why
-  // it repeats the heading's word rather than leaving a bare age to be measured
-  // from nothing.
-  const settled = state === 'archived' ? 'done' : 'idle';
-  const context = rosterContextReadout(session);
-  const hasDetail = offDefaultModel || branch !== null || context !== null;
-
   return (
     <>
-      <div className="roster-row__line">
+      <div className="roster-row__head">
+        <StateIcon status={session.status} />
         <span className="roster-row__name roster-row__name--quiet truncate">{session.name}</span>
         {tags}
-        <span className="roster-row__age">
-          {settled} {formatRelativeTime(session.lastActivityAt, now)}
+        <span className="app-flex-spacer" />
+        <span className="roster-row__age" title={state === 'archived' ? 'done' : 'idle'}>
+          {formatRelativeTime(session.lastActivityAt, now)}
         </span>
       </div>
-
-      {hasDetail && (
-        <div className="roster-row__line">
-          {/* multi-account's badge rule, applied to the model: shown only when it
-              is NOT what the project would have given you, so a chip on a row
-              always means "this one is different". */}
-          {offDefaultModel && (
-            <span className="roster-row__model" title="not the project default model">
-              {session.model.label}
-            </span>
-          )}
-          {branch !== null && (
-            <span className="roster-row__branch truncate" title={branch}>
-              {branch}
-            </span>
-          )}
-          {branch === null && <span className="app-flex-spacer" />}
-          <ContextBar session={session} />
-          {context && <span className="roster-row__figure">{context.usedLabel}</span>}
-        </div>
-      )}
-
       {work && (
         <div className="roster-row__work">
           <span className="roster-row__add">+{formatLineCount(work.added)}</span>
@@ -422,33 +363,5 @@ function QuietBody({
         </div>
       )}
     </>
-  );
-}
-
-/**
- * Whether this row should name its model. A project that declares no default
- * says nothing about which model is unusual, so nothing is claimed — the model
- * stays in the hover title, where every row carries it anyway.
- */
-function offDefaultModel(session: SessionMeta, projectDefaultModelId: string | null): boolean {
-  if (projectDefaultModelId === null) return false;
-  return session.model.id !== projectDefaultModelId;
-}
-
-/** The context bar. Absent — not empty — when there is no window to measure
- *  against, so an unknown limit never paints as a bar sitting at zero. Pi
- *  sessions read `session.metrics` instead of the legacy fields (roster-row.ts
- *  `rosterContextReadout`) — never the Claude context fallback (pi-models-metrics §6). */
-function ContextBar({ session, wide = false }: { session: SessionMeta; wide?: boolean }) {
-  const readout = rosterContextReadout(session);
-  if (!readout) return null;
-  return (
-    <span className={wide ? 'roster-row__bar roster-row__bar--wide' : 'roster-row__bar'}>
-      <span
-        className="roster-row__bar-fill"
-        // eslint-disable-next-line no-restricted-syntax -- runtime-computed fill width (the clamped 0..1 context fraction), per CLAUDE.md's inline-style exception
-        style={{ width: `${readout.fraction * 100}%` }}
-      />
-    </span>
   );
 }

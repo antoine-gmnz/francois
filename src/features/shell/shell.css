@@ -1,14 +1,16 @@
-/* multiple-shells §8: the SHELL tab's sub-tab strip — a row of `.shell-chip`s
-   one level down from the main `.app-tab-chip` strip above it (smaller,
-   quieter, lighter border — see the design brief's "hierarchy is the whole
-   job" note). Hidden entirely at ≤1 shell (ShellStrip.tsx, FR-11); the empty
-   state (0 shells) renders it with only the `+` (ShellTabView.tsx, FR-23). */
+/* SHELL tab — Graphite & Signal (Figma 136:5760 dark / 142:13150 light).
+   The strip (136:6067) and the hint rail (136:6100) sit on --bg-rail with a
+   subtle rule toward the terminal; the terminal itself is --bg-terminal. */
+
+/* ── shell tabs strip ── */
 .shell-strip {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-6) var(--space-14);
-  background: var(--bg-panel);
+  gap: var(--space-4);
+  height: 38px;
+  padding: 0 var(--space-16);
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--line-subtle);
   overflow-x: auto;
   flex-shrink: 0;
   white-space: nowrap;
@@ -16,83 +18,156 @@
 .shell-chip {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
-  height: 24px;
-  font-size: var(--font-size-11);
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0 var(--space-7) 0 var(--space-8);
-  border-radius: var(--radius-card);
-  color: var(--text-hint);
-  background: var(--bg-raised);
+  gap: var(--space-8);
+  height: 28px;
+  padding: 0 var(--space-10);
   border: 0;
-  max-width: 160px;
-  min-width: 72px;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-faint);
+  font: var(--type-mono);
+  cursor: pointer;
+  max-width: 200px;
   flex: 0 0 auto;
 }
 .shell-chip:hover {
-  background: var(--bg-hover);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
 }
-/* No lift: the strip only exists at 2+ shells, so these chips sit in a row of
-   their own kind — the fill and the border already say which one is on, and a
-   drop shadow under every active sub-tab reads as a smudge rather than depth. */
 .shell-chip--active,
 .shell-chip--active:hover {
-  color: var(--text-bright);
-  font-weight: 600;
-  background: var(--bg-hover-2);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.shell-chip__icon {
+  flex-shrink: 0;
+}
+/* A dead process: the glyph takes the danger tone (the tab's only status mark). */
+.shell-chip--exited .shell-chip__icon {
+  color: var(--state-danger);
 }
 .shell-chip-name {
   min-width: 0;
 }
-/* §8: never animated — a live thing on this app's tokens is the accent, once
-   per view, and pulsing here would compete with that vocabulary. */
+/* never animated — the running tone is reserved for the live session. */
 .shell-chip-unread {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent-2);
+  background: var(--state-running);
   flex-shrink: 0;
 }
+/* The ✕ appears on hover / on the active tab, so a resting strip reads as the
+   design's plain labels. */
 .shell-chip-close {
   display: flex;
-  color: var(--text-muted);
+  color: var(--text-faint);
   flex-shrink: 0;
+  visibility: hidden;
+}
+.shell-chip:hover .shell-chip-close,
+.shell-chip--active .shell-chip-close {
+  visibility: visible;
 }
 .shell-chip-close:hover {
-  color: var(--text-strong);
+  color: var(--text-primary);
 }
-/* Editing in place: a fill marks the live field, matching the other two inline
-   rename inputs (project group, permission rule) — never an edge. */
+/* Editing in place: a fill marks the live field. */
 .shell-chip-rename-input {
   font: inherit;
-  color: var(--text-bright);
-  background: var(--accent-soft-bg);
+  color: var(--text-primary);
+  background: var(--bg-input);
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-3);
   padding: 0 var(--space-3);
   min-width: 72px;
 }
-.shell-chip--plus {
-  color: var(--text-muted);
+.shell-strip__new {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  min-width: 24px;
-  padding: 0 var(--space-7);
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
 }
-.shell-chip--disabled {
+.shell-strip__new:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.shell-strip__new:disabled {
   opacity: 0.4;
   cursor: default;
-  pointer-events: none;
 }
-/* Empty-state SHELL tab (FR-23) — same column layout as .sidebar-empty. */
+.shell-strip__spacer {
+  flex: 1;
+  min-width: var(--space-8);
+}
+.shell-strip__cwd {
+  min-width: 0;
+  max-width: 50%;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  /* keep the tail (the leaf directory) visible when the path crops */
+  direction: rtl;
+  text-align: left;
+}
+
+/* ── terminal host ──
+   xterm's FitAddon measures its parent's content box, so the design's 16/20
+   inset is padding on a content-box host that fills the wrap. */
+.shell-terminal-host {
+  position: absolute;
+  inset: 0;
+  box-sizing: content-box;
+  padding: var(--space-16) var(--space-20);
+  background: var(--bg-terminal);
+}
+.shell-terminal-host--hidden {
+  display: none;
+}
+
+/* ── hint rail ── */
+.shell-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+  padding: var(--space-8) var(--space-20);
+  background: var(--bg-rail);
+  border-top: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.shell-hint__text {
+  flex: 1;
+  min-width: 0;
+}
+.shell-hint__exited {
+  color: var(--state-danger-text);
+  flex-shrink: 0;
+}
+.shell-hint__key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-shrink: 0;
+}
+
+/* Empty-state SHELL tab (FR-23). */
 .shell-empty {
   flex-direction: column;
-  font-size: var(--font-size-11-5);
+  font: var(--type-ui);
   text-align: center;
   padding: var(--space-12);
+  background: var(--bg-terminal);
 }
 .shell-empty__hint {
-  font-size: var(--font-size-10);
+  font: var(--type-small);
   color: var(--text-faint);
   margin-top: var(--space-5);
 }

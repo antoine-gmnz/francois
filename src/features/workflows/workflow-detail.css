@@ -282,7 +282,11 @@
 .wfd-col__status {
   font-size: var(--font-size-10);
 }
-.wfd-col__elapsed {
+.wfd-col__elapsed,
+.wfd-run__clock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
   font-family: var(--font-mono);
   font-size: var(--font-size-10-5);
   color: var(--text-faint);

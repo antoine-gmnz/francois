@@ -1,14 +1,14 @@
-// multiple-shells §8: the SHELL tab's sub-tab strip — one chip per shell
-// (process dot, name, unread dot, ✕) plus a `+`. Hidden entirely at 0 (see
-// ShellTabView's own empty-state strip) or 1 shell (FR-11) — a single-shell
-// session must stay pixel-identical to today's SHELL tab.
+// multiple-shells §8, redrawn for Graphite & Signal (Figma "Shell tabs"
+// 136:6067): the SHELL tab's sub-tab strip — one tab per shell (terminal glyph,
+// name, unread dot, ✕ on hover), a `+`, and the active shell's cwd on the right.
+// The design shows the strip at every shell count, so FR-11's "hidden at ≤1"
+// rule is superseded: the cwd it carries used to live in the footer.
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X } from 'lucide-react';
 import type { SessionId } from '../../../contract/common';
 import type { ShellId, ShellInfo } from '../../../contract/shell-terminal';
-import { StatusDot } from '../../ui/StatusDot';
-import { atShellCap, stripVisible, truncateShellLabel } from './shell';
+import { Icon } from '../../ui/Icon';
+import { atShellCap, truncateShellLabel } from './shell';
 import { closeShell, newShell, renameShell } from './shellActions';
 import { useShellStore, useShellUnread } from './shellStore';
 import './shell.css';
@@ -17,16 +17,15 @@ export interface ShellStripProps {
   sessionId: SessionId;
   shells: ShellInfo[];
   activeShellId: ShellId | null;
-  /** Renders even at ≤1 shell, holding only the `+` (FR-23 empty state). */
-  forceVisible?: boolean;
+  /** The active shell's working directory, already abbreviated for display. */
+  cwdLabel?: string | null;
 }
 
-export default function ShellStrip({ sessionId, shells, activeShellId, forceVisible = false }: ShellStripProps) {
-  if (!forceVisible && !stripVisible(shells)) return null;
+export default function ShellStrip({ sessionId, shells, activeShellId, cwdLabel }: ShellStripProps) {
   const atCap = atShellCap(shells);
 
   return (
-    <div className="shell-strip scz">
+    <div className="shell-strip scz" role="tablist" aria-label="Shells">
       {shells.map((s) => (
         <ShellChip
           key={s.id}
@@ -40,13 +39,22 @@ export default function ShellStrip({ sessionId, shells, activeShellId, forceVisi
           onClose={() => void closeShell(sessionId, s.id)}
         />
       ))}
-      <span
-        className={atCap ? 'shell-chip shell-chip--plus shell-chip--disabled' : 'shell-chip shell-chip--plus'}
+      <button
+        type="button"
+        className="shell-strip__new"
         title={atCap ? '6 shells maximum' : 'New shell  ⌘T'}
-        onClick={atCap ? undefined : () => void newShell(sessionId)}
+        aria-label="New shell"
+        disabled={atCap}
+        onClick={() => void newShell(sessionId)}
       >
-        <Plus size={12} />
-      </span>
+        <Icon name="plus" size={13} />
+      </button>
+      <span className="shell-strip__spacer" />
+      {cwdLabel && (
+        <span className="shell-strip__cwd truncate" title={cwdLabel}>
+          {cwdLabel}
+        </span>
+      )}
     </div>
   );
 }
@@ -97,10 +105,12 @@ function ShellChip({
     <span
       onClick={editing ? undefined : onSelect}
       onDoubleClick={editing ? undefined : startRename}
-      title={editing ? undefined : shell.name}
-      className={active ? 'shell-chip shell-chip--active' : 'shell-chip'}
+      title={editing ? undefined : shell.alive ? shell.name : `${shell.name} — exited`}
+      role="tab"
+      aria-selected={active}
+      className={['shell-chip', active && 'shell-chip--active', !shell.alive && 'shell-chip--exited'].filter(Boolean).join(' ')}
     >
-      <StatusDot color={shell.alive ? 'var(--success)' : 'var(--error)'} size={6} />
+      <Icon name="terminal" size={13} className="shell-chip__icon" />
       {editing ? (
         <input
           ref={inputRef}
@@ -131,7 +141,7 @@ function ShellChip({
         title="Close shell"
         className="shell-chip-close"
       >
-        <X size={11} />
+        <Icon name="x" size={11} />
       </span>
     </span>
   );

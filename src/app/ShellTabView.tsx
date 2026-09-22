@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { SessionId } from '../../contract/common';
 import type { ShellEnsureData, ShellId } from '../../contract/shell-terminal';
+import ShellHint from '../features/shell/ShellHint';
 import ShellStrip from '../features/shell/ShellStrip';
 import ShellTerminal from '../features/shell/ShellTerminal';
 import { useActiveShellId, useShellsFor, useShellStore } from '../features/shell/shellStore';
 import { useShellShortcuts } from '../features/shell/useShellShortcuts';
 import { shellEnsure } from '../lib/api';
+import { useStore } from '../lib/store';
 import { EmptyPane } from '../ui/EmptyPane';
-import { StatusDot } from '../ui/StatusDot';
 import { shellFooterPath } from './appShell';
 
 export interface ShellTabViewProps {
@@ -38,12 +39,13 @@ export interface ShellTabViewProps {
   visible?: boolean;
 }
 
-/** The SHELL main tab's body: the sub-tab strip (multiple-shells), the PTY
- * terminal(s) — every shell of the session stays mounted while this tab is
- * (FR-13) — and the footer (alive dot, shell name + cwd, interrupt/clear hints). */
+/** The SHELL main tab's body: the sub-tab strip (multiple-shells; carries the
+ * active shell's cwd), the PTY terminal(s) — every shell of the session stays
+ * mounted while this tab is (FR-13) — and the hint rail (Figma 136:6100). */
 export default function ShellTabView({ sessionId, home, paneFocused = true, visible = true }: ShellTabViewProps) {
   const shells = useShellsFor(sessionId);
   const activeShellId = useActiveShellId(sessionId);
+  const inWorktree = useStore((s) => Boolean(s.sessions.find((m) => m.id === sessionId)?.worktree));
   const [attachError, setAttachError] = useState<string | null>(null);
   // Flow 1: a brand-new session's very first attach (create-if-none) is the
   // only time `shells` is genuinely empty AND nothing is wrong — this guards
@@ -117,7 +119,7 @@ export default function ShellTabView({ sessionId, home, paneFocused = true, visi
   if (shells.length === 0) {
     return (
       <div className="app-shell-view">
-        <ShellStrip sessionId={sessionId} shells={shells} activeShellId={activeShellId} forceVisible />
+        <ShellStrip sessionId={sessionId} shells={shells} activeShellId={activeShellId} />
         <EmptyPane className="shell-empty">
           <div>No shells</div>
           <div className="shell-empty__hint">{attachError ? `${attachError} · ` : ''}⌘T to open one</div>
@@ -128,7 +130,12 @@ export default function ShellTabView({ sessionId, home, paneFocused = true, visi
 
   return (
     <div className="app-shell-view">
-      <ShellStrip sessionId={sessionId} shells={shells} activeShellId={activeShellId} />
+      <ShellStrip
+        sessionId={sessionId}
+        shells={shells}
+        activeShellId={activeShellId}
+        cwdLabel={active?.cwd ? shellFooterPath(active.cwd, active.shellName, home) : null}
+      />
       <div className="app-shell-terminal-wrap">
         {shells.map((s) => (
           <ShellTerminal
@@ -144,25 +151,7 @@ export default function ShellTabView({ sessionId, home, paneFocused = true, visi
           />
         ))}
       </div>
-      <div className="app-shell-footer">
-        <StatusDot color={active?.alive ? 'var(--success)' : 'var(--error)'} size={7} />
-        <span>
-          {active?.shellName || 'shell'}
-          {active?.cwd && (
-            <>
-              {' '}
-              <span className="app-text-faint">·</span> {shellFooterPath(active.cwd, active.shellName, home)}
-            </>
-          )}
-        </span>
-        <span className="app-flex-spacer" />
-        <span>
-          <span className="app-text-hint">⌃C</span> interrupt
-        </span>
-        <span>
-          <span className="app-text-hint">⌃L</span> clear
-        </span>
-      </div>
+      <ShellHint inWorktree={inWorktree} alive={active ? active.alive : null} />
     </div>
   );
 }

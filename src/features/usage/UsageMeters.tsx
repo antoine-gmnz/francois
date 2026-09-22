@@ -26,10 +26,9 @@ function MeterChip({ chip }: { chip: MeterChipView }) {
   return (
     <span title={chip.title} className="usage-chip">
       <span className="usage-chip-label">{chip.label}</span>
-      <span className="usage-track">
-        {/* renders straight at its final width — no transition (FR-25) */}
+      {/* <span className="usage-track">
         <span className="usage-fill" style={{ width: `${chip.fillPercent}%`, background: chip.color }} />
-      </span>
+      </span> */}
       {/* No inline colour: the fill above carries the severity hue, the figure
           stays neutral (--text-hint) as in the mock — design-refresh FR-4. */}
       <span className="usage-percent">{chip.percentText}</span>

@@ -19,11 +19,11 @@ import type { ReactNode } from 'react';
 import type { AccountId } from '../../../contract/common';
 import type { Account, CliToolStatus } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
+import { Button } from '../../ui/Button';
 import { accountIsEndpoint } from './accounts';
 import { CliToolCard, CliToolChip } from './CliToolCard';
 import { IDLE_INSTALL, loginBlockedReason, type CliInstallState } from './cliTools';
 import { ApiKeyRow, CredentialCard } from './CredentialCard';
-import { ProviderTile } from './ProviderTile';
 import {
   cliSectionState,
   credentialLoginLabel,
@@ -32,6 +32,7 @@ import {
   type ProviderGroup,
 } from './providers';
 import './accounts.css';
+import './accounts-page.css';
 
 export interface ProviderDetailProps {
   group: ProviderGroup;
@@ -103,38 +104,28 @@ export function ProviderDetail({
   // is SPAWN_FAILED, so the button is disabled with the reason rather than left
   // to fail — the same trade the endpoint form makes with an unreachable URL.
   const loginBlocked = loginBlockedReason(group.spec, cliTool);
-  // The mock hangs the dot off the provider name too, so the pane says the same
-  // thing the rail row said — you never have to look back at the rail to check.
-  const dotClass = group.status === 'none' ? null : `acc-dot acc-dot--${group.status}`;
+  const meta = [group.meta, cli.available && group.spec.cliName ? `${group.spec.cliName} CLI` : null].filter(Boolean).join(' · ');
 
   return (
-    <div className="scz acc-detail">
+    <div className="acc-detail">
       <div className="acc-detail-head">
-        <ProviderTile spec={group.spec} size="lg" />
-        <div className="acc-detail-title">
-          <span className="truncate acc-detail-name">{group.spec.name}</span>
-          <span className="acc-detail-meta">
-            {dotClass && <span className={dotClass} aria-hidden="true" />}
-            <span className="truncate">{group.meta}</span>
-          </span>
-        </div>
-        <div className="acc-detail-actions">
-          {/* The mock's "+ ADD LOGIN" sits in the pane header, and "+ ADD KEY"
-              in the API KEYS section head — deliberately not two identical
-              buttons side by side. Absent (not disabled) where the provider has
-              no CLI at all: the section below already explains why. */}
-          {cli.available && (
-            <button
-              type="button"
-              className="acc-ghost-add"
-              disabled={busy || loginBlocked !== null}
-              onClick={onAddLogin}
-              title={loginBlocked ?? `Sign in to ${group.spec.name} with the ${group.spec.cliLogin} CLI`}
-            >
-              + Add login
-            </button>
-          )}
-        </div>
+        <span className="acc-detail-name">{group.spec.name}</span>
+        <span className="acc-detail-meta">
+          <span className="truncate">{meta}</span>
+          <CliToolChip tool={cliTool} />
+        </span>
+        {/* Absent (not disabled) where the provider has no CLI at all: the
+            section below already explains why. */}
+        {cli.available && (
+          <Button
+            size="sm"
+            disabled={busy || loginBlocked !== null}
+            onClick={onAddLogin}
+            title={loginBlocked ?? `Sign in to ${group.spec.name} with the ${group.spec.cliLogin} CLI`}
+          >
+            Add login
+          </Button>
+        )}
       </div>
 
       {takeover ?? (
@@ -142,11 +133,6 @@ export function ProviderDetail({
           {form}
 
           <div className="acc-section">
-            <div className="acc-section-head">
-              <span className="acc-section-eyebrow">CLI logins</span>
-              <span className="acc-section-rule" />
-              <CliToolChip tool={cliTool} />
-            </div>
             <div className="acc-section-body">
               {/* Above BOTH branches, deliberately: a missing CLI is the reason
                   the credentials below cannot be used, and for xAI it is the
@@ -197,17 +183,15 @@ export function ProviderDetail({
           <div className="acc-section">
             <div className="acc-section-head">
               <span className="acc-section-eyebrow">API keys</span>
-              <span className="acc-section-rule" />
               {keys.available && (
-                <button
-                  type="button"
-                  className="acc-section-action"
+                <Button
+                  size="sm"
                   disabled={busy}
                   onClick={onAddKey}
                   title={`Register an OpenAI-compatible ${group.spec.name} endpoint`}
                 >
-                  + Add key
-                </button>
+                  Add key
+                </Button>
               )}
             </div>
             <div className="acc-section-body">

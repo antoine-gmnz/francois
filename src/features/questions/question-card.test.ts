@@ -300,9 +300,9 @@ describe('composer placeholder (FR-20)', () => {
   });
 
   it('swaps while a pending card exists and reverts after', () => {
-    expect(composerPlaceholder('running', undefined, true)).toBe('answer the question above — typed messages will queue');
-    expect(composerPlaceholder('running', undefined, false)).toBe('send a follow-up, or run a command…');
-    expect(composerPlaceholder('idle', undefined, false)).toBe('send a follow-up, or run a command…');
+    expect(composerPlaceholder('running', undefined, true)).toBe('Answer above, or type a reply…');
+    expect(composerPlaceholder('running', undefined, false)).toBe('Send a follow-up, or type / for commands');
+    expect(composerPlaceholder('idle', undefined, false)).toBe('Send a follow-up, or type / for commands');
   });
 
   it('done/error placeholders win over the question hint', () => {

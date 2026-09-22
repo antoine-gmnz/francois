@@ -1,289 +1,381 @@
-/* overview — the OVERVIEW main tab (cross-project dashboard). Static layout
-   only; status-driven colors, the selected/hover row background, and the
-   pulsing status dot stay inline or come from the shared `.list-row` /
-   `.status-dot` utilities in styles.css. */
+/* overview — the OVERVIEW main tab, redesign "Graphite & Signal" (Figma
+   "15 · Overview" 138:6405, light 142:14045). Colour only from theme tokens, so
+   both themes follow data-theme on <html>. */
 
 .ov-root {
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: var(--space-14) var(--space-16);
+  background: var(--bg-canvas);
 }
 
-/* Extra top gap for the two-column split below the totals strip; `.ov-split`
-   itself is a shared utility owned by styles.css. */
-.ov-content-gap {
-  margin-top: var(--space-16);
-}
-
-/* ---------- totals strip ---------- */
-
-.ov-totals-strip {
+.ov-main {
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  gap: var(--space-28);
+  padding: 36px 48px;
+}
+
+/* ---------- header ---------- */
+
+.ov-header {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-16);
   flex-wrap: wrap;
-  gap: var(--space-4) 22px;
-  padding: var(--space-2) 0 var(--space-18);
 }
 
-.ov-totals-label {
-  font-size: var(--font-size-11);
-  letter-spacing: 0.14em;
-  font-weight: 600;
-  color: var(--accent);
-  margin-right: var(--space-4);
+.ov-header__title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  flex: 1 1 320px;
+  min-width: 0;
 }
 
-.ov-totals-divider {
-  color: var(--text-disabled);
-  font-size: var(--font-size-11);
+.ov-headline {
+  margin: 0;
+  color: var(--text-primary);
+  font: 600 26px/34px var(--font-ui);
+  letter-spacing: -0.02em;
 }
 
-.ov-totals-quiet {
-  font-size: var(--font-size-11);
-  color: var(--text-faint);
+.ov-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font: var(--type-body);
 }
 
-.ov-figure {
+/* "All projects ▾" */
+.ov-filter {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ov-filter__button {
   display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-5);
+  align-items: center;
+  gap: var(--space-6);
+  height: 30px;
+  max-width: 220px;
+  padding: 0 var(--space-10);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: var(--type-ui);
+  cursor: pointer;
+}
+.ov-filter__button:hover {
+  background: var(--bg-raised);
+}
+.ov-filter__button .icon {
+  color: var(--text-muted);
 }
 
-.ov-figure-value {
-  font-size: var(--font-size-17);
-  font-weight: 500;
-  line-height: 1;
+.ov-filter__menu {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  background: var(--bg-card);
+  /* A floating layer has no surface behind it to step against. */
+  box-shadow: var(--shadow-dropdown);
 }
 
-.ov-figure-label {
-  font-size: var(--font-size-10-5);
-  color: var(--text-faint);
-}
-
-/* ---------- section shell ---------- */
-
-.ov-section {
-  margin-bottom: 20px;
-}
-
-.ov-section-header {
+.ov-filter__row {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  margin-bottom: var(--space-8);
+  height: 28px;
+  padding: 0 var(--space-8);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-secondary);
+  font: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
 }
-
-.ov-section-title {
-  font-size: var(--font-size-10);
-  letter-spacing: 0.14em;
-  font-weight: 600;
-  color: var(--text-dim);
+.ov-filter__row:hover {
+  background: var(--bg-raised);
 }
-
-.ov-section-count {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+.ov-filter__row--on {
+  color: var(--text-primary);
 }
-
-.ov-muted {
-  font-size: var(--font-size-11);
-  color: var(--text-faint);
-  padding: var(--space-4) 0;
-}
-
-/* ---------- needs attention ---------- */
-
-.ov-attention-row {
-  gap: var(--space-9);
-  padding: var(--space-7) var(--space-9);
-  margin-bottom: var(--space-3);
-  border-radius: var(--radius-base);
-}
-
-.ov-attention-name {
-  font-size: var(--font-size-11-5);
-  color: var(--text);
+.ov-filter__row .icon {
+  margin-left: auto;
   flex-shrink: 0;
-  max-width: 38%;
 }
 
-.ov-attention-detail {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-10-5);
+.ov-filter__rule {
+  height: 1px;
+  margin: var(--space-4) 0;
+  background: var(--line-subtle);
 }
 
-.ov-attention-time {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+/* ---------- card grid ---------- */
+
+.ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-14);
 }
 
-/* ---------- project rollup ---------- */
-
-.ov-group {
-  margin-bottom: var(--space-14);
-}
-
-.ov-group-header {
+.ov-card {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-9);
-  padding: 0 0 var(--space-5);
+  flex-direction: column;
+  gap: var(--space-14);
+  min-width: 0;
+  padding: var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-input);
+  cursor: pointer;
+}
+.ov-card:hover {
+  border-color: var(--line-default);
+}
+.ov-card:focus-visible {
+  outline: 2px solid var(--state-running);
+  outline-offset: 1px;
+}
+.ov-card--attention {
+  border-color: var(--tint-attention-line);
+  background: var(--tint-attention);
+}
+.ov-card--attention:hover {
+  border-color: var(--state-attention);
 }
 
-.ov-group-name {
-  font-size: var(--font-size-12);
-  font-weight: 500;
-}
-
-.ov-group-missing {
-  font-size: var(--font-size-9);
-  color: var(--error);
-}
-
-.ov-group-root {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
-  flex: 1;
+.ov-card__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
   min-width: 0;
 }
 
-.ov-group-subtitle {
+.ov-card__label {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-small-medium);
+  color: var(--text-muted);
+}
+.ov-card--approval .ov-card__label,
+.ov-card--question .ov-card__label {
+  color: var(--state-attention-text);
+}
+.ov-card--review .ov-card__label {
+  color: var(--state-success-text);
+}
+.ov-card--running .ov-card__label {
+  color: var(--state-running);
+}
+.ov-card--failed .ov-card__label {
+  color: var(--state-danger-text);
+}
+
+.ov-card__age {
   flex-shrink: 0;
-  font-size: var(--font-size-10);
+  font: var(--type-mono-small);
   color: var(--text-faint);
 }
 
-.ov-group-empty {
-  font-size: var(--font-size-10-5);
+.ov-card__name-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ov-card__name {
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
+}
+
+.ov-card__where {
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+
+.ov-card__output {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  min-width: 0;
+  padding: 0 var(--space-11);
+  border-radius: var(--radius-4);
+  background: var(--bg-canvas);
+  font: var(--type-mono);
+  color: var(--text-secondary);
+}
+
+.ov-card__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-width: 0;
+  margin-top: auto;
+}
+
+.ov-card__stat {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+}
+.ov-card__add {
+  color: var(--state-success);
+}
+.ov-card__del {
+  color: var(--state-danger);
+}
+
+.ov-card__note {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+
+.ov-card__actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.ov-card__actions-item {
+  display: inline-flex;
+  align-items: center;
+}
+.ov-card__sep {
+  padding: 0 var(--space-2);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+}
+.ov-card__failed {
+  margin-right: var(--space-6);
+  font: var(--type-small);
+  color: var(--state-danger-text);
+}
+
+.ov-card__action {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.ov-card__action:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ov-card__action:disabled {
   color: var(--text-disabled);
-  padding: var(--space-3) 0 var(--space-3) var(--space-10);
+  cursor: default;
+  text-decoration: none;
 }
 
-.ov-session-row {
-  gap: var(--space-9);
-  padding: var(--space-6) var(--space-9);
-  margin-bottom: var(--space-2);
-  border-radius: var(--radius-base);
-}
-
-.ov-session-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--font-size-11-5);
-}
-
-.ov-session-status {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-  width: 44px;
-  text-align: right;
-}
-
-.ov-session-model {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
-  width: 62px;
-  text-align: right;
-}
-
-.ov-session-ctx {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-  width: 62px;
-  text-align: right;
-}
-
-.ov-session-ctx-label {
+.ov-quiet {
+  font: var(--type-ui);
   color: var(--text-faint);
 }
 
-.ov-session-ctx-value {
-  color: var(--text-hint);
+/* ---------- by project ---------- */
+
+.ov-project {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
 }
 
-.ov-session-files {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-  width: 34px;
-  text-align: right;
-  color: var(--text-hint);
+.ov-project__missing {
+  color: var(--state-danger-text);
 }
 
-.ov-session-agents {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-  width: 30px;
-  text-align: right;
-  color: var(--accent);
+/* ---------- activity trail ---------- */
+
+.ov-trail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
 }
 
-.ov-session-time {
+.ov-event {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  width: 100%;
+  padding: var(--space-10) 0;
+  border: 0;
+  border-top: 1px solid var(--line-subtle);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ov-event:hover .ov-event__session {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ov-event__time {
   flex-shrink: 0;
-  font-size: var(--font-size-10);
+  width: 56px;
+  font: var(--type-mono);
   color: var(--text-faint);
-  width: 30px;
-  text-align: right;
 }
 
-/* ---------- activity feed ---------- */
-
-.ov-activity-row {
-  align-items: baseline;
-  gap: var(--space-7);
-  padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-sm);
-}
-
-.ov-activity-time {
+.ov-event__icon {
+  display: inline-flex;
   flex-shrink: 0;
-  font-size: var(--font-size-9-5);
-  color: var(--text-faint);
-  width: 26px;
+  color: var(--text-muted);
+}
+.ov-event--failed .ov-event__icon {
+  color: var(--state-danger);
 }
 
-.ov-activity-text {
+.ov-event__session {
+  flex-shrink: 0;
+  width: 160px;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+
+.ov-event__text {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-10-5);
-  color: var(--text-dim);
+  font: var(--type-ui);
+  color: var(--text-muted);
 }
-
-.ov-activity-session {
-  color: var(--text);
+.ov-event__detail {
+  font: var(--type-mono);
+  color: var(--text-secondary);
 }
-
-.ov-activity-detail {
-  color: var(--text-faint);
+.ov-event--failed .ov-event__text,
+.ov-event--failed .ov-event__detail {
+  color: var(--state-danger);
 }
 
 /* ---------- empty state ---------- */
 
 .ov-empty {
-  height: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-10);
-  color: var(--text-faint);
-  font-size: var(--font-size-12-5);
+  gap: var(--space-8);
+  padding: 36px 48px;
 }
 
-.ov-empty-actions {
+.ov-empty__actions {
   display: flex;
-  gap: var(--space-16);
-  font-size: var(--font-size-11);
-}
-
-.ov-empty-action {
-  cursor: pointer;
-  color: var(--text-dim);
-}
-
-.ov-empty-action-key {
-  color: var(--accent);
+  gap: var(--space-8);
+  margin-top: var(--space-12);
 }

@@ -266,7 +266,84 @@ export function composerPlaceholder(
 ): string {
   if (status === 'done') return 'session ended — press n for a new one';
   if (status === 'error') return errorMessage || 'session error';
-  if (pendingQuestion) return 'answer the question above — typed messages will queue';
-  if (pendingPermission) return 'approve or deny the request above — typed messages will queue';
-  return 'send a follow-up, or run a command…';
+  if (pendingQuestion) return 'Answer above, or type a reply…';
+  if (pendingPermission) return 'Allow above, or type a reply…';
+  return 'Send a follow-up, or type / for commands';
+}
+
+// ---------- Graphite & Signal (Figma 02–03) ----------
+
+/**
+ * Figma 02: a pending card opens with each recommendation already picked, so
+ * `Answer` (⏎) is "accept recommended" until you pick something else. Nothing
+ * is sent until you press it — preselecting is not answering.
+ */
+export function initialSelections(questions: SessionQuestion[]): SectionSelection[] {
+  return acceptRecommended(questions, initSelections(questions));
+}
+
+/** True while every section holds exactly its recommendation (and at least one exists). */
+export function isRecommendedSelection(questions: SessionQuestion[], sel: SectionSelection[]): boolean {
+  if (recommendedCount(questions) === 0) return false;
+  const rec = acceptRecommended(questions, sel);
+  return rec.every((s, i) => {
+    const cur = sel[i];
+    return cur !== undefined && cur.freeText === s.freeText && cur.selected.length === s.selected.length && cur.selected.every((l, j) => l === s.selected[j]);
+  });
+}
+
+/**
+ * The "Something else" field is always open (Figma 02), so its text is the
+ * section's free-text answer as it is typed. On a single-select section real
+ * text displaces the picked option (one answer per section); whitespace does
+ * not. A question that disallows free text is left untouched.
+ */
+export function setFreeText(
+  questions: SessionQuestion[],
+  sel: SectionSelection[],
+  sectionIdx: number,
+  text: string,
+): SectionSelection[] {
+  const q = questions[sectionIdx];
+  if (!q || (q.options.length > 0 && q.isOther === false)) return sel;
+  return sel.map((s, i) => {
+    if (i !== sectionIdx) return s;
+    if (q.multiSelect || text.trim() === '') return { ...s, freeText: text };
+    return { selected: [], freeText: text };
+  });
+}
+
+export type StepAdvance = { kind: 'blocked' } | { kind: 'next'; step: number } | { kind: 'submit' };
+
+/**
+ * What `Answer` does on the shown question: nothing while it is unanswered,
+ * otherwise move to the next unanswered question (wrapping round), and submit
+ * once none is left.
+ */
+export function advanceStep(sel: SectionSelection[], step: number): StepAdvance {
+  const cur = sel[step];
+  if (cur === undefined || !sectionComplete(cur)) return { kind: 'blocked' };
+  for (let k = 1; k < sel.length; k++) {
+    const i = (step + k) % sel.length;
+    if (!sectionComplete(sel[i]!)) return { kind: 'next', step: i };
+  }
+  return { kind: 'submit' };
+}
+
+/** Figma 02 head: `Question · 1 of 1`. */
+export function questionHeading(step: number, total: number): string {
+  return `Question · ${step + 1} of ${total}`;
+}
+
+/**
+ * Figma 03: the answered record's second line — the picked option(s) as they
+ * read on the card (marker stripped), and whether that answer was the
+ * recommendation.
+ */
+export function answerSummary(q: SessionQuestion, answer: string | undefined): { text: string; recommended: boolean } {
+  const { chosen, freeText } = answeredSelection(q, answer);
+  const parts = q.options.filter((o) => chosen.includes(o.label)).map((o) => displayLabel(o.label));
+  if (freeText !== null && freeText !== '') parts.push(freeText);
+  const recommended = freeText === null && chosen.length === 1 && q.options.some((o) => o.label === chosen[0] && isRecommended(o));
+  return { text: parts.join(', '), recommended };
 }

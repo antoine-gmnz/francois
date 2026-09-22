@@ -1,7 +1,6 @@
-// projects — the small inline error line shared by ProjectsModal's Identity,
-// Session defaults and Standards groups. Split out of ProjectsModal per
-// REFACTOR.md §6c.
+// projects — the small inline error line shared by the project settings'
+// General, Session defaults and Standards tabs.
 
-export function InlineError({ children, indent }: { children: React.ReactNode; indent?: boolean }) {
-  return <div className={indent ? 'pj-inline-error pj-inline-error--indented' : 'pj-inline-error'}>{children}</div>;
+export function InlineError({ children }: { children: React.ReactNode }) {
+  return <div className="pj-inline-error">{children}</div>;
 }

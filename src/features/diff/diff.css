@@ -1,278 +1,55 @@
-/* DiffView (main tab DIFF) — layout shell, vertical file selector, diff body
-   rows and the stage/commit footer. Colours reference the shared tokens in
-   src/styles.css directly (no local alias object). */
+/* DiffView (main tab Changes) — Graphite & Signal, Figma "09 · Review / Diff
+   comments" (135:5022 dark / 142:12031 light): a review bar over a 280px file
+   tree and the diff pane (file header + windowed rows). Tokens only. */
 
 .diff-view {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg-deep);
+  background: var(--bg-canvas);
 }
-/* session-worktree FR-15: dim, read-only sibling-worktree hint — no links, no
-   buttons, no hover affordance. design brief §"Narrow window": middle-/left-
-   truncate (direction: rtl) rather than a trailing ellipsis, so the branch list
-   at the tail stays visible — same intent as the FR-13 branch chip. */
-.diff-sibling-line {
-  padding: 6px var(--space-14) var(--space-10);
-  font-size: 10.5px;
+
+/* ── review bar (135:5161) ── */
+.diff-review-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 50px;
+  padding: var(--space-8) var(--space-24);
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--line-subtle);
+  flex-shrink: 0;
+}
+.diff-review-bar__stat {
+  font: var(--type-mono-medium);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.diff-review-bar__count {
+  font: var(--type-ui);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.diff-review-bar__meter .meter__fill {
+  background: var(--state-success);
+}
+/* diff-navigator FR-26: a statement, not an alarm — plain text, no icon. */
+.diff-review-bar__hidden {
+  font: var(--type-small);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
-  direction: rtl;
-  text-align: left;
-}
-.diff-main {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-/* vertical file selector */
-.diff-filelist {
-  width: 236px;
-  flex-shrink: 0;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  padding: var(--space-8) var(--space-6);
-}
-.diff-filelist__header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-4) var(--space-8) var(--space-6);
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: var(--font-size-10-5);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-/* diff-navigator: filter box — pinned above the header row (design brief §Left column) */
-.diff-filter {
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-4) var(--space-8);
-  margin-bottom: var(--space-6);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-base);
-  background: var(--bg-elevated);
-}
-.diff-filter:focus-within {
-  border-color: var(--accent-soft-edge);
-  background: var(--accent-soft-bg);
-}
-.diff-filter__icon {
-  flex-shrink: 0;
-  color: var(--text-faint);
-}
-.diff-filter__input {
-  flex: 1;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: var(--font-size-12);
-  color: var(--text-2);
 }
-.diff-filter__input::placeholder {
-  color: var(--text-faint);
-}
-.diff-filter__hint {
-  flex-shrink: 0;
-  color: var(--text-faint);
-  font-size: var(--font-size-10);
-}
-
-/* diff-navigator: folder tree */
-.diff-tree {
-  display: flex;
-  flex-direction: column;
-}
-.diff-tree-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-5) var(--space-8);
-  border-radius: var(--radius-base);
-  margin-bottom: var(--space-1);
-  cursor: pointer;
-}
-.diff-tree-row--folder:hover {
-  background: var(--bg-hover);
-}
-.diff-tree-row--cursor {
-  outline: 1px solid var(--border-emphasis);
-  outline-offset: -1px;
-}
-.diff-tree-row__caret {
-  flex-shrink: 0;
-  width: var(--space-9);
-  text-align: center;
-  color: var(--text-faint);
-  user-select: none;
-}
-.diff-tree-row__label {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-12);
-  color: var(--text-muted);
-}
-.diff-checkbox--dim {
-  opacity: 0.55;
-  cursor: default;
-  pointer-events: none;
-}
-.diff-tree__no-match {
-  padding: var(--space-6) var(--space-8);
-  font-size: var(--font-size-12);
-  color: var(--text-faint);
-}
-.diff-file-name__match {
-  color: var(--text-bright);
-  font-weight: 600;
-}
-
-.diff-body {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
-
-/* checkbox — border/background depend on checked/indeterminate, set inline */
-.diff-checkbox {
-  width: var(--space-13);
-  height: var(--space-13);
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--bg-deep);
-  font-size: var(--font-size-10);
-  line-height: 1;
-  user-select: none;
-}
-.diff-checkbox-dash {
-  width: var(--space-6);
-  height: 1.5px;
-  background: var(--accent);
-}
-.diff-checkbox-wrap {
-  display: inline-flex;
-  flex-shrink: 0;
-}
-
-/* file row — pairs with src/ui/ListRow (list-row / list-row--selected handle
-   the background); this adds the layout + the left accent border. */
-.diff-file-row {
-  gap: var(--space-7);
-  padding: var(--space-5) var(--space-8);
-  border-radius: var(--radius-base);
-  margin-bottom: var(--space-1);
-  border-left: 2px solid transparent;
-}
-.diff-file-row.list-row--selected {
-  border-left-color: var(--accent);
-}
-.diff-file-status {
-  width: var(--space-9);
-  flex-shrink: 0;
-  font-size: var(--font-size-9-5);
-  font-weight: 600;
-  text-align: center;
-}
-.diff-file-name {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-12);
-}
-.diff-file-stat {
-  flex-shrink: 0;
-  font-size: var(--font-size-10);
-}
-
-.diff-color-add {
-  color: var(--success);
-}
-.diff-color-del {
-  color: var(--error);
-}
-
-.diff-empty-state {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--font-size-12-5);
-  color: var(--text-faint);
-  text-align: center;
-  padding: 0 var(--space-24);
-}
-
-/* windowed diff body — paddingTop/paddingBottom are computed from the visible
-   window and stay inline; font-size/line-height are constant (ROW_H). */
-.diff-rows {
-  font-size: var(--font-size-12);
-  line-height: 21px;
-}
-.diff-row {
-  display: flex;
-  background: var(--row-bg, transparent);
-  padding: 0 var(--space-12);
-}
-.diff-row__no {
-  width: 34px;
-  flex-shrink: 0;
-  text-align: right;
-  padding-right: var(--space-12);
-  font-size: var(--font-size-10-5);
-  user-select: none;
-}
-.diff-row__sign {
-  width: var(--space-12);
-  flex-shrink: 0;
-  user-select: none;
-}
-.diff-row__text {
-  white-space: pre;
-}
-
-.diff-placeholder {
-  padding: var(--space-16) var(--space-14);
-  font-size: var(--font-size-12);
-  color: var(--text-faint);
-}
-
-/* footer / commit bar */
-.diff-footer {
-  padding: var(--space-10) var(--space-14);
-  background: var(--bg-panel);
-  display: flex;
-  align-items: center;
-  gap: var(--space-14);
-  font-size: var(--font-size-11);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.diff-footer__spacer {
+.diff-review-bar__spacer {
   flex: 1;
 }
-.diff-footer__hint {
-  color: var(--text-hint);
-  cursor: pointer;
-}
-.diff-footer__hint--inert {
-  color: var(--text-disabled);
-  cursor: default;
-}
-/* diff-navigator FR-26: a statement, not an alarm — plain text, no icon, no badge */
-.diff-footer__hidden-warn {
-  color: var(--warn);
+.diff-review-bar__committed {
+  font: var(--type-mono);
+  color: var(--state-success-text);
 }
 
 .diff-commit-form {
@@ -286,30 +63,396 @@
 .diff-commit-row {
   display: flex;
   align-items: center;
-  gap: var(--space-10);
+  gap: var(--space-8);
   min-width: 0;
   align-self: stretch;
   justify-content: flex-end;
 }
-.diff-commit-prompt {
-  color: var(--accent);
-  font-size: var(--font-size-13);
-}
 .diff-commit-input {
   flex: 1;
-  max-width: 320px;
-  min-width: 80px;
+  max-width: 360px;
+  min-width: 120px;
+  height: 30px;
+  padding: 0 var(--space-10);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+  outline: none;
+  background: var(--bg-input);
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.diff-commit-input::placeholder {
+  color: var(--text-faint);
+}
+.diff-commit-input:focus {
+  border-color: var(--line-strong);
+}
+.diff-commit-error {
+  font: var(--type-small);
+  color: var(--state-danger-text);
+}
+
+/* session-worktree FR-15: dim, read-only sibling-worktree hint. Left-truncated
+   (direction: rtl) so the branch list at the tail stays visible. */
+.diff-sibling-line {
+  padding: var(--space-6) var(--space-24);
+  font: var(--type-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  direction: rtl;
+  text-align: left;
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.diff-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ── file tree (135:5177) ── */
+.diff-filelist {
+  width: 280px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line-subtle);
+  padding: var(--space-12) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.diff-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 30px;
+  padding: 0 var(--space-10);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  background: var(--bg-input);
+  flex-shrink: 0;
+}
+.diff-filter:focus-within {
+  border-color: var(--line-default);
+}
+.diff-filter__icon {
+  color: var(--text-faint);
+}
+.diff-filter__input {
+  flex: 1;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
-  font-family: inherit;
-  font-size: var(--font-size-12-5);
+  font: var(--type-small);
+  color: var(--text-primary);
 }
-.diff-commit-action {
-  color: var(--text-hint);
+.diff-filter__input::placeholder {
+  color: var(--text-faint);
+}
+.diff-filter__hint {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+/* the commit-selection summary: quiet, one line under the filter */
+.diff-filelist__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 24px;
+  margin: var(--space-4) 0 var(--space-2);
+  padding: 0 var(--space-10);
+  font: var(--type-small);
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: var(--radius-4);
+  flex-shrink: 0;
+}
+.diff-filelist__header:hover {
+  color: var(--text-secondary);
+}
+
+.diff-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.diff-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 24px;
+  padding-right: var(--space-10);
+  border-radius: var(--radius-4);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.diff-tree-row--folder:hover {
+  background: var(--bg-raised);
+}
+.diff-tree-row--cursor {
+  outline: 1px solid var(--line-default);
+  outline-offset: -1px;
+}
+.diff-tree-row__caret {
+  color: var(--text-faint);
+}
+.diff-tree-row__label {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+.diff-tree__no-match {
+  padding: var(--space-6) var(--space-10);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+
+/* file row — pairs with src/ui/ListRow (list-row--selected is the raised fill) */
+.diff-file-row {
+  align-items: center;
+  gap: var(--space-8);
+  height: 26px;
+  padding-right: var(--space-10);
+  border-radius: var(--radius-4);
+  flex-shrink: 0;
+}
+.diff-file-row:hover:not(.list-row--selected) {
+  background: color-mix(in srgb, var(--bg-raised) 60%, transparent);
+}
+.diff-file-status {
+  flex-shrink: 0;
+  font: var(--type-mono);
+}
+.diff-file-status--info {
+  color: var(--state-info);
+}
+.diff-file-status--success {
+  color: var(--state-success);
+}
+.diff-file-status--danger {
+  color: var(--state-danger);
+}
+.diff-file-name {
+  min-width: 0;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+}
+.list-row--selected .diff-file-name {
+  color: var(--text-primary);
+}
+.diff-file-row--excluded .diff-file-name {
+  color: var(--text-faint);
+}
+.diff-file-name__match {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+.diff-file-row__spacer {
+  flex: 1;
+  min-width: 0;
+}
+.diff-file-row__reviewed {
+  color: var(--state-success);
+}
+/* The commit checkbox shows on hover, on the cursor row, or while the file is
+   left out — a fully included tree reads as the design's plain list. */
+.diff-file-row__commit {
+  display: inline-flex;
+  flex-shrink: 0;
+  visibility: hidden;
+}
+.diff-file-row:hover .diff-file-row__commit,
+.diff-tree-row--cursor .diff-file-row__commit,
+.diff-file-row--excluded .diff-file-row__commit {
+  visibility: visible;
+}
+
+/* checkbox — Figma "Checkbox" (135:5243): 14px, line/strong edge, radius 3 */
+.diff-box {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-3);
+  color: var(--text-inverse);
+  user-select: none;
+}
+.diff-box--on {
+  border-color: var(--action-primary);
+  background: var(--action-primary);
+}
+.diff-box--dim {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.diff-box__dash {
+  width: 6px;
+  height: 1.5px;
+  background: currentColor;
+}
+
+/* ── diff pane ── */
+.diff-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* file header (135:5238) */
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  height: 44px;
+  padding: 0 var(--space-20);
+  border-bottom: 1px solid var(--line-subtle);
+  flex-shrink: 0;
+}
+.diff-file-header__path {
+  min-width: 0;
+  font: var(--type-mono-medium);
+  color: var(--text-primary);
+}
+.diff-file-header__stat {
+  flex-shrink: 0;
+  font: var(--type-mono);
+  white-space: nowrap;
+}
+.diff-file-header__spacer {
+  flex: 1;
+}
+.diff-mark-reviewed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-shrink: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
   cursor: pointer;
 }
-.diff-commit-error {
-  color: var(--error);
-  font-size: var(--font-size-10-5);
+.diff-mark-reviewed:hover {
+  color: var(--text-primary);
+}
+.diff-mark-reviewed .diff-box--on {
+  border-color: var(--state-success);
+  background: var(--state-success);
+}
+/* the native box stays for keyboard + screen readers; the .diff-box draws it */
+.diff-mark-reviewed__input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+.diff-mark-reviewed:has(.diff-mark-reviewed__input:focus-visible) .diff-box {
+  outline: 2px solid var(--state-info);
+  outline-offset: 1px;
+}
+
+.diff-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.diff-color-add {
+  color: var(--state-success);
+}
+.diff-color-del {
+  color: var(--state-danger);
+}
+
+.diff-empty-state {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: var(--type-ui);
+  color: var(--text-faint);
+  text-align: center;
+  padding: 0 var(--space-24);
+}
+.diff-empty-state--error {
+  color: var(--state-danger-text);
+}
+
+/* ── rows (135:5245) — windowed; paddingTop/Bottom are computed inline. Every
+   row is exactly 22px (ROW_H in DiffListBody.tsx): nothing here may change it. */
+.diff-rows {
+  font: var(--type-mono-code);
+  min-width: 100%;
+  width: max-content;
+}
+.diff-row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+}
+.diff-row__no {
+  width: 40px;
+  flex-shrink: 0;
+  text-align: right;
+  font: var(--type-mono);
+  color: var(--text-line-number);
+  user-select: none;
+}
+.diff-row__sign {
+  width: 16px;
+  margin-left: var(--space-16);
+  flex-shrink: 0;
+  user-select: none;
+}
+.diff-row__text {
+  white-space: pre;
+  padding-right: var(--space-20);
+}
+.diff-row--hunk {
+  background: var(--tint-info);
+  color: var(--state-info);
+}
+.diff-row--hunk .diff-row__text {
+  padding-left: var(--space-20);
+}
+.diff-row--ctx {
+  color: var(--diff-context-text);
+}
+.diff-row--ctx .diff-row__sign {
+  color: var(--text-faint);
+}
+.diff-row--add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add-text);
+}
+.diff-row--del {
+  background: var(--diff-remove-bg);
+  color: var(--diff-remove-text);
+}
+/* diff-navigator FR-24: colour + background only — never a box-model change */
+.diff-row--add .diff-row__em {
+  background: color-mix(in srgb, var(--state-success) 22%, transparent);
+  color: var(--state-success-text);
+}
+.diff-row--del .diff-row__em {
+  background: color-mix(in srgb, var(--state-danger) 22%, transparent);
+  color: var(--state-danger-text);
+}
+
+.diff-placeholder {
+  padding: var(--space-16) var(--space-20);
+  font: var(--type-ui);
+  color: var(--text-faint);
+}
+.diff-placeholder--error {
+  color: var(--state-danger-text);
 }

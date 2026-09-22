@@ -1,0 +1,97 @@
+/* The SESSION welcome header — Figma "Graphite & Signal" 11 · Session / Welcome
+   (136:5306, light 142:12849). A heading and subline 80px below the top of the
+   reading column, then two filled context cards side by side. Colours are all
+   theme tokens, so both frames come from the same rules. */
+.welcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  padding-top: 80px;
+  /* So the cards can stack by the PANE's width, not the window's — a split or
+     grid quarter is narrow in a wide window. */
+  container-type: inline-size;
+}
+
+.welcome__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.welcome__title {
+  margin: 0;
+  font: var(--type-heading);
+  letter-spacing: var(--tracking-heading);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome__subline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  font: var(--type-ui);
+  color: var(--text-muted);
+}
+.welcome__subline-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome__cards {
+  display: flex;
+  gap: var(--space-12);
+}
+.welcome__card {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-14) var(--space-16);
+  background: var(--bg-rail);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+.welcome__card-head {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+}
+.welcome__card-head .icon {
+  color: var(--text-muted);
+}
+.welcome__line {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+.welcome__line--nowrap {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The noun a line is about — a filename, a branch, a session — in the mono
+   face at the primary tone (Figma: Graphite/Mono against Graphite/Small). */
+.welcome__strong {
+  font: var(--type-mono);
+  color: var(--text-primary);
+}
+.welcome__failed {
+  color: var(--state-danger-text);
+}
+
+/* Narrow panes (a split or a grid quarter): the cards stack. */
+@container (max-width: 520px) {
+  .welcome__cards {
+    flex-direction: column;
+  }
+}

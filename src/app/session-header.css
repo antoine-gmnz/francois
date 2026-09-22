@@ -1,0 +1,156 @@
+/* The session header (SessionHeader.tsx) — redesign "Graphite & Signal", Figma
+   "Session header" 131:512. 60px, 24px side padding, 16px between groups, a
+   --line-subtle bottom edge, on the canvas. */
+.session-header {
+  height: 60px;
+  flex: 0 0 60px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  padding: 0 var(--space-24);
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.session-header--empty {
+  gap: var(--space-8);
+}
+.session-header__placeholder {
+  color: var(--text-faint);
+  font: var(--type-ui);
+}
+.session-header__spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.session-header__title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.session-header__name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+}
+/* The one element in the header that may shrink. */
+.session-header__name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  text-align: left;
+  cursor: pointer;
+}
+.session-header__name:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--line-default);
+  text-underline-offset: 3px;
+}
+/* The state chip: the state's tint + its text step, 20px tall. */
+.session-header__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 20px;
+  padding: 0 var(--space-7);
+  border-radius: var(--radius-4);
+  font: var(--type-small-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.session-header__state--running {
+  background: var(--tint-running);
+  color: var(--state-running);
+}
+.session-header__state--approval,
+.session-header__state--question {
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+}
+.session-header__state--done {
+  background: var(--tint-success);
+  color: var(--state-success-text);
+}
+.session-header__state--failed {
+  background: var(--tint-danger);
+  color: var(--state-danger-text);
+}
+.session-header__state--idle,
+.session-header__state--pending {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+.session-header__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  color: var(--text-faint);
+}
+.session-header__meta-text {
+  font: var(--type-mono);
+  white-space: pre;
+  min-width: 0;
+}
+.session-header__chip {
+  padding: 0 5px;
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  flex-shrink: 0;
+}
+.session-header__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-shrink: 0;
+  min-width: 0;
+}
+/* A subagent / workflow run's tab — same 28px pill as a Tab, quieter. */
+.session-header__agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  max-width: 180px;
+  height: 28px;
+  padding: 0 var(--space-6) 0 var(--space-8);
+  border-radius: var(--radius-4);
+  color: var(--text-muted);
+  font: var(--type-small);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.session-header__agent:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.session-header__agent--on,
+.session-header__agent--on:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.session-header__agent-close {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-3);
+  color: var(--text-faint);
+}
+.session-header__agent-close:hover {
+  background: var(--bg-strong);
+  color: var(--text-primary);
+}
+.session-header__stop {
+  font: var(--type-ui);
+}
+.session-header__stop-glyph {
+  color: var(--state-danger);
+}

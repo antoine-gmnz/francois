@@ -1,0 +1,197 @@
+/* The subagent drill-in — Figma "Graphite & Signal" 17 · Subagent drill-in
+   (138:6593, light 142:14663). Header, reading column and no-input strip; every
+   colour is a theme token so the dark and light frames come from these rules. */
+
+.agent-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-canvas);
+}
+
+/* ── header (60px, the session header's slot) ── */
+.agent-view__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  height: 60px;
+  padding: 0 var(--space-24);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.agent-view__header .icon-btn {
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+.agent-view__title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.agent-view__crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.agent-view__crumb-session {
+  color: var(--text-muted);
+  min-width: 0;
+}
+.agent-view__name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+}
+.agent-view__name {
+  font: var(--type-mono-medium);
+  color: var(--text-primary);
+  min-width: 0;
+}
+/* The state chip: the state's tint behind the state's own colour. */
+.agent-view__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 20px;
+  padding: 0 var(--space-7);
+  border-radius: var(--radius-4);
+  font: var(--type-small-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+}
+.agent-view__state--running {
+  background: var(--tint-running);
+  color: var(--state-running);
+}
+.agent-view__state--done {
+  background: var(--tint-success);
+  color: var(--state-success-text);
+}
+.agent-view__state--failed {
+  background: var(--tint-danger);
+  color: var(--state-danger-text);
+}
+.agent-view__facts {
+  font: var(--type-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.agent-view__spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.agent-view__stop-glyph {
+  color: var(--state-danger);
+}
+.agent-view__error {
+  margin: var(--space-8) var(--space-24) 0;
+}
+
+/* ── body: the 680px reading column ── */
+.agent-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-28) var(--space-32);
+  /* The transcript is CONTENT — copying out of it must work (the app root
+     disables selection for chrome). */
+  user-select: text;
+  cursor: auto;
+}
+.agent-view__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  max-width: 680px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+/* The task card: what the parent asked for, first thing in the column. */
+.agent-task {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-12) var(--space-14);
+  background: var(--bg-card);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+.agent-task__meta {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  color: var(--text-faint);
+}
+.agent-task__label {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.agent-task__time {
+  font: var(--type-mono-small);
+  font-variant-numeric: tabular-nums;
+}
+.agent-task__text {
+  font: var(--type-body);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* What it is doing right now (the newest step), while it runs. */
+.agent-view__live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+}
+
+/* ── footer: the dashed no-input strip where a composer would be ── */
+.agent-view__footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-12) var(--space-32) var(--space-20);
+}
+.agent-view__no-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  width: 100%;
+  max-width: 680px;
+  height: 44px;
+  padding: 0 var(--space-14);
+  background: var(--bg-rail);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-7);
+  color: var(--text-faint);
+}
+.agent-view__no-input-text {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-view__no-input-key {
+  font: var(--type-mono-small);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

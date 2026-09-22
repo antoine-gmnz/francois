@@ -1,527 +1,383 @@
-/* permission-guardrails §8 — approval card + rules editor.
+/* permission-guardrails — the approval card and its outcome line, drawn to
+   Graphite & Signal (Figma 04 "Permission / Pending" 133:1278, 05 "/ Detail"
+   133:1634, 06 "/ Allowed once" 133:2002, 07 "/ Denied" 133:2320, 08
+   "/ Always allowed" 133:2633), plus the rules editor modal below.
 
-   Approval card (§8.1–8.9): a compact stop strip — header, the call signature,
-   the action row — with the raw input / cwd / would-be rule folded behind a
-   disclosure caret. Pending chrome is AMBER (--attn) rather than the accent,
-   because a permission ask is a stop, not a question, and acid is reserved for
-   the one live thing in a view. Motion: none — no @keyframes, no animation, no
-   transition anywhere in this file (state changes are instant swaps). */
+   Pending: a violet-tinted card — attention means the session is blocked on
+   you. Resolved: one quiet rail-surface line. Every colour is a theme token, so
+   the light "L" frames follow without a branch.
 
-/* design 9a: the ask is a FILLED block in the terminal, mono throughout, with
-   its state stated on a plain label at the top. Everything below is the same
-   numbered-choice grammar the CLI uses. The frame is gone — and with it the
-   notch its legend used to sit in, since a notch only exists to interrupt a
-   border. */
+   Motion: none — no @keyframes, no animation, no transition anywhere in this
+   file (state changes are instant swaps). */
+
+/* ── pending card ─────────────────────────────────────────────────────────── */
 .pcard {
-  position: relative;
-  background: var(--bg-deep);
-  border: 0;
-  border-radius: var(--radius-md);
-  /* 9b tightens 7a's padding: the block now carries a whole code surface, and
-     the generous frame would push the choices off a short pane. */
-  padding: var(--space-11) var(--space-14) var(--space-12);
-  font-family: var(--font-mono);
-}
-
-/* The pending block is the only one that tints, and now that the fill IS the
-   separation it can carry the whole warm signal on its own (the mock’s
-   #17130b): a parked turn is findable while scrolling without shouting. */
-.pcard--pending {
-  background: var(--attn-soft-bg);
-}
-
-/* Resolved blocks drop the tint and keep a single edge carrying the outcome.
-   Square: that outcome edge is 2px, and on a rounded corner it curves away at
-   both ends rather than reading as a straight rail. A 2px state rail is the one
-   stroke 9a keeps — it is a signal, not a frame (the mock draws exactly this on
-   the parked roster row). */
-.pcard--allowed,
-.pcard--denied {
-  border-radius: 0;
-}
-
-.pcard--allowed {
-  border-left: 2px solid var(--success);
-}
-
-.pcard--denied {
-  border-left: 2px solid var(--error);
-}
-
-.pcard--cancelled {
-  opacity: 0.55;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16) var(--space-16);
+  background: var(--tint-attention);
+  border: 1px solid var(--tint-attention-line);
+  border-radius: var(--radius-6);
+  color: var(--text-primary);
 }
 
 .pcard--inflight {
   opacity: 0.7;
 }
 
-/* 9b: the legend names what KIND of ask this is (`Permission · edit`), then a
-   rule carries the eye to the waiting clock at the right edge. The rule
-   separates no surfaces — like the turn header's, it is typographic, the role
-   markdown's own `---` plays, not a frame the flat treatment removed. */
 .pcard__head {
   display: flex;
   align-items: center;
-  gap: var(--space-10);
-  margin-bottom: var(--space-9);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.pcard__head-rule {
-  flex: 1;
-  min-width: var(--space-8);
-  height: 1px;
-  background: color-mix(in srgb, var(--attn) 18%, var(--bg-deep));
+  gap: var(--space-8);
+  min-height: 16px;
 }
 
 .pcard__label {
-  color: var(--attn);
-  font-size: var(--font-size-10);
+  flex-shrink: 0;
+  color: var(--state-attention-text);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
 }
 
-.pcard__note {
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+.pcard__gap {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.pcard__note--allowed {
-  color: var(--success);
-}
-
-.pcard__note--denied {
-  color: var(--error);
-}
-
-/* Explicit rather than inherited: the component always emits
-   pcard__note--<state>, and a cancelled card is already dimmed card-wide
-   (§8.1), so its note stays faint on purpose. */
-.pcard__note--cancelled {
-  color: var(--text-faint);
-}
-
-/* §8.2: how long the ask has been parked. Pending only — see relativeAge(). */
 .pcard__age {
   flex-shrink: 0;
-  color: var(--attn);
-  font-size: var(--font-size-10);
-  opacity: 0.8;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
 }
 
-/* On the warm fill the neutral text ladder goes muddy — 9a reads the pending
-   block in the amber family throughout. */
-.pcard--pending .pcard__meta,
-.pcard--pending .pcard__rule-label {
-  color: color-mix(in srgb, var(--attn) 35%, var(--text-dim));
+.pcard__title {
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
 }
 
-/* ── design 9b: the code surface ───────────────────────────────────────────
-   What is being approved, SET AS CODE rather than stated as prose. A well
-   recessed into the block — on --bg-canvas, the deepest surface in the app,
-   which is what separates it now that it has no edge. */
+/* ── the code surface (Figma "Command") ── */
 .csurf {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+  width: 100%;
+  padding: var(--space-10) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-4);
   background: var(--bg-canvas);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+  color: var(--text-primary);
+  text-align: left;
 }
 
-/* The header answers what language or channel · where · how big the blast
-   radius is, so the risk is legible before the code is read. It is also the
-   disclosure control: the surface already IS the headline, so hanging the caret
-   anywhere else would add a row that says nothing. */
-.csurf__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-9);
-  width: 100%;
-  padding: var(--space-6) var(--space-11);
-  background: color-mix(in srgb, var(--attn) 6%, var(--bg-canvas));
-  border: 0;
-  font-family: inherit;
-  font-size: var(--font-size-9-5);
-  color: var(--attn);
-  text-align: left;
+.csurf--toggle {
   cursor: pointer;
 }
-
-/* Nothing to reveal (a resolved card with no input dump and no cwd): the strip
-   stays, the affordance does not. */
-.csurf__head--static {
-  cursor: default;
+.csurf--toggle:hover .csurf__caret {
+  color: var(--text-primary);
+}
+.csurf--toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
 }
 
-.csurf__lang {
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-/* The where. Plain end-truncation on purpose: the `direction: rtl` trick that
-   would keep the filename visible reorders leading and trailing punctuation,
-   and a path is mostly slashes — a mangled path is worse than a clipped one.
-   The full string stays in the element's title. */
-.csurf__context {
+.csurf__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-4);
   min-width: 0;
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.csurf__gap {
-  flex: 1;
-  min-width: var(--space-4);
-}
-
-.csurf__count {
-  flex-shrink: 0;
-}
-.csurf__count--add {
-  color: var(--success-bright);
-}
-.csurf__count--del {
-  color: var(--error-bright);
-}
-
-.csurf__blast {
-  flex-shrink: 0;
-  color: var(--attn-text);
 }
 
 .csurf__caret {
   flex-shrink: 0;
+  margin-top: 2px;
   color: var(--text-faint);
-}
-
-.csurf__body {
-  font-size: var(--font-size-12-5);
-  line-height: 1.5;
 }
 
 .csurf__line {
   display: flex;
-  gap: var(--space-10);
-  padding: var(--space-10) var(--space-11) var(--space-11);
+  gap: var(--space-8);
+  min-width: 0;
+  font: var(--type-mono);
 }
 
-/* The `$` / `↗` that says which channel this runs on. Dim, because it is
-   punctuation — the command beside it is the thing being read. */
 .csurf__prompt {
   flex-shrink: 0;
-  color: var(--accent-dim);
+  color: var(--text-faint);
 }
 
 .csurf__code {
   min-width: 0;
-  flex: 1;
-  overflow-wrap: anywhere;
+  font: var(--type-mono-medium);
+  color: var(--text-primary);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .csurf__code--plain {
-  color: var(--text);
+  font: var(--type-mono);
 }
 
-/* The binary, its flags, its arguments and the chain between them each carry a
-   colour, so `rm -rf x && npm ci` reads as two commands at a glance. */
-.csurf__tok--binary {
-  color: var(--attn-text);
-}
-.csurf__tok--flag {
-  color: var(--attn);
-}
-.csurf__tok--arg {
-  color: var(--text);
+/* The command stays one voice (Figma sets it in a single weight); only the
+   glue between commands and quoted strings step back, so a chain still reads
+   as a chain. */
+.csurf__tok--operator {
+  color: var(--text-muted);
 }
 .csurf__tok--string {
-  color: var(--hue-clay);
+  color: var(--text-secondary);
 }
-.csurf__tok--operator {
-  color: var(--text-faint);
-}
-/* The host is the only part of a URL that decides whether a request is safe. */
 .csurf__tok--host {
-  color: var(--attn-text);
+  color: var(--text-primary);
+}
+.csurf__tok--arg {
+  color: var(--text-primary);
 }
 
-/* An Edit's own diff. There is deliberately NO line-number gutter: the tool
-   input carries `old_string`, not a file offset, so any number in that column
-   would be a position inside the fragment while reading as a line of the file
-   named in the header above it. The sign column, the row tint and the context
-   lines carry the same information without inviting that misreading. */
+.csurf__where {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  min-width: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+
+.csurf__context {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.csurf__count {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+}
+.csurf__count--add {
+  color: var(--diff-add-text);
+}
+.csurf__count--del {
+  color: var(--diff-remove-text);
+}
+
+/* An Edit's own diff. No line-number gutter on purpose: an Edit carries
+   `old_string`, not a file offset, so any number there would lie. */
 .csurf__diff {
   display: flex;
   flex-direction: column;
-  padding: var(--space-8) 0 var(--space-9);
-  font-variant-numeric: tabular-nums;
+  max-height: 260px;
+  overflow: auto;
+  font: var(--type-mono);
 }
 
 .csurf__row {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  column-gap: var(--space-4);
-  padding-right: var(--space-11);
-  line-height: 1.65;
+  display: flex;
+  gap: var(--space-8);
+  padding: 0 var(--space-4);
 }
 
 .csurf__sign {
-  text-align: center;
-  color: var(--text-disabled);
+  flex-shrink: 0;
+  width: 10px;
+  color: var(--diff-context-text);
 }
 
 .csurf__text {
   min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.csurf__row--context .csurf__text {
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .csurf__row--del {
-  background: color-mix(in srgb, var(--error) 13%, var(--bg-canvas));
+  background: var(--diff-remove-bg);
 }
-.csurf__row--del .csurf__sign {
-  color: var(--error-bright);
-}
+.csurf__row--del .csurf__sign,
 .csurf__row--del .csurf__text {
-  color: color-mix(in srgb, var(--error-bright) 45%, var(--text));
+  color: var(--diff-remove-text);
 }
 
 .csurf__row--add {
-  background: color-mix(in srgb, var(--success) 13%, var(--bg-canvas));
+  background: var(--diff-add-bg);
 }
-.csurf__row--add .csurf__sign {
-  color: var(--success-bright);
-}
+.csurf__row--add .csurf__sign,
 .csurf__row--add .csurf__text {
-  color: color-mix(in srgb, var(--success-bright) 45%, var(--text));
+  color: var(--diff-add-text);
 }
 
-/* What the surface refused to render — a card is a decision, not a review. */
 .csurf__row--elision .csurf__text {
   color: var(--text-faint);
-  font-size: var(--font-size-10-5);
+  font-style: italic;
 }
 
-.pcard__detail {
-  margin-top: var(--space-6);
-}
-
-/* A well recessed INTO the block — the deepest surface in the app, which is
-   what separates it now that it has no edge. */
+/* ── Figma 05 "Arguments": the raw tool input, recessed ── */
 .pcard__input {
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-4);
   background: var(--bg-canvas);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--space-8);
+  color: var(--text-muted);
+  font: var(--type-mono);
   white-space: pre;
-  overflow-x: auto;
-  max-height: 180px;
-  overflow-y: auto;
-  font-size: var(--font-size-10-5);
-  color: var(--text-2);
-  margin-top: var(--space-6);
 }
 
 .pcard__meta {
   color: var(--text-faint);
-  font-size: var(--font-size-10-5);
-  margin-top: var(--space-6);
+  font: var(--type-mono-small);
   overflow-wrap: anywhere;
 }
 
+/* ── the why line (Figma 05 "Why") ── */
+.pcard__why {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+.pcard__why .icon {
+  margin-top: 1.5px;
+}
+
+/* ── the rule an "always" would write ── */
 .pcard__rule {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-6);
-  margin-top: var(--space-6);
-  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+  font: var(--type-small);
 }
 
-.pcard__rule-label {
-  color: var(--text-faint);
-}
-
-.pcard__rule-text {
-  color: var(--text-bright);
+.pcard__pattern,
+.pdone__pattern {
+  color: var(--text-primary);
+  font: var(--type-mono-small);
   overflow-wrap: anywhere;
 }
 
-.pcard__pattern {
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-
-/* ── design 7a: the numbered choices ────────────────────────────────────────
-   One full-width line per decision, keyed by its index. The lead line carries a
-   warm fill because it is the default answer, not because it is safe — the
-   remaining three are equal-weight text rows. Clicking a line answers it, and so
-   does its number (PermissionCard's capture-phase listener). */
-.pcard__choices {
-  display: flex;
-  flex-direction: column;
-  margin-top: var(--space-9);
-  font-size: var(--font-size-12);
-}
-
-/* 9a: the choice fill runs FULL-BLEED to the block edge and drops its radius —
-   same call as the roster row, and for the same reason: the fill has to read as
-   "this line", not as a tile inside the line. */
-.pcard__choice {
-  display: flex;
-  gap: var(--space-10);
-  padding: var(--space-4) var(--space-14);
-  margin: 0 calc(-1 * var(--space-14));
-  color: var(--text-hint);
-  cursor: pointer;
-}
-
-.pcard__choice:hover {
-  background: color-mix(in srgb, var(--attn) 7%, var(--attn-soft-bg));
-  color: var(--text-strong);
-}
-
-.pcard__choice--lead {
-  background: color-mix(in srgb, var(--attn) 11%, var(--attn-soft-bg));
-  color: var(--text-bright);
-}
-
-.pcard__choice--lead:hover {
-  background: color-mix(in srgb, var(--attn) 17%, var(--attn-soft-bg));
-}
-
-/* The index. Acid on the lead line — it IS the live thing in this block —
-   and neutral on the rest, so the block still has exactly one accent. */
-.pcard__choice-key {
-  flex-shrink: 0;
-  width: 10px;
-  color: var(--text-dim);
-}
-
-.pcard__choice--lead .pcard__choice-key {
-  color: var(--accent);
-}
-
-.pcard__choice-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* §8.7: the tier control and the keyboard hint, under the choices. The tier only
-   scopes the two `*Always` lines, so it reads as an annotation on them rather
-   than as a fifth decision. */
+/* ── actions ── */
 .pcard__actions {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-8);
-  margin-top: var(--space-10);
-}
-
-.pcard__tiers {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-8);
-  margin-right: auto;
-  font-size: var(--font-size-10-5);
-}
-
-.pcard__tiers-label {
-  color: var(--text-faint);
 }
 
 .pcard__hint {
-  font-size: var(--font-size-10);
   color: var(--text-faint);
+  font: var(--type-small);
 }
 
-.pcard__tier {
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: inherit;
-  color: var(--text-faint);
-  cursor: pointer;
+.pcard__scope {
+  flex-shrink: 0;
 }
 
-.pcard__tier--on {
-  color: var(--accent);
+/* §8.6: hovering a `once` decision dims the scope — it does not apply there. */
+.pcard__scope--inert {
+  opacity: 0.45;
 }
 
-/* §8.6: hovering a *Once action dims the tier control — the tier only applies
-   to Always/Never. No transition (§8 motion rule). */
-.pcard__tiers--inert {
-  opacity: 0.35;
-}
-
-.pcard__btn {
-  height: 26px;
-  padding: 0 var(--space-12);
-  border: 1px solid transparent;
-  border-radius: var(--radius-base);
-  font-family: inherit;
-  font-size: var(--font-size-11);
-  cursor: pointer;
-}
-
-/* The one filled button in the card — the acid "live thing" for this view. */
-.pcard__btn--allow {
-  background: var(--accent);
-  color: var(--bg-canvas);
-  font-weight: 600;
-}
-
-.pcard__btn--allow:hover {
-  background: var(--accent-bright);
-}
-
-.pcard__btn--always {
-  background: var(--bg-raised);
-  border-color: var(--border-emphasis);
-  color: var(--text-strong);
-}
-
-.pcard__btn--always:hover {
-  background: var(--bg-hover-2);
-}
-
-.pcard__btn--deny,
-.pcard__btn--never {
-  background: transparent;
-  border-color: var(--border-2);
-}
-
-.pcard__btn--deny {
-  color: var(--text-dim);
-}
-
-.pcard__btn--never {
-  color: var(--text-muted);
-}
-
-.pcard__btn--deny:hover,
-.pcard__btn--never:hover {
-  border-color: var(--error-dim);
-  color: var(--error-bright);
-}
-
-/* In flight, the whole row still renders but stops inviting clicks — the
-   handlers already drop them (FR-21); this is the visible half. */
-.pcard--inflight .pcard__btn,
-.pcard--inflight .pcard__tier {
+.pcard__tier:disabled {
   cursor: default;
 }
 
 .pcard__error {
-  color: var(--error);
-  font-size: var(--font-size-11);
-  margin-top: var(--space-6);
+  color: var(--state-danger-text);
+  font: var(--type-small);
+}
+
+/* ── resolved: one outcome line (Figma 06–08) ─────────────────────────────── */
+.pdone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-14);
+  background: var(--bg-rail);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+
+.pdone--cancelled {
+  opacity: 0.7;
+}
+
+.pdone__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+}
+
+.pdone__label {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+.pdone--denied .pdone__label {
+  color: var(--state-danger-text);
+}
+
+.pdone__summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: var(--type-mono);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.pdone__summary {
+  cursor: pointer;
+}
+button.pdone__summary:hover {
+  color: var(--text-primary);
+}
+
+.pdone__rule {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+
+.pdone__action {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: var(--type-small);
+  cursor: pointer;
+}
+.pdone__action--strong {
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+}
+.pdone__action:hover:not(:disabled) {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+.pdone__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.pdone__summary:focus-visible,
+.pdone__action:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.pdone__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
 }
 
 /* PermissionsModal (spec §8.10-14). Bespoke shell:
@@ -534,7 +390,7 @@
 .pmodal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay-scrim);
   display: flex;
   align-items: center;
   justify-content: center;

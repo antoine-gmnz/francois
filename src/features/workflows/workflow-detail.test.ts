@@ -47,6 +47,7 @@ import {
   spanFillColor,
   sumTokens,
   waitingBannerLabel,
+  workflowStateKind,
 } from './workflow-detail';
 
 const TOKENS: WorkflowTokens = { input: 100, output: 20, cacheRead: 1000, cacheCreation: 80 };
@@ -448,5 +449,16 @@ describe('workflows invoke wrappers', () => {
     invokeMock.mockResolvedValue({ ok: true, data: { path: '/tmp/s.js', source: '', truncated: false } });
     await workflowsScript('run-1');
     expect(invokeMock).toHaveBeenCalledWith('workflows_script', { runId: 'run-1' });
+  });
+});
+
+describe('workflowStateKind', () => {
+  it('maps run and agent statuses onto the state glyphs', () => {
+    expect(workflowStateKind('running')).toBe('running');
+    expect(workflowStateKind('done')).toBe('done');
+    expect(workflowStateKind('error')).toBe('failed');
+    // waiting is blocked on you — the attention glyph, not a spinner
+    expect(workflowStateKind('waiting')).toBe('approval');
+    expect(workflowStateKind('stopped')).toBe('idle');
   });
 });

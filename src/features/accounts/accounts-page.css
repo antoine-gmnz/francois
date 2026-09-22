@@ -1,0 +1,400 @@
+/* Settings / Accounts (Figma 21 · 140:7586, light 142:16488): the page's
+   provider rail, the detail pane and its login cards. Tokens only, so the light
+   frame follows. Rules that restyle an older accounts.css class are scoped under
+   .acc-page, so the result never depends on which stylesheet loaded first. */
+
+.acc-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+/* "Accounts layout": a 260px rail, 20px, the detail. */
+.acc-vault {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-20);
+  min-width: 0;
+}
+
+/* ── rail (Figma "Providers") ── */
+.acc-rail {
+  flex: 0 0 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+}
+.acc-rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.acc-rail-heading {
+  padding: 0 var(--space-10) var(--space-6);
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.acc-rail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  width: 100%;
+  padding: var(--space-8) var(--space-10);
+  border: 0;
+  border-radius: var(--radius-6);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.acc-rail-row:hover {
+  background: var(--bg-raised);
+}
+.acc-rail-row--active,
+.acc-rail-row--active:hover {
+  background: var(--bg-raised);
+}
+.acc-rail-row:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.acc-rail-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.acc-rail-name {
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+.acc-rail-meta {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.acc-rail-state {
+  flex-shrink: 0;
+}
+
+/* Figma "Mark": 28px, --bg-strong, the monogram in small-medium. */
+.acc-tile {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-5);
+  background: var(--bg-strong);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+}
+
+/* ── detail (Figma "Detail") ── */
+.acc-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.acc-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 26px;
+}
+.acc-detail-name {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+}
+.acc-detail-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+
+.acc-page .acc-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.acc-page .acc-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding-top: var(--space-8);
+}
+.acc-page .acc-section-eyebrow {
+  flex: 1;
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.acc-page .acc-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.acc-page .acc-soon,
+.acc-page .acc-note,
+.acc-page .acc-empty {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.acc-page .acc-soon {
+  padding: var(--space-14) var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.acc-page .acc-empty {
+  padding: 0;
+}
+.acc-page .acc-error {
+  margin: 0;
+  color: var(--state-danger-text);
+  font: var(--type-small);
+}
+.acc-page .acc-confirm {
+  margin: 0;
+}
+
+/* ── login card (Figma "Login / Personal") ── */
+.acc-cred,
+.acc-key {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  padding: var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+  cursor: default;
+}
+.acc-key {
+  gap: var(--space-6);
+}
+.acc-cred--alert {
+  border-color: var(--tint-danger-line);
+}
+.acc-cred--cursor,
+.acc-key--cursor {
+  border-color: var(--line-default);
+}
+.acc-cred--fresh,
+.acc-key--fresh {
+  border-color: var(--tint-success-line);
+}
+.acc-cred-head,
+.acc-key-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  min-height: 18px;
+}
+.acc-cred-name,
+.acc-key-name {
+  min-width: 0;
+  color: var(--text-primary);
+  font: var(--type-ui-strong);
+}
+.acc-cred-spacer {
+  flex: 1;
+}
+.acc-cred-email {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+.acc-key-secret {
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+.acc-key-meta {
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+.acc-cred-foot {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.acc-page .acc-rename-input {
+  flex: 0 1 240px;
+  height: 24px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-4);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: var(--type-ui-strong);
+}
+
+/* Default = Figma's --bg-selected tag; Needs login = the danger tint. */
+.acc-page .acc-pill {
+  flex-shrink: 0;
+  padding: 1px var(--space-6);
+  border: 0;
+  border-radius: var(--radius-3);
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  letter-spacing: 0;
+}
+.acc-page .acc-pill--alert {
+  background: var(--tint-danger);
+  color: var(--state-danger-text);
+}
+.acc-page .acc-pill--attn {
+  background: var(--tint-attention);
+  color: var(--state-attention-text);
+}
+
+/* The card's actions: quiet text buttons, revealed on hover/focus (pinned while
+   the card needs attention). */
+.acc-cred-actions,
+.acc-key-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+}
+.acc-cred-spacer + .acc-cred-actions {
+  margin-left: 0;
+}
+.acc-cred:hover .acc-cred-actions,
+.acc-cred:focus-within .acc-cred-actions,
+.acc-cred-actions--pinned,
+.acc-key:hover .acc-key-actions,
+.acc-key:focus-within .acc-key-actions {
+  opacity: 1;
+}
+.acc-cred-action {
+  height: 22px;
+  padding: 0 var(--space-6);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.acc-cred-action:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.acc-cred-action--danger:hover {
+  color: var(--state-danger-text);
+}
+.acc-cred-action:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+/* ── meters (Figma "Meters"): equal columns, 20px apart ── */
+.acc-meters {
+  display: flex;
+  gap: var(--space-20);
+}
+.acc-meter {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.acc-meter__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+}
+.acc-meter__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+.acc-meter__figure {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font: var(--type-mono-small);
+}
+.acc-meter--high .acc-meter__figure {
+  color: var(--state-danger);
+}
+/* Figma draws this meter at 4px with a 2px radius (the app bar's is 3px). */
+.acc-page .acc-meter__bar {
+  height: 4px;
+  border-radius: 2px;
+}
+.acc-meter__reset {
+  color: var(--text-faint);
+  font: var(--type-small);
+  white-space: nowrap;
+}
+
+/* ── re-login call to action inside a card ── */
+.acc-page .acc-reroute {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--tint-danger-line);
+  border-radius: var(--radius-5);
+  background: var(--tint-danger);
+}
+.acc-page .acc-reroute-text {
+  color: var(--text-secondary);
+  font: var(--type-small);
+}
+.acc-page .acc-reroute-action {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+
+/* The keyboard model, said out loud — one dim line under the page. */
+.acc-page .acc-footer {
+  padding: 0;
+  background: transparent;
+}
+.acc-page .acc-hints {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.acc-page .acc-hint-key {
+  color: var(--text-muted);
+  font: var(--type-mono-small);
+}
+
+@media (max-width: 1100px) {
+  .acc-rail {
+    flex-basis: 200px;
+  }
+  .acc-meters {
+    flex-wrap: wrap;
+  }
+  .acc-meter {
+    flex-basis: 160px;
+  }
+}

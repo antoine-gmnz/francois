@@ -69,3 +69,41 @@ describe('theme store slice', () => {
     expect(storage.store['francois.theme']).toBe('dark');
   });
 });
+
+// The pure half main.tsx uses before first paint (no store yet at that point).
+describe('theme helpers', () => {
+  it('parseTheme reads only an exact "light" as light', async () => {
+    const { parseTheme } = await import('./theme');
+    expect(parseTheme('light')).toBe('light');
+    expect(parseTheme('dark')).toBe('dark');
+    expect(parseTheme(null)).toBe('dark');
+    expect(parseTheme('LIGHT')).toBe('dark');
+    expect(parseTheme('')).toBe('dark');
+  });
+
+  it('nextTheme flips', async () => {
+    const { nextTheme } = await import('./theme');
+    expect(nextTheme('dark')).toBe('light');
+    expect(nextTheme('light')).toBe('dark');
+  });
+
+  it('readStoredTheme degrades to dark when storage throws', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('denied');
+      },
+    });
+    const { readStoredTheme } = await import('./theme');
+    expect(readStoredTheme()).toBe('dark');
+    vi.unstubAllGlobals();
+  });
+
+  it('readStoredTheme reads the persisted key', async () => {
+    const state = mockStorage();
+    state.store['francois.theme'] = 'light';
+    const { readStoredTheme, THEME_KEY } = await import('./theme');
+    expect(THEME_KEY).toBe('francois.theme');
+    expect(readStoredTheme()).toBe('light');
+    vi.unstubAllGlobals();
+  });
+});

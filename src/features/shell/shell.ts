@@ -13,10 +13,12 @@ export function atShellCap(shells: readonly ShellInfo[]): boolean {
   return shells.length >= SHELL_CAP;
 }
 
-/** FR-11 / §8: the strip renders only once a session has more than one shell
- * — a single-shell session must stay pixel-identical to today's SHELL tab. */
-export function stripVisible(shells: readonly ShellInfo[]): boolean {
-  return shells.length > 1;
+/** Graphite & Signal (Figma 136:6100): the line under the terminal that says
+ * what this shell is — and what it is not (the agent's context). The strip
+ * above it now renders at every shell count, superseding FR-11's ≤1 rule. */
+export function shellHintText(inWorktree: boolean): string {
+  const where = inWorktree ? 'worktree' : 'directory';
+  return `Your real shell, in the session’s ${where}. The agent can’t see it unless you paste output.`;
 }
 
 /** §8 chip label: truncated to ~18 chars with an ellipsis; full name lives in `title`. */

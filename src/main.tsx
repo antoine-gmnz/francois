@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './app/App';
+import { applyTheme, readStoredTheme } from './lib/theme';
+import './assets/fonts/fonts.css';
 import './styles.css';
 
 // Mark the document hidden while the window is minimized/occluded so CSS can pause all
@@ -14,13 +16,9 @@ syncHidden();
 document.addEventListener('visibilitychange', syncHidden);
 
 // Apply the persisted theme before first paint so there's no flash of the wrong
-// theme (styles.css keys every token off :root[data-theme]). Guarded like the
-// store's own loadTheme — a restricted storage env degrades to the dark default.
-try {
-  document.documentElement.dataset.theme = localStorage.getItem('francois.theme') === 'light' ? 'light' : 'dark';
-} catch {
-  document.documentElement.dataset.theme = 'dark';
-}
+// theme (styles.css keys every token off :root[data-theme]). readStoredTheme
+// degrades to the dark default in a restricted storage env.
+applyTheme(readStoredTheme());
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

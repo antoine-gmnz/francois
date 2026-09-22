@@ -7,6 +7,7 @@
 // the release cadence means it will be present most of the time.
 
 import { useStore } from '../../lib/store';
+import { Icon } from '../../ui/Icon';
 import { updateChipView } from './update';
 import './update.css';
 
@@ -16,11 +17,14 @@ export function UpdateChip({ appVersion }: { appVersion: string }): JSX.Element 
   const view = updateChipView(update, appVersion);
 
   // Idle renders exactly as it did before this feature existed.
-  if (!view.available) return <span className="app-key">{view.label}</span>;
+  if (!view.available) return <span className="upd-version">{view.label}</span>;
 
+  // redesign App bar "Update": a success-tinted pill, arrow-up glyph + the new
+  // version. The glyph replaces the label's own `↑ ` prefix.
   return (
     <button type="button" className="upd-chip" title={view.title} onClick={() => setUpdateModalOpen(true)}>
-      {view.label}
+      <Icon name="arrow-up" size={12} />
+      {view.label.replace(/^↑\s*/, '')}
     </button>
   );
 }

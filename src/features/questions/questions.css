@@ -1,336 +1,287 @@
-/* session-questions §8 — the question block, redrawn to design turn 13c
-   ("keep the table, fix the table").
+/* session-questions — the question card, drawn to Graphite & Signal
+   (Figma 02 "Question / Pending" 132:857, 03 "Question / Answered" 132:1204).
 
-   13c is the smallest-change variant of turn 13: the two-column option shape
-   survives, but the label rail becomes a FIXED width so every description in
-   the block shares one left edge instead of stepping in and out per option,
-   the description contrast comes up out of the ~2.5:1 hole, the options grow a
-   glyph that actually reads as clickable, each question is numbered, and the
-   header carries the one-click "take my picks".
+   Pending: a violet-tinted card (the session is blocked on YOU — attention),
+   head · title · options · "Something else" · foot. Answered: one quiet
+   rail-surface record per question. Every colour is a theme token, so the
+   light frames (142:9095 / 142:9532) follow without a branch.
 
-   Surfaces, not strokes (design 9a): the block is --bg-deep, its header and
-   footer step up to --bg-panel, and the question separators are a single
-   --bg-chrome line. Nothing here is framed.
+   Motion: none — no @keyframes, no animation, no transition (state changes are
+   instant swaps, spec §8). */
 
-   Motion: none — no @keyframes, no animation, no transition anywhere in this
-   file (state changes are instant swaps, spec §8). */
-
+/* ── pending card ─────────────────────────────────────────────────────────── */
 .qcard {
-  /* The label rail. One value, read by every option row in the block, which is
-     what makes the descriptions line up down the whole card. */
-  --qopt-rail: 208px;
-
-  background: var(--bg-deep);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-/* The pending rail — a 2px state bar, the one stroke 9a keeps, because it is a
-   signal rather than a frame. Square while it is there: on a rounded corner the
-   rail curves away at both ends instead of reading as a straight edge (the
-   permission card makes the same call for the same reason). */
-.qcard--pending {
-  border-left: 2px solid var(--accent);
-  border-radius: 0;
-}
-
-.qcard--cancelled {
-  opacity: 0.55;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  padding: var(--space-14) var(--space-16) var(--space-16);
+  background: var(--tint-attention);
+  border: 1px solid var(--tint-attention-line);
+  border-radius: var(--radius-6);
+  color: var(--text-primary);
 }
 
 .qcard--inflight {
   opacity: 0.7;
 }
 
-/* ── header ─────────────────────────────────────────────────────────────────
-   13c drops the row of per-question header chips. They repeated each question's
-   own title one line above the question itself and linked to nothing; the
-   ordinals below say the same thing in the place you are already reading. What
-   replaces them is the block's shape — how many, how far in — and the accept
-   action. */
 .qcard__head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-10);
-  padding: var(--space-10) var(--space-14);
-  background: var(--bg-panel);
-  font-family: var(--font-mono);
+  gap: var(--space-8);
+  min-height: 16px;
 }
 
 .qcard__label {
-  color: var(--accent);
-  font-size: var(--font-size-10-5);
-  letter-spacing: 0.14em;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--state-attention-text);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
 }
 
-.qcard__count {
-  color: var(--text-faint);
-  font-size: var(--font-size-10-5);
-}
-
-.qcard__note {
-  color: var(--text-faint);
-  font-size: var(--font-size-10-5);
-}
-
-.qcard__gap {
-  flex: 1;
-  min-width: var(--space-4);
-}
-
-/* "Accept all N recommended" — the common case is that you want the picks, and
-   before 13c taking them cost one click per question. Accent-tinted rather than
-   solid accent: it is a shortcut through the block, not the block's own
-   subject. */
 .qcard__accept {
-  flex-shrink: 0;
-  height: 24px;
-  padding: 0 var(--space-10);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-base);
-  background: color-mix(in srgb, var(--accent) 24%, var(--bg-panel));
-  color: var(--accent-bright);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-11-5);
+  background: none;
+  color: var(--text-muted);
+  font: var(--type-small);
   cursor: pointer;
 }
-
-.qcard__accept:hover {
-  background: color-mix(in srgb, var(--accent) 34%, var(--bg-panel));
+.qcard__accept:hover:not(:disabled) {
+  color: var(--text-primary);
 }
-
 .qcard__accept:disabled {
-  opacity: 0.5;
   cursor: default;
 }
 
-/* ── one question ───────────────────────────────────────────────────────── */
+.qcard__title {
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
+}
 
-.qcard__body {
+/* ── options ── */
+.qcard__options {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
 }
 
-/* The separator is a line between two questions, not an edge around either —
-   the same role markdown's own `---` plays. */
-.qsec + .qsec {
-  border-top: 1px solid var(--bg-chrome);
-}
-
-.qsec {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-9);
-  padding: var(--space-13) var(--space-14) var(--space-12);
-}
-
-.qsec__head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-10);
-}
-
-/* The ordinal. Accent on the section the block is waiting on and neutral on the
-   rest, so a three-question block says where you are with no progress widget —
-   and still has exactly one accent. */
-.qsec__num {
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-11);
-  color: var(--text-muted);
-}
-
-.qsec--current .qsec__num {
-  color: var(--accent-dim);
-}
-
-.qsec__q {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-13);
-  font-weight: 600;
-  line-height: 1.5;
-  color: var(--text-bright);
-  overflow-wrap: anywhere;
-}
-
-/* The options hang under the question text, past the ordinal column. */
-.qsec__opts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding-left: var(--space-22);
-}
-
-/* ── one option ─────────────────────────────────────────────────────────── */
-
-.qopt {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4) var(--space-12);
-  padding: var(--space-7) var(--space-9);
-  border-radius: var(--radius-md);
-}
-
-.qopt--live {
-  cursor: pointer;
-}
-
-.qopt--live:hover {
-  background: var(--bg-elevated);
-}
-
-/* The label rail: a fixed width, never shrinking, because the alignment IS the
-   fix. Under (rail + a readable description) the description wraps onto its own
-   full-width line rather than crushing to one word per line. */
-.qopt__label {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-7);
-  flex: 0 0 auto;
-  width: var(--qopt-rail);
-  max-width: 100%;
-  font-size: var(--font-size-12-5);
-  line-height: 1.55;
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
-/* A row with no second column — a committed free-text answer, or the input it
-   is typed into. The rail exists to align short labels against descriptions;
-   there is nothing here to align against, and prose crushed into 208px reads
-   worse than prose across the row. */
-.qopt--wide .qopt__label {
-  flex: 1 1 100%;
-  width: auto;
-}
-
-.qopt__glyph {
-  flex-shrink: 0;
-  width: 9px;
-  font-size: var(--font-size-9);
-  color: var(--text-disabled);
-}
-
-.qopt__desc {
-  flex: 1 1 240px;
-  min-width: 0;
-  font-size: var(--font-size-12-5);
-  line-height: 1.55;
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-
-/* Chosen. The fill is the answer — one filled row per question. */
-.qopt--on {
-  background: var(--accent-soft-bg);
-}
-
-.qopt--on.qopt--live:hover {
-  background: color-mix(in srgb, var(--accent) 12%, var(--accent-soft-bg));
-}
-
-.qopt--on .qopt__label {
-  font-weight: 600;
-  color: var(--accent-bright);
-}
-
-.qopt--on .qopt__glyph {
-  color: var(--accent);
-}
-
-.qopt--on .qopt__desc {
-  color: var(--text-hint);
-}
-
-/* Recommended but not picked. An olive ring, no fill: the suggestion has to be
-   findable without reading as an answer already given — which is exactly what
-   the "Accept all N recommended" button in the header turns it into. */
-.qopt--rec .qopt__glyph {
-  color: var(--accent-dim);
-}
-
-.qopt--rec .qopt__label {
-  color: var(--text-strong);
-}
-
-/* FR-19: on a resolved card the rows that were not chosen step back. */
-.qopt--dim {
-  opacity: 0.45;
-}
-
-/* The free-text row. Faint until it carries an answer, at which point it is
-   rendered by the .qopt--on branch like any other chosen row. */
-.qopt--other .qopt__label {
-  color: var(--text-faint);
-}
-
-.qopt__input {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg-raised);
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-6);
-  color: var(--text-bright);
-  font-family: inherit;
-  font-size: var(--font-size-12-5);
-  outline: none;
-}
-
-/* FR-17: the hovered-or-chosen option's preview, recessed into the block on the
-   deepest surface in the app. Scrolls inside its own box — never the
-   transcript. */
-.qsec__prev {
-  margin-left: var(--space-22);
-  padding: var(--space-8);
-  background: var(--bg-canvas);
-  border-radius: var(--radius-sm);
-  white-space: pre;
-  overflow-x: auto;
-  font-size: var(--font-size-10-5);
-  color: var(--text-2);
-}
-
-/* ── footer ─────────────────────────────────────────────────────────────────
-   The block ends on a stated rule rather than trailing off. §8.6 still governs
-   the button: a pure single-select card submits on the click that completes it
-   (FR-18), so a Send there would be an affordance that can never be reached —
-   those cards get the hint alone. */
-.qcard__foot {
+.qcard__option {
   display: flex;
   align-items: center;
   gap: var(--space-12);
-  padding: var(--space-10) var(--space-14);
-  background: var(--bg-panel);
-}
-
-.qcard__send {
-  flex-shrink: 0;
-  height: 26px;
-  padding: 0 var(--space-12);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent) 24%, var(--bg-panel));
-  color: var(--accent-bright);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-12);
+  width: 100%;
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
   cursor: pointer;
 }
-
-.qcard__send:hover {
-  background: color-mix(in srgb, var(--accent) 34%, var(--bg-panel));
+.qcard__option:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+.qcard__option:disabled {
+  cursor: default;
+}
+.qcard__option--on,
+.qcard__option--on:hover:not(:disabled) {
+  background: var(--bg-raised);
+  border-color: var(--line-strong);
+}
+.qcard__option:focus-visible,
+.qcard__accept:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
 }
 
-.qcard__send:disabled {
-  background: var(--bg-hover);
-  color: var(--text-dim);
+/* The radio: a 16px ring; selected turns violet with an 8px dot. The checkbox
+   is the same box squared off, with the dot squared to match. */
+.qcard__radio,
+.qcard__check {
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 50%;
+}
+.qcard__check {
+  border-radius: var(--radius-3);
+}
+.qcard__option--on .qcard__radio,
+.qcard__option--on .qcard__check {
+  border-color: var(--state-attention);
+}
+.qcard__option--on .qcard__radio::after,
+.qcard__option--on .qcard__check::after {
+  content: '';
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--state-attention);
+}
+.qcard__option--on .qcard__check::after {
+  border-radius: 1px;
+}
+
+.qcard__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.qcard__option-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.qcard__option-label {
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+
+.qcard__rec {
+  flex-shrink: 0;
+  padding: 1px var(--space-6);
+  border-radius: var(--radius-3);
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+  font: var(--type-small-medium);
+}
+
+.qcard__desc {
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+
+/* ── "Something else" — an always-open input on the recessed input surface ── */
+.qcard__other {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-height: 36px;
+  padding: 0 var(--space-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  background: var(--bg-input);
+  cursor: text;
+}
+.qcard__other--on,
+.qcard__other:focus-within {
+  border-color: var(--line-strong);
+}
+
+.qcard__other-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-8) 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-ui);
+}
+.qcard__other-input::placeholder {
+  color: var(--text-faint);
+}
+.qcard__other-input:disabled {
   cursor: default;
 }
 
+/* FR-17: the hovered-or-selected option's preview. */
+.qcard__preview {
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-4);
+  background: var(--bg-canvas);
+  color: var(--text-muted);
+  font: var(--type-mono);
+  white-space: pre;
+}
+
+/* ── foot ── */
+.qcard__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
 .qcard__hint {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text-faint);
+  font: var(--type-small);
+}
+
+/* ── answered / cancelled record (Figma 03) ───────────────────────────────── */
+.qdone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-14);
+  background: var(--bg-rail);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+
+.qdone--cancelled {
+  opacity: 0.7;
+}
+
+.qdone__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.qdone__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.qdone__q {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font: var(--type-ui);
+}
+
+.qdone__meta {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+
+.qdone__answer {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  /* Under the question text, past the 14px glyph + 8px gap. */
+  padding-left: 22px;
+}
+
+.qdone__value {
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+  overflow-wrap: anywhere;
+}
+
+.qdone__note {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
 }

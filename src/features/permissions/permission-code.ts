@@ -408,3 +408,17 @@ export function cardLegend(surface: CodeSurface): string {
       return `Permission · ${surface.header.language}`;
   }
 }
+
+/** Figma 04: the card's title — the question the ask puts to you. */
+export function askTitle(surface: CodeSurface, toolName: string): string {
+  switch (surface.kind) {
+    case 'command':
+      return 'Allow this command?';
+    case 'diff':
+      return 'Allow this edit?';
+    case 'fetch':
+      return 'Allow this request?';
+    default:
+      return toolName !== '' ? `Allow ${toolName}?` : 'Allow this tool call?';
+  }
+}

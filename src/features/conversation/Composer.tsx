@@ -1,7 +1,8 @@
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import type { SessionStatus, SlashCommandInfo } from '../../../contract/common';
 import { isBusyStatus } from '../../../contract/fleet-board';
 import type { Attachment } from '../../../contract/session-attachments';
+import { Icon } from '../../ui/Icon';
 import SlashMenu from '../commands/SlashMenu';
 import AttachmentChip from './AttachmentChip';
 import { composerErrorBanners } from './attachments';
@@ -44,6 +45,12 @@ export interface ComposerProps {
   onAttachClick: () => void;
   /** A chip's `×` (FR-13). */
   onRemoveAttachment: (attachment: Attachment) => void;
+  /**
+   * redesign "Graphite & Signal" (Figma "Composer" 128:110): the run chip —
+   * model · effort · permission — rides inside the field, before Send. The
+   * caller passes the session's RunChip (it moved here from the session row).
+   */
+  runChip?: ReactNode;
   /**
    * §7: the attachment refusal line. Its own slot next to `sendError` because the
    * two fail independently — a drop can be refused while a send is failing, and
@@ -110,6 +117,7 @@ export default function Composer({
   attachments,
   onAttachClick,
   onRemoveAttachment,
+  runChip,
   attachError,
   contextPercent,
   readingHint,
@@ -217,11 +225,8 @@ export default function Composer({
             aria-label="Attach files"
             title="Attach files"
           >
-            +
+            <Icon name="attach" size={15} />
           </button>
-          <span className="composer-arrow" style={{ color: disabled ? 'var(--text-disabled)' : 'var(--accent)' }}>
-            ›
-          </span>
           {/* readOnly, not disabled: a disabled textarea renders in the UA's own
               greyed treatment, which is exactly the focus-dependent look this
               pane is not supposed to have. readOnly looks identical to a live
@@ -238,6 +243,7 @@ export default function Composer({
             rows={1}
             className="composer-input"
           />
+          {runChip}
           {/* design-refresh FR-8: a visible Send button alongside Enter-to-send. */}
           <button
             type="button"
@@ -245,8 +251,10 @@ export default function Composer({
             tabIndex={inert ? -1 : undefined}
             onClick={onSend}
             className={sendDisabled ? 'composer-send is-disabled' : 'composer-send'}
+            aria-label="Send"
+            title="Send · ⏎"
           >
-            Send
+            <Icon name="arrow-up" size={14} />
           </button>
           {/* pi-turn-controls FR-6/FR-7: persistent while busy — stays up
               (disabled, "Stopping…") until session_interrupt confirms the

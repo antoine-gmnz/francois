@@ -4,6 +4,7 @@ import type { AppError } from '../../../contract/common';
 import type { DiffFileSummary, DiffSummary, FileDiff } from '../../../contract/diff-view';
 import { diffGetFileDiff, diffGetSummary, onDiffEvent } from '../../lib/api';
 import { nextDiffEventAction } from './diff-events';
+import { onDiffFileRequest, takePendingDiffFile } from './diff-focus';
 import { firstFilePathInTreeOrder } from './diff-tree';
 
 export interface DiffFeed {
@@ -110,9 +111,12 @@ export function useDiffFeed(sessionId: string): DiffFeed {
             setSummaryError(null);
             const prev = selectedRef.current;
             const keep = prev && res.data.files.some((file) => file.path === prev);
+            // A file picked in the session panel's Changes tree wins, if it still exists.
+            const requested = takePendingDiffFile(sid);
+            const wanted = requested && res.data.files.some((file) => file.path === requested) ? requested : null;
             // Tree order, not path order: subfolders render before same-level files, so
             // files[0] is not the first row the user sees (spec §3 story 1).
-            setSelectedPath(keep ? prev : firstFilePathInTreeOrder(res.data.files));
+            setSelectedPath(wanted ?? (keep ? prev : firstFilePathInTreeOrder(res.data.files)));
           } else {
             setSummary(null);
             setSummaryError(res.error);
@@ -163,6 +167,17 @@ export function useDiffFeed(sessionId: string): DiffFeed {
       if (unlisten) unlisten();
     };
   }, [sessionId, loadSummary]);
+
+  // A Changes-tree pick while this DIFF tab is already mounted (diff-focus.ts).
+  useEffect(
+    () =>
+      onDiffFileRequest((req) => {
+        if (req.sessionId !== sessionId) return;
+        takePendingDiffFile(sessionId);
+        setSelectedPath(req.path);
+      }),
+    [sessionId],
+  );
 
   // Load the selected file's diff (FR-7/8). Stale path → refresh summary (FR §7).
   useEffect(() => {

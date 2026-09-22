@@ -1,5 +1,5 @@
-// Redesign turn 8b — the detail pane's two card shapes, once the account list
-// gained a provider axis (providers.ts): CredentialCard for a CLI-login
+// Settings / Accounts (Figma "Login / …", 140:7735) — the detail pane's two
+// card shapes, once the account list gained a provider axis (providers.ts): CredentialCard for a CLI-login
 // credential (a config dir, a plan, meters that reset) and ApiKeyRow for an
 // API-key credential (a secret, a base URL, no ceiling). Both are thin
 // renderers over accounts.ts/providers.ts, matching the rest of the feature —
@@ -14,48 +14,48 @@
 import { useEffect, useRef } from 'react';
 import type { Account } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
+import { Meter } from '../../ui/Meter';
 import {
   accountDisplayLabel,
   accountMetersView,
   accountSecondaryEmail,
   middleTruncate,
 } from './accounts';
+import { credentialMeterViews } from './credential-meters';
 import { accountWantsAttention, credentialSessionLine } from './providers';
 import './accounts.css';
+import './accounts-page.css';
 
-// ---------------------------------------------------------------- gauges
+// ---------------------------------------------------------------- meters
 
-function Gauges({
-  meters,
-}: {
-  meters: ReturnType<typeof accountMetersView>;
-}): JSX.Element | null {
-  if (meters.kind === 'meters') {
+/** Figma "Meters" (140:7742): one column per meter — label + figure, a 4px bar, its own reset. */
+function Meters({ snapshot, now }: { snapshot: UsageSnapshot | undefined; now: number }): JSX.Element | null {
+  const views = credentialMeterViews(snapshot, now);
+  if (views.length > 0) {
     return (
-      <div className="acc-gauges">
-        {meters.chips.map((c, i) => (
-          <div key={`${c.label}:${i}`} className="acc-gauge" title={c.title}>
-            <div className="acc-gauge-head">
-              <span className="truncate acc-gauge-label">{c.label}</span>
-              {i === 0 && meters.reset && <span className="acc-gauge-reset">{meters.reset}</span>}
-              <span className="acc-gauge-percent">{c.percentText}</span>
+      <div className="acc-meters">
+        {views.map((m, i) => (
+          <div key={`${m.label}:${i}`} className={m.high ? 'acc-meter acc-meter--high' : 'acc-meter'} title={m.title}>
+            <div className="acc-meter__head">
+              <span className="acc-meter__label">{m.label}</span>
+              <span className="acc-meter__figure">{m.percentText}</span>
             </div>
-            <span className="acc-gauge-track">
-              <span className="acc-gauge-fill" style={{ width: `${c.fillPercent}%`, background: c.color }} />
-            </span>
+            <Meter fraction={m.fillPercent / 100} tone={m.high ? 'danger' : 'default'} className="acc-meter__bar" />
+            <span className="acc-meter__reset">{m.reset}</span>
           </div>
         ))}
       </div>
     );
   }
-  if (meters.kind === 'error') {
+  const view = accountMetersView(snapshot, now);
+  if (view.kind === 'error') {
     return (
-      <div className="acc-empty" title={meters.message ?? undefined}>
-        usage unavailable
+      <div className="acc-empty" title={view.message ?? undefined}>
+        Usage unavailable
       </div>
     );
   }
-  if (meters.kind === 'loading') return <div className="acc-empty">…</div>;
+  if (view.kind === 'loading') return <div className="acc-empty">Reading usage…</div>;
   return null;
 }
 
@@ -107,7 +107,6 @@ export function CredentialCard(p: CredentialCardProps): JSX.Element {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const wantsAttention = accountWantsAttention(account);
-  const meters = accountMetersView(snapshot, now);
 
   useEffect(() => {
     if (renaming) inputRef.current?.select();
@@ -120,10 +119,9 @@ export function CredentialCard(p: CredentialCardProps): JSX.Element {
 
   const footerParts: string[] = [];
   const email = accountSecondaryEmail(account);
-  if (email) footerParts.push(email);
-  if (account.configDir !== null) footerParts.push('own config dir');
   const sessionsLine = credentialSessionLine(sessionNames);
   if (sessionsLine) footerParts.push(sessionsLine);
+  if (account.configDir !== null) footerParts.push('own config dir');
   const footer = footerParts.join(' · ');
 
   const attentionText =
@@ -153,8 +151,9 @@ export function CredentialCard(p: CredentialCardProps): JSX.Element {
         ) : (
           <span className="truncate acc-cred-name">{accountDisplayLabel(account)}</span>
         )}
-        {account.isDefault && <span className="acc-pill">DEFAULT</span>}
-        {wantsAttention && <span className="acc-pill acc-pill--alert">NEEDS LOGIN</span>}
+        {account.isDefault && <span className="acc-pill">Default</span>}
+        {wantsAttention && <span className="acc-pill acc-pill--alert">Needs login</span>}
+        <span className="acc-cred-spacer" />
         <div className={wantsAttention ? 'acc-cred-actions acc-cred-actions--pinned' : 'acc-cred-actions'}>
           {!account.isDefault && (
             <button
@@ -203,9 +202,10 @@ export function CredentialCard(p: CredentialCardProps): JSX.Element {
             </button>
           )}
         </div>
+        {email && <span className="acc-cred-email">{email}</span>}
       </div>
 
-      <Gauges meters={meters} />
+      <Meters snapshot={snapshot} now={now} />
 
       {wantsAttention && loginLabel !== null && (
         <div className="acc-reroute">
@@ -264,7 +264,7 @@ export function ApiKeyRow(p: ApiKeyRowProps): JSX.Element {
     <div className={classNames.join(' ')} onMouseEnter={onFocus} onClick={onFocus}>
       <div className="acc-key-head">
         <span className="truncate acc-key-name">{accountDisplayLabel(account)}</span>
-        {account.isDefault && <span className="acc-pill">DEFAULT</span>}
+        {account.isDefault && <span className="acc-pill">Default</span>}
         <span className="acc-key-secret">{secret}</span>
         <div className="acc-key-actions">
           {!account.isDefault && (

@@ -29,10 +29,10 @@ describe('shellColumns', () => {
     expect(shellColumns('split', true, 238, 2000).template).toBe('238px 12px 1fr');
   });
 
-  it('folds the roster to the 46px rail in EVERY regime — never to nothing', () => {
+  it('folds the roster to the 56px rail in EVERY regime — never to nothing', () => {
     for (const regime of ['single', 'split'] as const) {
       expect(shellColumns(regime, false, 282, 2000)).toEqual({
-        template: '46px 12px 1fr',
+        template: '56px 12px 1fr',
         leftRail: true,
         showHandle: true,
       });
@@ -40,7 +40,7 @@ describe('shellColumns', () => {
     // grid regime: no handle, so no gutter track either — the DOM only has
     // two grid items (SessionRail + .app-main-cell), so the template must too.
     expect(shellColumns('grid', false, 282, 2000)).toEqual({
-      template: '46px 1fr',
+      template: '56px 1fr',
       leftRail: true,
       showHandle: false,
     });
@@ -167,6 +167,7 @@ describe('buildShortcutActions', () => {
       setNewAgentOpen: vi.fn(),
       closeAgentTab: vi.fn(),
       toggleLeftPane: vi.fn(),
+      toggleSessionPanel: vi.fn(),
       notifyUnavailable: vi.fn(),
     };
     const ctx: ShortcutActionsContext = {
@@ -180,6 +181,7 @@ describe('buildShortcutActions', () => {
       setNewAgentOpen: spies.setNewAgentOpen,
       closeAgentTab: spies.closeAgentTab,
       toggleLeftPane: spies.toggleLeftPane,
+      toggleSessionPanel: spies.toggleSessionPanel,
       getSubagentsCapability: () => ({ available: true }),
       notifyUnavailable: spies.notifyUnavailable,
       ...overrides,
@@ -193,7 +195,7 @@ describe('buildShortcutActions', () => {
     const { ctx } = fakeCtx();
     const actions = buildShortcutActions(ctx);
     expect(Object.keys(actions).sort()).toEqual(
-      ['1', '2', '3', '4', '5', '6', '[', 'A', 'D', 'N', 'O', 'T', 'W', 'a', 'd', 'n', 'o', 't', 'w'].sort(),
+      ['1', '2', '3', '4', '5', '6', '[', ']', 'A', 'D', 'N', 'O', 'T', 'W', 'a', 'd', 'n', 'o', 't', 'w'].sort(),
     );
   });
 
@@ -316,10 +318,15 @@ describe('buildShortcutActions', () => {
     const actions = buildShortcutActions(ctx);
     actions['[']();
     expect(spies.toggleLeftPane).toHaveBeenCalledTimes(1);
-    // design 7a: `]` and `c` acted on a right column that no longer exists.
-    expect(actions[']']).toBeUndefined();
+    // `c` acted on the 7a right column, which no longer exists.
     expect(actions.c).toBeUndefined();
     expect(actions.C).toBeUndefined();
+  });
+
+  it('] toggles the session panel', () => {
+    const { ctx, spies } = fakeCtx();
+    buildShortcutActions(ctx)[']']();
+    expect(spies.toggleSessionPanel).toHaveBeenCalledTimes(1);
   });
 });
 

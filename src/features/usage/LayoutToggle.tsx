@@ -8,14 +8,13 @@
 // width the bar hands it to `⋯` (which renders the `segments` form again — inside a
 // panel there is width to spare, and a menu inside a menu is one level too many).
 
-import { Columns2, Grid2x2, Square } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { MAX_PANES, layoutModeState, paneCount } from '../../lib/layoutStore';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useStore } from '../../lib/store';
+import { Icon } from '../../ui/Icon';
 import './usage.css';
 
-const ICON = { size: 12, strokeWidth: 1.75 } as const;
 
 /**
  * One button per reachable pane count. Splitting needs a PROJECT, not a second
@@ -23,9 +22,9 @@ const ICON = { size: 12, strokeWidth: 1.75 } as const;
  * pane waiting for the next one (FR-15). Only the empty scope disables them.
  */
 const MODES: readonly { count: number; label: string; glyph: JSX.Element }[] = [
-  { count: 1, label: 'Single pane', glyph: <Square {...ICON} /> },
-  { count: 2, label: 'Split view', glyph: <Columns2 {...ICON} /> },
-  { count: MAX_PANES, label: 'Four panes', glyph: <Grid2x2 {...ICON} /> },
+  { count: 1, label: 'Single pane', glyph: <Icon name="layout-1" size={14} /> },
+  { count: 2, label: 'Split view', glyph: <Icon name="layout-2" size={14} /> },
+  { count: MAX_PANES, label: 'Four panes', glyph: <Icon name="layout-4" size={14} /> },
 ];
 
 export interface LayoutToggleProps {

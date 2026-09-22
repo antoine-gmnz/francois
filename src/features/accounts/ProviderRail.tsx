@@ -4,13 +4,14 @@
 // by keyboard (the modal's own arrow-key model still owns the credential list
 // inside the detail pane — this is a second, independent tab stop).
 //
-// The status dot never carries the only signal: `aria-label`/`title` name the
-// state in words (§Accessibility), because colour alone is exactly the kind of
-// cue the design system v2 do/don't rules forbid.
+// The state glyph never carries the only signal: `aria-label`/`title` name the
+// state in words (§Accessibility) — colour alone is not a cue.
 
+import { StateIcon } from '../../ui/StateIcon';
+import type { StateKind } from '../../ui/state-kind';
 import { ProviderTile } from './ProviderTile';
 import { splitRail, type ProviderGroup, type ProviderId, type ProviderStatus } from './providers';
-import './accounts.css';
+import './accounts-page.css';
 
 export interface ProviderRailProps {
   groups: ProviderGroup[];
@@ -18,16 +19,17 @@ export interface ProviderRailProps {
   onSelect: (id: ProviderId) => void;
 }
 
-const DOT_LABEL: Record<Exclude<ProviderStatus, 'none'>, string> = {
-  attention: 'needs attention',
-  active: 'active',
-  idle: 'idle',
+const STATE: Record<Exclude<ProviderStatus, 'none'>, { kind: StateKind; label: string }> = {
+  attention: { kind: 'failed', label: 'needs attention' },
+  active: { kind: 'done', label: 'active' },
+  idle: { kind: 'idle', label: 'idle' },
 };
 
-function StatusDot({ status }: { status: ProviderStatus }): JSX.Element | null {
+/** The row's state glyph (Figma "State"), named in words for AT and the tooltip. */
+function ProviderState({ status }: { status: ProviderStatus }): JSX.Element | null {
   if (status === 'none') return null;
-  const label = DOT_LABEL[status];
-  return <span className={`acc-dot acc-dot--${status}`} role="img" aria-label={label} title={label} />;
+  const { kind, label } = STATE[status];
+  return <StateIcon kind={kind} size={12} title={label} className="acc-rail-state" />;
 }
 
 function RailRow({
@@ -57,7 +59,7 @@ function RailRow({
         <span className="truncate acc-rail-name">{group.spec.name}</span>
         <span className="truncate acc-rail-meta">{group.meta}</span>
       </div>
-      <StatusDot status={group.status} />
+      <ProviderState status={group.status} />
     </button>
   );
 }
@@ -66,7 +68,7 @@ export function ProviderRail({ groups, selected, onSelect }: ProviderRailProps):
   const { connected, available } = splitRail(groups);
 
   return (
-    <div className="scz acc-rail">
+    <nav className="acc-rail" aria-label="Providers">
       {connected.length > 0 && (
         <div className="acc-rail-section">
           <div className="acc-rail-heading">Connected</div>
@@ -83,6 +85,6 @@ export function ProviderRail({ groups, selected, onSelect }: ProviderRailProps):
           ))}
         </div>
       )}
-    </div>
+    </nav>
   );
 }

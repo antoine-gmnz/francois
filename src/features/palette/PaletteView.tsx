@@ -1,12 +1,20 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+// Command palette — redesign "Graphite & Signal", Figma "10 · Command palette"
+// (136:5213, light 142:12392): a search row that names the session it acts on,
+// results grouped Best match / Session / Go to / App with an icon, a hint and —
+// where one exists — the single-key shortcut, and a keycap footer. The grouping,
+// icons and keycaps come from palette-presentation.ts; this file only renders.
+
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { PaletteCommand, SecondaryStep, SecondaryStepItem } from '../../../contract/command-palette';
 import { closePalette, filterRank, makeContext, paletteCommands, usePaletteState, useToastState } from './palette';
+import { commandLook, flattenSections, paletteSections } from './palette-presentation';
 import { getPaletteRunningAgents, usePaletteDataRev } from './paletteData';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
+import { Icon } from '../../ui/Icon';
+import type { IconName } from '../../ui/icons';
+import { Kbd } from '../../ui/Kbd';
 import { ListRow } from '../../ui/ListRow';
-import { HintBar } from '../../ui/HintBar';
 import './palette.css';
 
 // ---------- palette overlay + toast host (rendered once at the app root) ----------
@@ -49,10 +57,14 @@ function Palette() {
   // Fresh context every render pass while open (FR-9).
   const ctx = makeContext(activeSessionId, getPaletteRunningAgents(activeSessionId).length);
 
+  // The ranked list regrouped into sections — and re-flattened, so the cursor
+  // walks exactly the order the sections are drawn in.
   const rootItems = useMemo(() => {
     const enabled = paletteCommands().filter((c) => !c.enabled || c.enabled(ctx));
-    return filterRank(enabled, query, (c) => c.name);
+    const ranked = filterRank(enabled, query, (c) => c.name);
+    return flattenSections(paletteSections(ranked, query, (c) => c.id));
   }, [query, ctx.activeSessionId, ctx.runningAgentCount]);
+  const scopeName = useStore((s) => s.sessions.find((x) => x.id === activeSessionId)?.name ?? null);
 
   const secItems = useMemo(
     () => (secondaryStep ? filterRank(secondaryStep.items, secondaryQuery, (i) => i.label) : []),
@@ -73,15 +85,14 @@ function Palette() {
     return () => cancelAnimationFrame(id);
   }, [isSecondary]);
 
-  // Block caret (§8): measure the current text width via a hidden mirror and place a
-  // blinking block at its end; the native caret is hidden. JetBrains Mono is monospace,
-  // so this is exact for the short, non-overflowing queries the palette handles.
   const currentText = isSecondary ? secondaryQuery : query;
-  const mirrorRef = useRef<HTMLSpanElement>(null);
-  const [caretX, setCaretX] = useState(0);
+
+  // Keep the keyboard cursor's row in view as ↑↓ walk past the list's scroll cap.
+  const listRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    setCaretX(mirrorRef.current?.offsetWidth ?? 0); // measure before paint — no one-frame lag
-  }, [currentText, isSecondary]);
+    const row = listRef.current?.querySelector<HTMLElement>('.list-row--selected');
+    row?.scrollIntoView?.({ block: 'nearest' });
+  }, [selIdx, isSecondary]);
 
   const runCommand = (cmd: PaletteCommand) => {
     const result = cmd.run(ctx);
@@ -118,92 +129,109 @@ function Palette() {
     // Escape / ⌘K are handled by app-shell's capture-phase listener (FR-1/FR-3).
   };
 
+  // rootItems is already in section order, so regrouping it keeps every item in its place.
+  const sectionsFor = isSecondary ? null : paletteSections(rootItems, query, (c) => c.id);
+
   return (
     <div className="palette-backdrop" onMouseDown={() => closePalette()}>
-      <div className="palette-panel" onMouseDown={(e) => e.stopPropagation()}>
-        {/* input row */}
+      <div className="palette-panel" role="dialog" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
+        {/* input row — Figma 136:5214: search icon, the query, the scope on the right */}
         <div className="palette-input-row">
-          <span className="palette-chevron">›</span>
+          <Icon name="search" size={16} className="palette-input-row__icon" />
           {isSecondary && secondaryStep && <span className="palette-parent-pill">{secondaryParentName}</span>}
-          <div className="palette-input-wrap">
-            <input
-              ref={inputRef}
-              className="palette-input"
-              value={currentText}
-              onChange={(e) => (isSecondary ? setSecondaryQuery(e.target.value) : setQuery(e.target.value))}
-              onKeyDown={onKeyDown}
-              placeholder={isSecondary && secondaryStep ? secondaryStep.placeholder : 'run a command'}
-            />
-            <span ref={mirrorRef} aria-hidden className="palette-mirror">
-              {currentText}
-            </span>
-            <span aria-hidden className="palette-caret" style={{ '--caret-x': `${caretX}px` } as CSSProperties} />
-          </div>
-          <span className="palette-esc-hint">{isSecondary ? 'back' : 'esc'}</span>
+          <input
+            ref={inputRef}
+            className="palette-input"
+            value={currentText}
+            onChange={(e) => (isSecondary ? setSecondaryQuery(e.target.value) : setQuery(e.target.value))}
+            onKeyDown={onKeyDown}
+            aria-label={isSecondary && secondaryStep ? secondaryStep.placeholder : 'Run a command'}
+            placeholder={isSecondary && secondaryStep ? secondaryStep.placeholder : 'Run a command…'}
+          />
+          {scopeName && <span className="palette-scope truncate">in {scopeName}</span>}
         </div>
 
-        {/* list */}
-        <div className="scz palette-list">
+        {/* results — Figma 136:5222 */}
+        <div ref={listRef} className="scz palette-list" role="listbox" aria-label="Commands">
           {items.length === 0 ? (
-            <div className="palette-empty">no matching commands</div>
+            <div className="palette-empty">No matching commands</div>
+          ) : sectionsFor ? (
+            sectionsFor.map((section) => (
+              <div key={section.id} role="group" aria-label={section.label}>
+                <div className="palette-section-label">{section.label}</div>
+                {section.items.map((cmd) => {
+                  const i = items.indexOf(cmd);
+                  return (
+                    <CommandRow key={cmd.id} cmd={cmd} selected={i === selIdx} onHover={() => setSel(i)} onClick={() => runCommand(cmd)} />
+                  );
+                })}
+              </div>
+            ))
           ) : (
-            items.map((it, i) =>
-              isSecondary ? (
-                <ItemRow key={(it as SecondaryStepItem).id} item={it as SecondaryStepItem} selected={i === selIdx} onHover={() => setSel(i)} onClick={() => pickItem(it as SecondaryStepItem)} />
-              ) : (
-                <CommandRow key={(it as PaletteCommand).id} cmd={it as PaletteCommand} selected={i === selIdx} onHover={() => setSel(i)} onClick={() => runCommand(it as PaletteCommand)} />
-              ),
-            )
+            items.map((it, i) => (
+              <ItemRow key={(it as SecondaryStepItem).id} item={it as SecondaryStepItem} selected={i === selIdx} onHover={() => setSel(i)} onClick={() => pickItem(it as SecondaryStepItem)} />
+            ))
           )}
         </div>
 
-        {/* footer */}
-        <HintBar
-          items={[
-            { key: '↑↓', label: 'navigate' },
-            { key: '⏎', label: isSecondary ? 'select' : 'run' },
-            { key: 'esc', label: isSecondary ? 'back' : 'dismiss' },
-          ]}
-        />
+        {/* footer — Figma 136:5293 */}
+        <div className="palette-footer">
+          <span className="palette-footer__hint">
+            <Kbd keys="↑↓" /> navigate
+          </span>
+          <span className="palette-footer__hint">
+            <Kbd keys="⏎" /> {isSecondary ? 'select' : 'run'}
+          </span>
+          <span className="palette-footer__hint">
+            <Kbd keys="Esc" /> {isSecondary ? 'back' : 'close'}
+          </span>
+        </div>
       </div>
     </div>
   );
 }
 
 function CommandRow({ cmd, selected, onHover, onClick }: { cmd: PaletteCommand; selected: boolean; onHover: () => void; onClick: () => void }) {
+  const look = commandLook(cmd.id);
   return (
-    <Row
-      glyph={cmd.glyph}
-      name={cmd.name}
-      hint={cmd.hint?.()}
-      selected={selected}
-      onHover={onHover}
-      onClick={onClick}
-    />
+    <Row icon={look.icon} name={cmd.name} hint={cmd.hint?.()} keycap={look.keycap} selected={selected} onHover={onHover} onClick={onClick} />
   );
 }
 
 function ItemRow({ item, selected, onHover, onClick }: { item: SecondaryStepItem; selected: boolean; onHover: () => void; onClick: () => void }) {
-  return <Row glyph="" name={item.label} hint={item.hint} selected={selected} onHover={onHover} onClick={onClick} />;
+  return <Row name={item.label} hint={item.hint} selected={selected} onHover={onHover} onClick={onClick} />;
 }
 
-function Row({ glyph, name, hint, selected, onHover, onClick }: { glyph: string; name: string; hint?: string; selected: boolean; onHover: () => void; onClick: () => void }) {
+function Row({
+  icon,
+  name,
+  hint,
+  keycap,
+  selected,
+  onHover,
+  onClick,
+}: {
+  icon?: IconName;
+  name: string;
+  hint?: string;
+  keycap?: string;
+  selected: boolean;
+  onHover: () => void;
+  onClick: () => void;
+}) {
   return (
-    <ListRow className="palette-row" selected={selected} onMouseEnter={onHover} onClick={onClick}>
-      <span className="palette-row-glyph">{glyph}</span>
-      <span className="palette-row-name">{name}</span>
-      <span className="palette-row-hint">{hint ?? ''}</span>
+    <ListRow className="palette-row" role="option" aria-selected={selected} selected={selected} onMouseEnter={onHover} onClick={onClick}>
+      {icon && <Icon name={icon} size={15} className="palette-row__icon" />}
+      <span className="palette-row__name truncate">{name}</span>
+      <span className="palette-row__hint truncate">{hint ?? ''}</span>
+      {keycap && <Kbd keys={keycap} />}
     </ListRow>
   );
 }
 
 // ---------- toasts (FR-24/FR-25) ----------
 
-const TOAST_GLYPH: Record<string, { glyph: string; color: string; border: string }> = {
-  error: { glyph: '✕', color: 'var(--error)', border: '1px solid color-mix(in srgb, var(--error) 40%, transparent)' },
-  info: { glyph: '●', color: 'var(--text-dim)', border: '1px solid var(--bg-hover-2)' },
-  success: { glyph: '●', color: 'var(--success)', border: '1px solid color-mix(in srgb, var(--success) 40%, transparent)' },
-};
+const TOAST_ICON: Record<string, IconName> = { error: 'x', info: 'info', success: 'check' };
 
 function ToastHost() {
   const visible = useToastState((s) => s.visible);
@@ -212,13 +240,11 @@ function ToastHost() {
   return (
     <div className="palette-toast-host">
       {visible.map((t) => {
-        const g = TOAST_GLYPH[t.kind] ?? TOAST_GLYPH.info;
+        const kind = t.kind in TOAST_ICON ? t.kind : 'info';
         return (
-          <div key={t.id} className="palette-toast" onClick={() => dismiss(t.id)}>
-            <span className="palette-toast-glyph" style={{ '--toast-color': g.color, '--toast-border': g.border } as CSSProperties}>
-              {g.glyph}
-            </span>
-            <span className="palette-toast-message">{t.message}</span>
+          <div key={t.id} role="status" className={`palette-toast palette-toast--${kind}`} onClick={() => dismiss(t.id)}>
+            <Icon name={TOAST_ICON[kind]!} size={12} className="palette-toast__icon" />
+            <span className="palette-toast__message">{t.message}</span>
           </div>
         );
       })}

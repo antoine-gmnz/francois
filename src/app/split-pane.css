@@ -1,0 +1,319 @@
+/* ── split / grid panes — Figma "Graphite & Signal" 13 · Split / Two panes
+   (137:6133, light 142:13550) and 14 · Grid / Four panes (137:6338, light
+   142:13755). ─────────────────────────────────────────────────────────────────
+   Panes sit flush, 1px apart (the gutter track IS the line — see
+   `.split-divider`). A pane is the canvas surface with a 40px header: state
+   glyph, name, the clock or a state word, underlined text tabs, then the quiet
+   controls. The focused pane is the one framed in line/strong; nothing else
+   changes with focus, so the eye is not asked to re-read the layout each time
+   focus moves (split-by-4 FR-6). Every colour is a theme token. */
+
+.split-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+/* Drawn INSIDE the pane (an inset outline, not a border) so focusing a pane
+   never shifts its content by a pixel. Above the body so a terminal or a diff
+   cannot paint over it. */
+.split-pane--focused::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--line-strong);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ── header ── */
+.split-pane__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  height: 40px;
+  padding: 0 var(--space-10) 0 var(--space-14);
+  border-bottom: 1px solid var(--line-subtle);
+  flex-shrink: 0;
+  min-width: 0;
+}
+.split-pane__name {
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+  min-width: 0;
+  flex-shrink: 1;
+}
+.split-pane__status {
+  font: var(--type-small);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.split-pane__status--running {
+  font: var(--type-mono-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--state-running);
+}
+.split-pane__status--attention {
+  color: var(--state-attention-text);
+}
+.split-pane__status--success {
+  color: var(--state-success-text);
+}
+.split-pane__status--danger {
+  color: var(--state-danger-text);
+}
+.split-pane__status--faint {
+  color: var(--text-faint);
+}
+.split-pane__spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.split-pane__ctx {
+  font: var(--type-mono-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.split-pane__header .icon-btn {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.split-pane__header .icon-btn:hover,
+.split-pane__header .icon-btn--on {
+  color: var(--text-primary);
+}
+.split-pane__shell-glyph {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* unbound-panes FR-14 — the neutral project marker, `‹repo› name`. */
+.split-pane__marker {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  background: var(--bg-raised);
+  border-radius: var(--radius-3);
+  padding: 0 var(--space-4);
+  flex-shrink: 0;
+}
+
+/* ── pane tabs: text, underlined when selected (Figma "Pane tabs") ── */
+.split-pane__tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-14);
+  align-self: stretch;
+  padding-left: var(--space-10);
+  min-width: 0;
+  flex-shrink: 1;
+  /* fix-agent-view FR-13: a half-width pane cannot fit three built-ins plus six
+     agent chips — the row scrolls past overflow rather than squeezing them. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.split-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  /* the 2px underline, present-but-clear at rest so selecting never shifts */
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font: var(--type-small);
+  color: var(--text-faint);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.split-tab:hover {
+  color: var(--text-secondary);
+}
+.split-tab--on,
+.split-tab--on:hover {
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+}
+.split-tab:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.split-tab__count {
+  font: var(--type-mono-small);
+  color: inherit;
+}
+/* fix-agent-view: a dynamic (agent / workflow) tab — same register, plus its
+   state glyph and close. */
+.split-tab--agent {
+  gap: var(--space-6);
+  max-width: 160px;
+}
+.split-tab__close {
+  display: inline-flex;
+  color: var(--text-disabled);
+  flex-shrink: 0;
+}
+.split-tab__close:hover {
+  color: var(--text-primary);
+}
+
+/* ── body ── */
+.split-pane__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* FR-15: a pane with no session yet — an invitation, not a failure. */
+.split-pane__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  text-align: center;
+  padding: var(--space-12);
+}
+.split-pane__empty-title {
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.split-pane__empty-hint {
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.split-pane__empty-choices {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+}
+/* ProjectShellPane's retry / close buttons still use this name. */
+.split-pane__empty-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  margin-top: var(--space-8);
+  height: 26px;
+  padding: 0 var(--space-10);
+  background: transparent;
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-4);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.split-pane__empty-new:hover {
+  background: var(--bg-raised);
+}
+/* anchors the ProjectPickerPopover to the "Open a shell here" button. */
+.split-pane__empty-choice-anchor {
+  position: relative;
+}
+
+/* ── the `⋯` menu (unbound-panes FR-9) — revealed on pane hover, and kept
+   visible while its own menu is open. ── */
+.split-pane__menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.split-pane__menu-btn {
+  opacity: 0;
+}
+.split-pane:hover .split-pane__menu-btn,
+.split-pane__menu:focus-within .split-pane__menu-btn,
+.split-pane__menu-btn.icon-btn--on {
+  opacity: 1;
+}
+/* A floating layer: the one place a shadow survives (no surface behind it). */
+.split-pane__menu-list {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  box-shadow: var(--shadow-float);
+}
+.split-pane__menu-item {
+  text-align: left;
+  white-space: nowrap;
+  padding: var(--space-6) var(--space-8);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-4);
+  color: var(--text-secondary);
+  font: var(--type-small);
+  cursor: pointer;
+}
+.split-pane__menu-item:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+/* ── the grid's footer on an UNFOCUSED pane (FR-11) — sits where the composer
+   does, so "one composer on screen" is legible at a glance. ── */
+.pane-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 48px;
+  padding: var(--space-10) var(--space-14) var(--space-12);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.pane-footer__hint {
+  font: var(--type-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.pane-footer__key {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border-radius: var(--radius-3);
+  padding: 1px var(--space-4);
+}
+.pane-footer__count {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+
+/* ── the split grid's drag handle ──────────────────────────────────────────
+   The redesign draws panes flush, 1px apart (--split-gutter on .app-split-grid,
+   app.css), so the handle's hit area reaches 3px either side of the seam
+   (`::after`) — a 1px target would be unusable. */
+.split-divider {
+  position: relative;
+  background: var(--line-subtle);
+  z-index: 4;
+}
+.split-divider::before {
+  display: none;
+}
+.split-divider::after {
+  content: '';
+  position: absolute;
+  inset: 0 -3px;
+}
+.split-divider.app-split-divider--y::after {
+  inset: -3px 0;
+}
+.split-divider:hover,
+.split-divider:focus-visible,
+.split-divider.app-split-divider--dragging {
+  background: var(--line-strong);
+}

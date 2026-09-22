@@ -1,0 +1,240 @@
+/* Settings surface parts (Settings.tsx; Figma 140:7586 / 140:7787 / 140:7929).
+   Tokens only — both themes follow. */
+
+/* ── nav (Figma "Settings nav") ── */
+.settings-nav__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.settings-nav__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-10) var(--space-8);
+}
+.settings-nav__head--action {
+  min-height: 32px;
+}
+.settings-nav__label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.settings-nav__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-10);
+  border: 0;
+  border-radius: var(--radius-5);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-nav__item:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.settings-nav__item--selected,
+.settings-nav__item--selected:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+.settings-nav__item:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.settings-nav__item:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.settings-nav__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-nav__count {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+
+/* ── page header (Figma "Header") ── */
+.settings-header {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-16);
+  width: 100%;
+}
+.settings-header__title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.settings-header__crumbs {
+  color: var(--text-faint);
+  font: var(--type-small);
+  white-space: pre;
+}
+.settings-header__heading {
+  margin: 0;
+  color: var(--text-primary);
+  font: var(--type-heading);
+  letter-spacing: var(--tracking-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-header__lede {
+  margin: 0;
+  max-width: 600px;
+  color: var(--text-muted);
+  font: var(--type-ui);
+}
+.settings-header__lede--mono {
+  color: var(--text-faint);
+  font: var(--type-mono);
+}
+.settings-header__lede code,
+.settings-note__text code {
+  color: var(--text-secondary);
+  font: var(--type-mono);
+}
+
+/* ── field (Figma "Field / …") ── */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.settings-field__label {
+  color: var(--text-muted);
+  font: var(--type-small-medium);
+}
+.settings-field__hint {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+/* Input / Select: 38px, --bg-input, a --line-default outline. */
+.settings-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 var(--space-12);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: var(--type-ui);
+  outline: none;
+}
+.settings-input:focus-visible {
+  border-color: var(--border-focus);
+}
+.settings-input:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.settings-input--mono {
+  font: var(--type-mono);
+}
+.settings-input--unset {
+  color: var(--text-faint);
+}
+.settings-input--error {
+  color: var(--state-danger-text);
+}
+select.settings-input {
+  appearance: none;
+  padding-right: var(--space-32);
+  background-image: none;
+  cursor: pointer;
+}
+/* The select's chevron — the Figma icon, drawn by the wrapper (a <select>
+   cannot host a child). */
+.settings-select {
+  position: relative;
+  display: flex;
+  width: 100%;
+}
+.settings-select__chevron {
+  position: absolute;
+  right: var(--space-12);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+textarea.settings-input {
+  height: auto;
+  min-height: 88px;
+  padding: var(--space-10) var(--space-12);
+  resize: vertical;
+}
+
+/* ── row card (Figma "Pinned" / "Danger zone") ── */
+.settings-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  width: 100%;
+  padding: var(--space-14) var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.settings-card--danger {
+  border-color: var(--tint-danger-line);
+  background: var(--tint-danger);
+}
+.settings-card__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.settings-card__title {
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+.settings-card__description {
+  color: var(--text-muted);
+  font: var(--type-small);
+}
+
+/* ── note (Figma "Note") ── */
+.settings-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.settings-note__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--text-muted);
+}
+.settings-note__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font: var(--type-ui);
+}

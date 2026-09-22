@@ -1,188 +1,192 @@
-/* pane [1] — the fleet board (Sidebar.tsx + SessionListBody / SessionContextMenu /
-   FilterInput, which share this stylesheet's class names 1:1). */
-
-/* design 9a: the roster is a RAIL, not a card — no border, no radius, flush to
-   the window edge and continuous with the session row above it. Focus is
-   carried by the title alone (.sidebar__title--focused), which is all that is
-   left once the border it used to tint is gone. */
+/* pane [1] — the session roster (Sidebar.tsx + StateRosterBody / ScopeChips /
+   SessionContextMenu / FilterInput, which share this stylesheet's class names).
+   Redesign "Graphite & Signal", Figma "Sidebar / Sessions" 127:28: --bg-rail with
+   a --line-subtle right edge; rows sit 8px in from the edges on 6px radii. */
 .sidebar {
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  overflow: hidden;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line-subtle);
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
-/* No bottom rule, unlike the old right-rail panel headers: the filter field
-   sits directly beneath and the mock groups the two as one block.
-   design 7a: sentence-case, not the uppercase pane label — there is no longer a
-   numbered pane grid for it to key into. */
 .sidebar__header {
   display: flex;
-  align-items: center;
-  gap: var(--space-9);
-  padding: var(--space-12) var(--space-14) var(--space-10);
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-10) var(--space-10) var(--space-16);
   flex-shrink: 0;
 }
-.sidebar__title {
-  font-size: var(--font-size-12-5);
-  font-weight: 600;
-  color: var(--text-hint);
-}
-.sidebar__title--focused {
-  color: var(--accent);
-}
-/* A pill, per the mock — the bare figure read as part of the title. */
-.sidebar__count {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-dim);
-  background: var(--bg-elevated);
-  border-radius: 10px;
-  padding: 1px var(--space-7);
-}
-.sidebar__act {
+.sidebar__title-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  border-radius: var(--radius-base);
-  color: var(--text-faint);
-  cursor: pointer;
+  gap: var(--space-4);
 }
-.sidebar__act:hover {
-  color: var(--text-2);
-  background: var(--bg-hover);
+.sidebar__title {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
 }
-.sidebar__act--on {
-  color: var(--text-2);
-  background: var(--bg-hover-2);
+/* Focus is carried by the title alone — a quiet underline, never a colour. */
+.sidebar__title--focused {
+  text-decoration: underline;
+  text-decoration-color: var(--line-default);
+  text-underline-offset: 4px;
 }
-/* The roster's own accent: starting a session is the live action in this pane. */
-.sidebar__act--accent {
-  color: var(--accent);
-  font-size: var(--font-size-15);
-  line-height: 1;
+.sidebar__header .cloud-adopt-button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-5);
+  color: var(--text-muted);
 }
-.sidebar__act--accent:hover {
-  color: var(--accent-bright);
+.sidebar__header .cloud-adopt-button:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
 }
 
-/* ── design 7a: the dissolved right column ──────────────────────────────────
-   Agents / MCP / Skills / Workflows, ruled off under the cards. Deliberately
-   NOT card-shaped: they are an index at the foot of a list, and giving them the
-   session card's surface would make the roster read as eight sessions. */
-/* 12b: ONE line, not four. A recessed strip flush to the foot of the pane —
-   its own tonal step is what sets it off from the list, so there is still no
-   rule (9a) and no margin to fake one with. */
+/* ── project scope chips (ScopeChips.tsx) ── */
+.scope-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  overflow: hidden;
+}
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  max-width: 120px;
+  min-width: 32px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small);
+  white-space: nowrap;
+  overflow: hidden;
+  flex-shrink: 1;
+  cursor: pointer;
+}
+.scope-chip:hover {
+  background: var(--bg-raised);
+}
+.scope-chip--on,
+.scope-chip--on:hover {
+  border-color: transparent;
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+}
+.scope-chip--open {
+  background: var(--bg-raised);
+}
+.scope-chip__name {
+  min-width: 0;
+}
+.scope-chip__count {
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+.scope-chip--on .scope-chip__count {
+  color: var(--text-muted);
+}
+.scope-chips__more {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* ── the destinations strip at the foot of the roster ── */
 .sidebar__footer {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-7) var(--space-8);
-  background: var(--bg-deep);
+  gap: var(--space-14);
+  padding: var(--space-8) var(--space-10) var(--space-8) var(--space-16);
+  border-top: 1px solid var(--line-subtle);
   flex-shrink: 0;
+  min-width: 0;
 }
 .roster-pane {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
   gap: var(--space-4);
-  min-width: 0;
-  padding: var(--space-4) var(--space-7);
-  border-radius: var(--radius-base);
+  flex-shrink: 0;
   cursor: pointer;
-}
-.roster-pane:hover {
-  background: var(--bg-hover);
-}
-.roster-pane--on,
-.roster-pane--on:hover {
-  background: var(--bg-raised);
+  white-space: nowrap;
 }
 .roster-pane__label {
-  min-width: 0;
-  font-size: var(--font-size-11-5);
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font: var(--type-small);
 }
-/* Nothing to show there — the label says so by going quiet, rather than the
-   count printing a dash beside it. */
-.roster-pane--empty .roster-pane__label {
-  color: var(--text-dim);
-}
-.roster-pane--empty:hover .roster-pane__label {
-  color: var(--text-strong);
-}
+.roster-pane:hover .roster-pane__label,
 .roster-pane--on .roster-pane__label {
-  color: var(--text-bright);
-  font-weight: 600;
+  color: var(--text-primary);
+}
+.roster-pane--empty .roster-pane__label {
+  color: var(--text-disabled);
 }
 .roster-pane__count {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  color: var(--accent);
-  flex-shrink: 0;
+  color: var(--text-primary);
+  font: var(--type-mono-small);
 }
-/* Warm, never acid: subagents running is a "something is happening over there"
-   signal, and the accent belongs to the pane you are actually looking at. */
+/* Subagents actually running: the count takes the running colour. */
 .roster-pane__count--live {
-  color: var(--attn);
+  color: var(--state-running);
 }
 
-/* filter row (FR-20) — design-refresh: a recessed 30px field on the panel, no
-   divider rule (the card list below is already visually separated). */
+/* filter row (FR-20) */
 .filter-input {
-  padding: 0 var(--space-14) var(--space-10);
+  padding: 0 var(--space-10) var(--space-10) var(--space-16);
   flex-shrink: 0;
 }
 .filter-input__field {
   width: 100%;
   height: 30px;
-  background: var(--bg-raised);
-  border: 0;
-  border-radius: var(--radius-base);
+  background: var(--bg-input);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
   padding: 0 var(--space-10);
-  color: var(--text);
-  font-size: var(--font-size-12-5);
-  font-family: inherit;
+  color: var(--text-primary);
+  font: var(--type-ui);
   outline: none;
 }
 .filter-input__field:focus {
-  background: var(--bg-hover);
+  border-color: var(--line-default);
 }
 
-/* card list */
-/* 9a: no side padding — rows run to the panel edge (see .roster-row). */
+/* the list */
 .sidebar-list {
   flex: 1;
   overflow: auto;
-  padding: 0 0 var(--space-10);
+  padding: var(--space-6) 0 var(--space-14);
 }
 .sidebar-error {
   padding: var(--space-16);
   text-align: center;
-  color: var(--error);
-  font-size: var(--font-size-11-5);
+  color: var(--state-danger-text);
+  font: var(--type-small);
 }
 .sidebar-error__retry {
-  color: var(--accent);
+  color: var(--text-primary);
+  text-decoration: underline;
   cursor: pointer;
   margin-top: var(--space-6);
 }
 .sidebar-empty {
   height: 100%;
   flex-direction: column;
-  font-size: var(--font-size-11-5);
+  font: var(--type-small);
   text-align: center;
   padding: var(--space-12);
 }
 .sidebar-empty__hint {
-  font-size: var(--font-size-10);
+  font: var(--type-small);
+  color: var(--text-faint);
   margin-top: var(--space-5);
 }
 
@@ -361,332 +365,228 @@
   border-color: var(--error-dim);
 }
 
-/* In split there is no room for the header's total. Every state heading carries
-   its own count, so the total is the one that goes. */
-.sidebar--dense .sidebar__count {
-  display: none;
+/* ── the state-grouped roster (StateRosterBody.tsx) ── */
+.roster-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
-
-/* ── design 12b: the state-grouped roster ───────────────────────────────────
-   Groups are STATES, so no ROW carries a status tag — the heading above it
-   already said which state it is in, and that is the repetition 12b removes.
-   Row weight tracks how much the session is asking of you: three lines and two
-   buttons when it is blocked, one to three lines when it is not. */
 .roster-state + .roster-state {
-  margin-top: var(--space-8);
+  margin-top: 18px;
 }
+.roster-state--attention {
+  gap: var(--space-6);
+}
+.roster-state--idle,
+.roster-state--archived {
+  gap: var(--space-2);
+}
+/* Graphite/Label: 11px/600, 0.08em, uppercase. NEEDS YOU is the one heading that
+   takes a colour — the attention text step. */
 .roster-state__head {
   display: flex;
   align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-8) var(--space-14) var(--space-5);
+  gap: var(--space-8);
+  padding: 0 var(--space-16);
+  color: var(--text-faint);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
   cursor: pointer;
   user-select: none;
 }
+.roster-state__head--attention {
+  color: var(--state-attention-text);
+}
 .roster-state__caret {
-  font-size: var(--font-size-8);
-  color: var(--text-faint);
-  flex-shrink: 0;
+  font-size: 9px;
+  width: 8px;
+  letter-spacing: 0;
 }
 .roster-state__label {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  flex: 1;
   min-width: 0;
 }
 .roster-state__count {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
-  flex-shrink: 0;
+  font: var(--type-mono-small);
+  letter-spacing: 0;
 }
 
-/* roster-group-tier: the innermost tier, nested inside a state band. Reuses
-   roster-state__head's caret/count metrics verbatim (see StateRosterBody) —
-   the only new rule is the indent, which sits at the ROWS' own left edge
-   (space-11) rather than the state heading's (space-14), and is quieter:
-   no dot, no accent, ever. */
+/* roster-group-tier: the innermost tier — a thin neutral row at the rows' indent. */
 .roster-group__head {
   display: flex;
   align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-6) var(--space-14) var(--space-4) var(--space-11);
+  gap: var(--space-6);
+  padding: var(--space-2) var(--space-18);
+  color: var(--text-faint);
+  font: var(--type-small);
   cursor: pointer;
-  user-select: none;
 }
 .roster-group__label {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* The row. Full-bleed like the 9a card it replaces — a fill reads as the row,
-   not as a tile inside it — and carrying the same 3px state rail, transparent
-   at rest so the text column never shifts. */
+/* The row: 8px in from each edge, a 6px-radius tile whose fill IS the row's
+   state (hover card, selected raised). */
+.roster-row-wrap {
+  padding: 0 var(--space-8);
+}
 .roster-row {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-7) var(--space-14) var(--space-7) var(--space-11);
-  border-left: 3px solid transparent;
+  gap: var(--space-4);
+  padding: 9px var(--space-10);
+  border: 1px solid transparent;
+  border-radius: var(--radius-6);
   cursor: pointer;
-}
-.roster-row--selected {
-  background: var(--bg-elevated);
+  min-width: 0;
 }
 .roster-row:hover {
-  background: var(--bg-elevated);
+  background: var(--bg-card);
 }
+.roster-row--selected,
 .roster-row--selected:hover {
-  background: var(--bg-hover);
+  background: var(--bg-raised);
 }
 .roster-row--cursor {
-  outline: 1px solid var(--text-disabled);
-  outline-offset: -1px;
+  border-color: var(--line-default);
 }
-/* split-by-4 FR-22: only the FOCUSED pane's row gets the accent rail. */
+/* split-by-4 FR-22: only the FOCUSED pane's row gets the edge. */
 .roster-row--pane-focus {
-  border-left-color: var(--accent);
 }
-
-/* WAITING ON YOU — the loudest treatment in the app: a solid rail plus a warm
-   fill, both full-bleed. The colour is --attn for every member of the group
-   (approval, question, error): they differ in what they want, not in how much. */
-.roster-row--attention {
-  gap: var(--space-6);
-  padding-top: var(--space-9);
-  padding-bottom: var(--space-10);
-  border-left-color: var(--attn);
-  background: color-mix(in srgb, var(--attn) 12%, var(--bg-panel));
+/* A settled row is one line — tighter, 5px radius. */
+.roster-row--quiet {
+  padding: var(--space-7) var(--space-10);
+  border-radius: var(--radius-5);
 }
-.roster-row--attention:hover,
-.roster-row--attention.roster-row--selected {
-  background: color-mix(in srgb, var(--attn) 18%, var(--bg-panel));
+/* The approval card: the attention wash with its edge, 8px between blocks. */
+.roster-row--card,
+.roster-row--card:hover,
+.roster-row--card.roster-row--selected {
+  gap: var(--space-8);
+  padding: var(--space-10);
+  background: var(--tint-attention);
+  border-color: var(--tint-attention-line);
 }
-/* Two parked sessions are two asks, not one block: without this their rails and
-   their fills run together into a single amber slab and the pair reads as one
-   row with two names in it. The gap breaks both at once. */
-.roster-row--attention + .roster-row--attention {
-  margin-top: var(--space-3);
-}
-
-.roster-row__line {
+.roster-row__head {
   display: flex;
   align-items: center;
-  gap: var(--space-7);
+  gap: var(--space-8);
   min-width: 0;
 }
 .roster-row__name {
+  min-width: 0;
+  color: var(--text-primary);
+  font: var(--type-ui-strong);
+  flex-shrink: 1;
+}
+.roster-row__name--quiet {
+  color: var(--text-secondary);
+  font: var(--type-ui);
+}
+.roster-row__lead {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-12-5);
-  font-weight: 600;
-  color: var(--text-bright);
-}
-/* A settled row keeps the weight (it is still the row's subject) but steps back
-   a tone — it is a list entry, not a headline. */
-.roster-row__name--quiet {
-  color: var(--text-strong);
+  color: var(--text-muted);
+  font: var(--type-small);
 }
 .roster-row__age {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
   color: var(--text-faint);
+  font: var(--type-mono-small);
+  white-space: nowrap;
   flex-shrink: 0;
 }
-.roster-row--attention .roster-row__age {
-  color: var(--text-dim);
-}
-/* The one figure on the pane that is still moving. Accent, not amber: this is
-   the live thing, and amber in this pane means "come here" — the WAITING rail
-   above owns it. */
 .roster-row__age--live {
-  color: var(--accent);
+  color: var(--state-running);
 }
-
-/* What the session says: the ask, the question, or the failure. */
-.roster-row__says {
-  font-size: var(--font-size-11-5);
-  line-height: 1.45;
-  color: var(--text-2);
+/* The second line: indented under the name (14px glyph + 8px gap). */
+.roster-row__sub {
+  padding-left: 22px;
+  color: var(--text-muted);
+  font: var(--type-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.roster-row__code {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-11);
-  color: var(--text-bright);
+.roster-row__sub--danger {
+  color: var(--state-danger);
+}
+.roster-row__command {
+  display: flex;
+  min-width: 0;
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-4);
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font: var(--type-mono);
+}
+.roster-row__command code {
+  font: inherit;
+  min-width: 0;
 }
 .roster-row__failed {
-  font-size: var(--font-size-10-5);
-  color: var(--error);
+  color: var(--state-danger-text);
+  font: var(--type-small);
 }
 .roster-row__actions {
   display: flex;
   gap: var(--space-6);
 }
-.roster-row__btn {
-  flex: 1;
-  height: 24px;
-  border: 0;
-  border-radius: var(--radius-base);
-  background: var(--bg-hover);
-  font-family: inherit;
-  font-size: var(--font-size-11-5);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.roster-row__btn:hover:not(:disabled) {
-  background: var(--bg-hover-2);
-  color: var(--text-bright);
-}
-.roster-row__btn:disabled {
-  cursor: default;
-  color: var(--text-faint);
-}
-/* The affirmative is the accent one: allowing is what the row is FOR, and it is
-   the only accent in the pane while an ask is up. It sits on a WARM row, so the
-   fill has to be a step brighter than the accent's usual soft background —
-   against amber, --accent-soft-bg reads as unfilled next to Deny. */
-.roster-row__btn--allow {
-  background: var(--accent-soft-edge);
-  color: var(--accent-bright);
-}
-.roster-row__btn--allow:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 32%, var(--bg-panel));
-  color: var(--accent-bright);
-}
-
-/* RUNNING — what it is doing right now, with a blinking caret. The one place
-   the roster animates: it is the signal that the line is live rather than the
-   last thing that happened. `blink` is the app-wide keyframe (styles.css), not
-   a second copy of it. */
-.roster-row__activity {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-dim);
-}
-.roster-row__caret {
-  color: var(--accent);
-  animation: blink 1.1s steps(2, end) infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .roster-row__caret {
-    animation: none;
-  }
-}
-.roster-row__ctx {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-.roster-row__figure {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-/* ── the settled row's own lines ────────────────────────────────────────────
-   Branch, context and the working tree's totals. Every one of them is quieter
-   than the name above it — this is what the session IS, not what it wants. */
-.roster-row__branch {
-  flex: 1;
+/* Allow / Deny share the width; Open keeps its own. */
+.roster-row__decide {
+  flex: 1 1 0;
   min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-muted);
 }
-/* Shown only when the session is NOT on its project's default model, so a chip
-   here always means "this one is different" — same rule as the account badge.
-   Its own hue, not the accent: it is a fact about the row, not a live thing. */
-.roster-row__model {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  color: var(--hue-blue);
-  background: var(--bg-raised);
-  border-radius: var(--radius-xs);
-  padding: 1px var(--space-4);
-  flex-shrink: 0;
-}
+
+/* The settled row's uncommitted-work line. */
 .roster-row__work {
   display: flex;
-  align-items: center;
-  gap: var(--space-7);
+  align-items: baseline;
+  gap: var(--space-4);
+  padding-left: 22px;
   min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10);
-  color: var(--text-faint);
+  color: var(--text-muted);
+  font: var(--type-mono-small);
+  white-space: nowrap;
 }
 .roster-row__add {
-  color: var(--accent);
+  color: var(--state-success);
 }
 .roster-row__del {
-  color: var(--error-bright);
+  color: var(--state-danger);
 }
 .roster-row__sep {
-  color: var(--text-disabled);
+  color: var(--text-faint);
 }
 
-/* The context bar: 26px on a settled row (a glance, not a reading), full width
-   on a running one (where the number beside it is the reading). */
-.roster-row__bar {
-  width: 26px;
-  height: 3px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-hover-2);
+/* Badges — the project tag (a Tag) and the pane index. */
+.roster-row__project {
+  max-width: 90px;
   overflow: hidden;
-  flex-shrink: 0;
-}
-.roster-row__bar--wide {
-  width: auto;
-  flex: 1;
-  min-width: 16px;
-}
-.roster-row__bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--text-muted);
-}
-.roster-row--running .roster-row__bar-fill {
-  background: var(--accent-dim);
-}
-
-/* Badges — neutral, never accent: a repeatable surface stays neutral. */
-.roster-row__marker {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-2);
-  background: var(--bg-hover);
-  border-radius: var(--radius-xs);
-  padding: 0 var(--space-4);
-  flex-shrink: 0;
+  text-overflow: ellipsis;
 }
 .roster-row__pane {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-9-5);
-  border-radius: var(--radius-sm);
-  padding: 1px var(--space-5);
+  padding: 0 5px;
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font: var(--type-mono-small);
   flex-shrink: 0;
-  color: var(--text-hint);
-  background: var(--bg-hover-2);
 }
 .roster-row__pane--accent {
-  color: var(--accent);
-  background: var(--accent-soft-bg);
+  background: var(--bg-strong);
+  color: var(--text-primary);
 }
 
-/* §8: the roster narrows in split, so the rows tighten by a notch. */
+/* The roster narrows in split, so the rows tighten by a notch. */
 .sidebar--dense .roster-row {
-  padding: var(--space-6) var(--space-11) var(--space-6) var(--space-9);
+  padding-top: var(--space-6);
+  padding-bottom: var(--space-6);
 }
-.sidebar--dense .roster-state__head {
-  padding: var(--space-6) var(--space-11) var(--space-4);
-}
-.sidebar--dense .roster-group__head {
-  padding: var(--space-6) var(--space-11) var(--space-4) var(--space-9);
+.sidebar--dense .roster-state + .roster-state {
+  margin-top: var(--space-12);
 }

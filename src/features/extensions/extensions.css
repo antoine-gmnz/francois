@@ -536,30 +536,6 @@
   background: var(--text-bright);
 }
 
-/* -- titlebar entry -------------------------------------------------------- */
-
-.ext-titlebar-btn {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: var(--space-2);
-}
-.ext-titlebar-btn:hover {
-  color: var(--text-2);
-}
-
-/* -- tab strip chip -------------------------------------------------------- */
-
-.ext-tab-chip {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-}
-.ext-tab-chip__glyph {
-  color: var(--text-faint);
-}
-
 /* ── design 11a: the plugin surface in the session row ─────────────────────────
    `◈` is the whole thing — pinned tabs to its left, every installed extension
    inside it. Nothing about plugins appears anywhere else in the chrome.

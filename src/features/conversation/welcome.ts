@@ -27,64 +27,68 @@ export function agoPhrase(then: number, now: number = Date.now()): string {
   return age === 'now' ? 'just now' : `${age} ago`;
 }
 
-/** "CLAUDE.md found — 41 lines, last edited 6d ago.", or the invitation to write one. */
+/** "CLAUDE.md · 41 lines, edited 6d ago", or the invitation to write one. */
 export function claudeMdSegments(md: ClaudeMdBrief | undefined, now: number = Date.now()): Segment[] {
   if (!md) {
-    return [{ text: 'No CLAUDE.md here yet — run ' }, { text: '/init', strong: true }, { text: ' to write one.' }];
+    return [{ text: 'No CLAUDE.md yet — run ' }, { text: '/init', strong: true }, { text: ' to write one.' }];
   }
   const lines = `${md.lines} ${md.lines === 1 ? 'line' : 'lines'}`;
-  return [
-    { text: 'CLAUDE.md', strong: true },
-    { text: ` found — ${lines}, last edited ${agoPhrase(md.modifiedAt, now)}.` },
-  ];
+  return [{ text: 'CLAUDE.md', strong: true }, { text: ` · ${lines}, edited ${agoPhrase(md.modifiedAt, now)}` }];
 }
 
 /**
- * "Working on router-adapter, 4 commits ahead of main." — or the branch alone
- * when there is nothing to count, and null when the session is not in a repo at
- * all (the header then drops the line rather than stating an absence nobody
- * asked about).
+ * "router-adapter is 4 commits ahead of main." — or the branch alone when there
+ * is nothing to count, and null when the session is not in a repo at all (the
+ * card then drops the line rather than stating an absence nobody asked about).
  */
 export function workingOnSegments(git: GitBrief | undefined): Segment[] | null {
   if (!git) return null;
   if (git.detached) {
     return [{ text: 'Detached at ' }, { text: git.branch, strong: true }, { text: '.' }];
   }
-  const head: Segment[] = [{ text: 'Working on ' }, { text: git.branch, strong: true }];
   // `ahead: 0` is the everyday case on a fresh branch; "0 commits ahead of main"
   // is noise, so it reads exactly like a repo with no trunk to compare against.
-  if (git.base === undefined || !git.ahead) return [...head, { text: '.' }];
+  if (git.base === undefined || !git.ahead) return [{ text: 'On ' }, { text: git.branch, strong: true }, { text: '.' }];
   const commits = `${git.ahead} ${git.ahead === 1 ? 'commit' : 'commits'}`;
-  return [...head, { text: `, ${commits} ahead of ${git.base}.` }];
+  return [{ text: git.branch, strong: true }, { text: ` is ${commits} ahead of ${git.base}.` }];
+}
+
+/** The worktree facts the subline states (a subset of SessionWorktree). */
+export interface SublineWorktree {
+  branch: string;
+  baseRef: string;
+  createdBranch: boolean;
 }
 
 /**
- * The identity line under the mark: model · account · branch. Parts with nothing
- * to say are dropped rather than rendered blank, so a session with no account
- * label and no branch still reads as a sentence.
+ * The line under the welcome heading (Figma 11): model · account · where the
+ * session works. A worktree Francois created names its fork point; an adopted
+ * one only its branch; outside a worktree the probed branch stands in. Parts
+ * with nothing to say are dropped, so it always reads as a sentence.
  */
-export function identityParts(input: {
+export function welcomeSubline(input: {
   model?: string;
   account?: string;
+  worktree?: SublineWorktree;
   branch?: string;
-}): string[] {
+}): string {
   const parts: string[] = [];
   if (input.model) parts.push(input.model);
   if (input.account) parts.push(input.account);
-  // ⎇ is the branch glyph the sidebar already uses (SessionListBody) — one glyph
-  // for one concept across the app.
-  if (input.branch) parts.push(`⎇ ${input.branch}`);
-  return parts;
+  const wt = input.worktree;
+  if (wt) parts.push(wt.createdBranch ? `new worktree ${wt.branch} from ${wt.baseRef}` : `worktree ${wt.branch}`);
+  else if (input.branch) parts.push(`on ${input.branch}`);
+  return parts.join(' · ');
 }
 
-/** A finished session, as the "Recent in this repo" list states it. */
+/** A finished session, as the "Recent here" card states it. */
 export interface RecentEntry {
   id: string;
   name: string;
-  /** false ⇒ it ended in an error; the row marks it differently. */
+  /** false ⇒ it ended in an error. */
   done: boolean;
-  /** Compact age of its last activity — '2d'. */
-  age: string;
+  /** How and when it ended — 'finished 2d ago' / 'failed 1d ago'. */
+  phrase: string;
 }
 
 /**
@@ -108,5 +112,8 @@ export function recentInRepo(
     .filter((s) => s.id !== current.id && isTerminalStatus(s.status) && sameRepo(s))
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     .slice(0, limit)
-    .map((s) => ({ id: s.id, name: s.name, done: s.status === 'done', age: formatRelativeTime(s.lastActivityAt, now) }));
+    .map((s) => {
+      const done = s.status === 'done';
+      return { id: s.id, name: s.name, done, phrase: `${done ? 'finished' : 'failed'} ${agoPhrase(s.lastActivityAt, now)}` };
+    });
 }

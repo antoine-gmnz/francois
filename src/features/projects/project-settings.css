@@ -1,0 +1,233 @@
+/* projects — Settings / Project (Figma 22 · 140:7787, light 142:16692) and the
+   Settings nav's project picker. The shared settings parts (header, field,
+   input, row card) live in src/ui/settings.css; this file lays them out.
+   projects.css keeps the older pj-* classes the Profiles modal still reads. */
+
+.pj-page {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-24);
+}
+.pj-page--busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Figma "Form": 680px, 18px between blocks. */
+.pj-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 680px;
+  max-width: 100%;
+}
+.pj-form.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.pj-form-row,
+.pj-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-16);
+}
+.pj-form-grid {
+  row-gap: 18px;
+}
+.pj-readonly {
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+}
+.pj-confirm-actions {
+  display: flex;
+  gap: var(--space-8);
+  flex-shrink: 0;
+}
+.pj-save-note {
+  margin: 0;
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+.pj-page .pj-inline-error {
+  color: var(--state-danger-text);
+  font: var(--type-small);
+}
+.pj-page .pj-footer-note {
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+
+/* ── Standards: the rule list ── */
+.pj-page .pj-rules {
+  gap: var(--space-4);
+}
+.pj-page .pj-rule-row {
+  min-height: 34px;
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  background: var(--bg-rail);
+}
+.pj-page .pj-rule-text,
+.pj-page .pj-rule-dash {
+  color: var(--text-secondary);
+  font: var(--type-ui);
+}
+.pj-page .pj-rule-edit-input {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: var(--type-ui);
+}
+.pj-page .pj-rules-empty {
+  color: var(--text-faint);
+  font: var(--type-small);
+}
+
+/* ── Groups (General tab) ── */
+.pj-page .pj-groups {
+  gap: var(--space-4);
+  margin-top: 0;
+}
+.pj-page .pj-group-row {
+  height: 34px;
+  padding: 0 var(--space-12);
+  border-radius: var(--radius-5);
+  background: var(--bg-rail);
+}
+.pj-page .pj-group-row:hover {
+  background: var(--bg-raised);
+}
+.pj-page .pj-group-name {
+  color: var(--text-secondary);
+  font: var(--type-ui);
+}
+.pj-page .pj-group-edit-input {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: var(--type-ui);
+}
+.pj-page .pj-new-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  align-self: flex-start;
+  padding: var(--space-6) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.pj-page .pj-new-group:hover {
+  color: var(--text-primary);
+}
+.pj-page .pj-new-group-input {
+  margin: 0;
+}
+
+/* ── nav project picker (Figma "Project picker" 140:7640) ── */
+.pj-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+.pj-picker__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  max-width: 150px;
+  padding: 0 var(--space-6);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+  cursor: pointer;
+}
+.pj-picker__toggle:hover,
+.pj-picker__toggle[aria-expanded='true'] {
+  background: var(--bg-raised);
+}
+.pj-picker__toggle .icon {
+  color: var(--text-muted);
+}
+.pj-picker__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A floating layer — the one place a shadow survives (nothing behind it to step against).
+   Fixed, not absolute: the nav scrolls (overflow-y: auto, which makes overflow-x auto
+   too), and an absolutely positioned menu wider than the toggle adds to that scroll
+   width instead of floating over it — placement is computed in JS (runtime px). */
+.pj-picker__menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-float);
+}
+.pj-picker__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 30px;
+  padding: 0 var(--space-8);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-secondary);
+  font: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.pj-picker__item:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+.pj-picker__item--selected {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font: var(--type-ui-medium);
+}
+.pj-picker__item:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.pj-picker__item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pj-picker__item-root {
+  flex: 0 1 auto;
+  max-width: 50%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+}
+.pj-picker__missing {
+  flex-shrink: 0;
+  color: var(--state-danger-text);
+  font: var(--type-mono-small);
+}
+.pj-picker__add {
+  margin-top: var(--space-2);
+  color: var(--text-muted);
+}

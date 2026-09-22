@@ -1,6 +1,6 @@
 // resizable-sidebar: the roster's right edge — drag to resize, arrow keys to
 // nudge, double-click / Home to reset, and a live snap-collapse into the
-// 46px rail below MIN_ROSTER_WIDTH. Sibling of SplitDivider (both on
+// 56px rail below MIN_ROSTER_WIDTH. Sibling of SplitDivider (both on
 // usePaneDrag, FR-13) but resizes the ROSTER rather than a main-pane split,
 // and additionally owns the fold gesture (FR-6) that SplitDivider has no
 // equivalent of.

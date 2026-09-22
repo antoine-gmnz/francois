@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
-import { agoPhrase, claudeMdSegments, identityParts, recentInRepo, workingOnSegments } from './welcome';
+import { agoPhrase, claudeMdSegments, recentInRepo, welcomeSubline, workingOnSegments } from './welcome';
 
 const text = (segs: { text: string }[]) => segs.map((s) => s.text).join('');
 
@@ -45,19 +45,17 @@ describe('agoPhrase', () => {
 describe('claudeMdSegments', () => {
   it('states the line count and the edit age, with the filename as the strong run', () => {
     const segs = claudeMdSegments({ lines: 41, modifiedAt: NOW - 6 * DAY }, NOW);
-    expect(text(segs)).toBe('CLAUDE.md found — 41 lines, last edited 6d ago.');
+    expect(text(segs)).toBe('CLAUDE.md · 41 lines, edited 6d ago');
     expect(segs[0]).toEqual({ text: 'CLAUDE.md', strong: true });
   });
 
   it('singularises a one-line file', () => {
-    expect(text(claudeMdSegments({ lines: 1, modifiedAt: NOW }, NOW))).toBe(
-      'CLAUDE.md found — 1 line, last edited just now.',
-    );
+    expect(text(claudeMdSegments({ lines: 1, modifiedAt: NOW }, NOW))).toBe('CLAUDE.md · 1 line, edited just now');
   });
 
   it('invites /init when the repo has none', () => {
     const segs = claudeMdSegments(undefined, NOW);
-    expect(text(segs)).toBe('No CLAUDE.md here yet — run /init to write one.');
+    expect(text(segs)).toBe('No CLAUDE.md yet — run /init to write one.');
     expect(segs.find((s) => s.strong)).toEqual({ text: '/init', strong: true });
   });
 });
@@ -65,20 +63,18 @@ describe('claudeMdSegments', () => {
 describe('workingOnSegments', () => {
   it('states the branch and how far ahead of the trunk it is', () => {
     const segs = workingOnSegments({ branch: 'router-adapter', detached: false, base: 'main', ahead: 4 });
-    expect(text(segs!)).toBe('Working on router-adapter, 4 commits ahead of main.');
-    expect(segs![1]).toEqual({ text: 'router-adapter', strong: true });
+    expect(text(segs!)).toBe('router-adapter is 4 commits ahead of main.');
+    expect(segs![0]).toEqual({ text: 'router-adapter', strong: true });
   });
 
   it('singularises a single commit', () => {
     const segs = workingOnSegments({ branch: 'fix', detached: false, base: 'main', ahead: 1 });
-    expect(text(segs!)).toBe('Working on fix, 1 commit ahead of main.');
+    expect(text(segs!)).toBe('fix is 1 commit ahead of main.');
   });
 
   it('drops the clause when there is no trunk, or nothing ahead of it', () => {
-    expect(text(workingOnSegments({ branch: 'main', detached: false })!)).toBe('Working on main.');
-    expect(text(workingOnSegments({ branch: 'main', detached: false, base: 'master', ahead: 0 })!)).toBe(
-      'Working on main.',
-    );
+    expect(text(workingOnSegments({ branch: 'main', detached: false })!)).toBe('On main.');
+    expect(text(workingOnSegments({ branch: 'main', detached: false, base: 'master', ahead: 0 })!)).toBe('On main.');
   });
 
   it('states a detached HEAD as the sha it is parked on', () => {
@@ -90,19 +86,30 @@ describe('workingOnSegments', () => {
   });
 });
 
-describe('identityParts', () => {
-  it('reads model · account · branch, with the sidebar branch glyph', () => {
-    expect(identityParts({ model: 'Opus 5', account: 'work@acme.dev', branch: 'main' })).toEqual([
-      'Opus 5',
-      'work@acme.dev',
-      '⎇ main',
-    ]);
+describe('welcomeSubline', () => {
+  it('reads model · account · a fresh worktree and the ref it forked from', () => {
+    expect(
+      welcomeSubline({
+        model: 'Opus 5',
+        account: 'Work account',
+        worktree: { branch: 'feat/auth-retry', baseRef: 'main', createdBranch: true },
+      }),
+    ).toBe('Opus 5 · Work account · new worktree feat/auth-retry from main');
+  });
+
+  it('names an adopted worktree without claiming a fork point', () => {
+    expect(welcomeSubline({ model: 'Opus 5', worktree: { branch: 'x', baseRef: 'main', createdBranch: false } })).toBe(
+      'Opus 5 · worktree x',
+    );
+  });
+
+  it('falls back to the probed branch outside a worktree', () => {
+    expect(welcomeSubline({ model: 'Opus 5', branch: 'main' })).toBe('Opus 5 · on main');
   });
 
   it('drops what it has nothing to say about rather than rendering a blank part', () => {
-    expect(identityParts({ model: 'Opus 5' })).toEqual(['Opus 5']);
-    expect(identityParts({ model: 'Opus 5', account: '', branch: undefined })).toEqual(['Opus 5']);
-    expect(identityParts({})).toEqual([]);
+    expect(welcomeSubline({ model: 'Opus 5', account: '', branch: undefined })).toBe('Opus 5');
+    expect(welcomeSubline({})).toBe('');
   });
 });
 
@@ -118,8 +125,8 @@ describe('recentInRepo', () => {
       session({ id: 'other', projectId: 'p2', status: 'done', lastActivityAt: NOW }),
     ];
     expect(recentInRepo(sessions, current, NOW)).toEqual([
-      { id: 'b', name: 'Drop the legacy /v1 routes', done: false, age: '1d' },
-      { id: 'a', name: 'Split the auth middleware', done: true, age: '2d' },
+      { id: 'b', name: 'Drop the legacy /v1 routes', done: false, phrase: 'failed 1d ago' },
+      { id: 'a', name: 'Split the auth middleware', done: true, phrase: 'finished 2d ago' },
     ]);
   });
 
