@@ -1,9 +1,12 @@
 // Run settings popover — redesign "Graphite & Signal", Figma "20 · Run settings
 // (model · effort · permissions)" (139:7373; light 142:16053). Opened by the run
-// chip in the composer. Two radio lists: the account's models, with effort as a
-// segmented track INSIDE the selected model's row (effort is a property of the
-// model), then the four permission modes, `bypass` tinted with a line saying how
-// long it has been on and in which tree.
+// chip in the composer. Three sections in order: Model (one radio row per model
+// FAMILY — Opus/Sonnet/… — with a compact segmented version track on the
+// selected family, newest version first), Effort (the SELECTED model's own
+// levels, in its own section rather than nested in the model row — a model
+// with no effort setting still gets the section, with a muted "no effort
+// setting" line), then the four permission modes, `bypass` tinted with a line
+// saying how long it has been on and in which tree.
 //
 // Every pick goes through the existing switch verbs (session_switch_model /
 // _effort / _permission_mode); the session.meta event that comes back is the
@@ -24,7 +27,7 @@ import { useStore } from '../../lib/store';
 import { Radio } from '../../ui/Radio';
 import { Tab, TabGroup } from '../../ui/Tab';
 import { effortLevels } from './run-chip';
-import { bypassSinceLine, effortSurvivesSwitch, modelNote, permissionRows } from './run-settings';
+import { bypassSinceLine, effortSurvivesSwitch, familyNote, groupModelFamilies, permissionRows } from './run-settings';
 import { settingCapability } from './session-settings';
 
 type SwitchResult = { ok: true } | { ok: false; error: { message: string } };
@@ -50,6 +53,9 @@ export function RunSettingsPopover({
   // The session's own ModelInfo is always the truth about what is selected; the
   // catalogue may not have resolved yet (or may not list a hand-set id).
   const catalog: ModelInfo[] = models.length > 0 ? models : [session.model];
+  const families = groupModelFamilies(catalog);
+  const selectedModel = catalog.find((m) => m.id === session.model.id) ?? session.model;
+  const levels = effortLevels(selectedModel);
   const modelCap = settingCapability(session, 'modelId');
   const modeCap = settingCapability(session, 'permissionMode');
   const bypassLine = bypassSinceLine(session, Date.now());
@@ -95,36 +101,30 @@ export function RunSettingsPopover({
     >
       <div className="run-settings__section">Model</div>
       <div role="radiogroup" aria-label="Model" className="run-settings__group" title={modelCap.available ? undefined : modelCap.reason}>
-        {catalog.map((m) => {
-          const on = m.id === session.model.id;
-          const levels = on ? effortLevels(m) : [];
-          const note = modelNote(m, project?.defaults.modelId);
+        {families.map((family) => {
+          const selectedVersion = family.versions.find((v) => v.model.id === session.model.id) ?? null;
+          const on = selectedVersion !== null;
+          const note = familyNote(family, project?.defaults.modelId, session.model.id);
           return (
-            <div key={m.id} className={on ? 'run-settings__option run-settings__option--on' : 'run-settings__option'}>
+            <div key={family.family} className={on ? 'run-settings__option run-settings__option--on' : 'run-settings__option'}>
               <button
                 type="button"
                 role="radio"
                 aria-checked={on}
                 disabled={!modelCap.available}
                 className="run-settings__head"
-                onClick={() => void pickModel(m)}
+                onClick={() => void pickModel((selectedVersion ?? family.versions[0]!).model)}
               >
                 <Radio on={on} />
-                <span className="run-settings__label">{m.label}</span>
+                <span className="run-settings__label">{family.family}</span>
                 {note && <span className="run-settings__note truncate">{note}</span>}
               </button>
-              {levels.length > 0 && (
-                <div className="run-settings__effort">
-                  <span className="run-settings__effort-label">Effort</span>
-                  <TabGroup label="Effort" className="run-settings__effort-track">
-                    {levels.map((level) => (
-                      <Tab
-                        key={level}
-                        selected={level === (session.effort ?? m.defaultEffort)}
-                        onSelect={() => pickEffort(level)}
-                        title={level === session.effort ? `${level} — pick again for the model default` : `Run at ${level} effort`}
-                      >
-                        {level}
+              {on && family.versions.length > 1 && (
+                <div className="run-settings__versions">
+                  <TabGroup label={`${family.family} version`} className="run-settings__version-track">
+                    {family.versions.map((v) => (
+                      <Tab key={v.model.id} selected={v.model.id === session.model.id} onSelect={() => void pickModel(v.model)} title={v.model.label}>
+                        {v.label}
                       </Tab>
                     ))}
                   </TabGroup>
@@ -133,6 +133,29 @@ export function RunSettingsPopover({
             </div>
           );
         })}
+      </div>
+
+      <div className="run-settings__rule" />
+      <div className="run-settings__section">Effort</div>
+      <div className="run-settings__group" title={modelCap.available ? undefined : modelCap.reason}>
+        <div className="run-settings__effort-row">
+          {levels.length > 0 ? (
+            <TabGroup label="Effort" className="run-settings__effort-track">
+              {levels.map((level) => (
+                <Tab
+                  key={level}
+                  selected={level === (session.effort ?? selectedModel.defaultEffort)}
+                  onSelect={() => pickEffort(level)}
+                  title={level === session.effort ? `${level} — pick again for the model default` : `Run at ${level} effort`}
+                >
+                  {level}
+                </Tab>
+              ))}
+            </TabGroup>
+          ) : (
+            <span className="run-settings__note--muted">This model has no effort setting</span>
+          )}
+        </div>
       </div>
 
       <div className="run-settings__rule" />

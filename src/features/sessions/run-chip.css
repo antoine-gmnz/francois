@@ -139,22 +139,31 @@
   font: var(--type-small);
 }
 
-.run-settings__effort {
+/* the version track under a selected family row */
+.run-settings__versions {
   display: flex;
   align-items: center;
   gap: var(--space-8);
   min-width: 0;
   padding-left: 26px;
 }
-/* the segmented track can outgrow the 340px popover (five effort levels) — let it
-   shrink and scroll instead of spilling past the edge, unreachable. */
-.run-settings__effort .tab-group {
+/* the segmented track can outgrow the 340px popover — let it shrink and
+   scroll instead of spilling past the edge, unreachable. */
+.run-settings__versions .tab-group,
+.run-settings__effort-row .tab-group {
   flex-shrink: 1;
   min-width: 0;
   overflow-x: auto;
 }
-.run-settings__effort-label {
-  color: var(--text-muted);
+.run-settings__effort-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: var(--space-4) var(--space-10);
+}
+.run-settings__note--muted {
+  color: var(--text-faint);
   font: var(--type-small);
 }
 
