@@ -10,6 +10,8 @@ import {
   shellColumns,
   shellFooterPath,
   showsPanes,
+  showsSessionHeader,
+  showsSessionPanel,
   splitCandidate,
   type ShortcutActionsContext,
 } from './appShell';
@@ -127,6 +129,17 @@ describe('mainPaneBranch', () => {
     expect(mainPaneBranch('ext:git')).toBe('ext');
   });
 
+  // cohorte-integration FR-70 (AC-26): the run view.
+  it('routes a cohorte:<runId> tab to the cohorte branch, header hidden, panel kept, never split', () => {
+    expect(mainPaneBranch('cohorte:run_x')).toBe('cohorte');
+    expect(hostedTab('cohorte')).toBeNull();
+    expect(showsSessionHeader('cohorte:run_x')).toBe(false);
+    expect(showsSessionPanel('cohorte:run_x')).toBe(true);
+    expect(showsPanes(2, 'cohorte:run_x')).toBe(false);
+    expect(showsSessionHeader('session')).toBe(true);
+    expect(showsSessionPanel('overview')).toBe(false);
+  });
+
   // workflow-details FR-11: the second dynamic tab kind gets its own branch.
   it('routes a workflow:<id> tab to the workflow branch', () => {
     expect(mainPaneBranch('workflow:run-1')).toBe('workflow');
@@ -142,7 +155,7 @@ describe('hostedTab', () => {
   });
 
   it('answers null on every other branch — the host stays mounted, showing nothing', () => {
-    for (const branch of ['overview', 'diff', 'panel', 'agent', 'workflow', 'ext'] as const) {
+    for (const branch of ['overview', 'diff', 'panel', 'agent', 'workflow', 'ext', 'cohorte'] as const) {
       expect(hostedTab(branch)).toBeNull();
     }
   });

@@ -51,6 +51,9 @@ export type MainTab =
   // keeps it open across a session change, so `clearAgentTabs` deliberately
   // leaves it be (`mainTabAfterClose` only ever rewrites an agent/workflow tab).
   | `ext:${string}`
+  // cohorte-integration FR-70: one Cohorte run's view. App-scoped like `ext:` —
+  // it survives a session switch and is never in a session's agentTabs.
+  | `cohorte:${string}`
   | PaneTab;
 
 export interface AgentTabSlice {

@@ -31,10 +31,14 @@ export interface SettingsNavItemProps {
   count?: number;
   disabled?: boolean;
   title?: string;
+  /** A glyph before the label (cohorte-integration FR-80: the Cohorte mark). */
+  leading?: ReactNode;
+  /** Something after the label in the count's place (a status dot). */
+  trailing?: ReactNode;
   onSelect: () => void;
 }
 
-export function SettingsNavItem({ label, selected = false, count, disabled, title, onSelect }: SettingsNavItemProps): JSX.Element {
+export function SettingsNavItem({ label, selected = false, count, disabled, title, leading, trailing, onSelect }: SettingsNavItemProps): JSX.Element {
   return (
     <button
       type="button"
@@ -44,8 +48,10 @@ export function SettingsNavItem({ label, selected = false, count, disabled, titl
       title={title}
       onClick={onSelect}
     >
+      {leading}
       <span className="settings-nav__text">{label}</span>
       {count !== undefined && count > 0 && <span className="settings-nav__count">{count}</span>}
+      {trailing}
     </button>
   );
 }

@@ -35,6 +35,7 @@ import Composer from './Composer';
 import { getDraft, setDraft } from '../../lib/composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
 import { isClearCommand, readingWindowHint, RESTORING_PLACEHOLDER, type TranscriptDispatch } from './conversation-blocks';
+import { GATE_COMPOSER_PLACEHOLDER, useSessionGatePending } from '../cohorte/useCohorte';
 import './conversation.css';
 import DropOverlay from './DropOverlay';
 import {
@@ -105,6 +106,8 @@ export default function ComposerPane({
   // ConversationView): switching sessions unmounts it, and without the map a
   // half-typed prompt would be lost (see ./composer-draft).
   const [input, setInput] = useState(() => getDraft(sessionId));
+  // cohorte-integration FR-64: the origin session's gate swaps the placeholder.
+  const gatePending = useSessionGatePending(sessionId);
   const [sendError, setSendError] = useState<string | null>(null);
 
   // slash-menu popup state (spec §6): dismissal token (FR-9) and selection (FR-7).
@@ -373,7 +376,9 @@ export default function ComposerPane({
   // off `state.blocks`, which is still empty).
   const placeholder = showSkeleton
     ? RESTORING_PLACEHOLDER
-    : composerPlaceholder(status, errorMessage, hasPendingQuestion, hasPendingPermission);
+    : gatePending && !hasPendingQuestion && !hasPendingPermission
+      ? GATE_COMPOSER_PLACEHOLDER
+      : composerPlaceholder(status, errorMessage, hasPendingQuestion, hasPendingPermission);
   // FR-9: derived from RENDER_WINDOW, never a literal — replaces the context
   // percent slot for as long as the skeleton is up (the figure a real session
   // would show is not yet meaningful for one still restoring).

@@ -47,34 +47,48 @@ pub(crate) fn program_argv(
     }
 }
 
-/// Runs `program` against `dir` under `host`, bounded by `timeout`. WSL output
-/// decoding mirrors `diff::git_routed` (wsl.exe's own failures are UTF-16LE,
-/// on stdout).
-pub(crate) fn run_routed(
+/// One routed spawn, undecoded exit + the three ways it can end early —
+/// what a caller needs to map failures precisely (cohorte-integration FR-47:
+/// timeout, spawn failure and output cap are distinct error codes).
+pub(crate) struct RoutedRun {
+    pub(crate) code: i32,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: String,
+    pub(crate) spawn_failed: bool,
+    pub(crate) timed_out: bool,
+    /// stdout reached `cap` (the pump reads `cap + 1` so "exactly at the cap" is not capped).
+    pub(crate) capped: bool,
+}
+
+/// Runs `program` against `dir` under `host`, bounded by `timeout` and a
+/// per-call stdout `cap`. WSL output decoding mirrors `diff::git_routed`
+/// (wsl.exe's own failures are UTF-16LE, on stdout).
+pub(crate) fn run_routed_bounded(
     program: &str,
     host: &GitHost,
     dir: &str,
     args: &[&str],
     timeout: Duration,
-) -> GitOut {
+    cap: usize,
+) -> RoutedRun {
     let (bin, argv) = program_argv(program, host, dir, args);
     let mut builder = crate::process_util::spawn(&bin).args(&argv);
     if matches!(host, GitHost::Native) {
         builder = builder.current_dir(dir);
     }
-    let run = builder.run_bounded(timeout, OUTPUT_CAP);
-    if run.spawn_failed {
-        return GitOut {
+    let run = builder.run_bounded(timeout, cap.saturating_add(1));
+    if run.spawn_failed || run.timed_out {
+        return RoutedRun {
             code: -1,
             stdout: Vec::new(),
-            stderr: format!("{program}: failed to start"),
-        };
-    }
-    if run.timed_out {
-        return GitOut {
-            code: -1,
-            stdout: Vec::new(),
-            stderr: format!("{program} timed out"),
+            stderr: if run.spawn_failed {
+                format!("{program}: failed to start")
+            } else {
+                format!("{program} timed out")
+            },
+            spawn_failed: run.spawn_failed,
+            timed_out: run.timed_out,
+            capped: false,
         };
     }
     let code = run.status.and_then(|s| s.code()).unwrap_or(-1);
@@ -87,10 +101,32 @@ pub(crate) fn run_routed(
     if wsl_host && code != 0 && stderr.is_empty() && run.stdout.contains(&0) {
         stderr = wsl::decode_wsl_output(&run.stdout);
     }
-    GitOut {
+    let capped = run.stdout.len() > cap;
+    let mut stdout = run.stdout;
+    stdout.truncate(cap);
+    RoutedRun {
         code,
-        stdout: run.stdout,
+        stdout,
         stderr,
+        spawn_failed: false,
+        timed_out: false,
+        capped,
+    }
+}
+
+/// Runs `program` against `dir` under `host`, bounded by `timeout`.
+pub(crate) fn run_routed(
+    program: &str,
+    host: &GitHost,
+    dir: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> GitOut {
+    let run = run_routed_bounded(program, host, dir, args, timeout, OUTPUT_CAP);
+    GitOut {
+        code: run.code,
+        stdout: run.stdout,
+        stderr: run.stderr,
     }
 }
 

@@ -14,7 +14,7 @@
 // (`flagsForPage`); a flag raised from elsewhere while open is a new request
 // and wins (`resolveSettingsPage`).
 
-export type SettingsPage = 'general' | 'mcp' | 'accounts';
+export type SettingsPage = 'general' | 'mcp' | 'cohorte' | 'accounts';
 
 export interface SettingsFlags {
   projectsOpen: boolean;
@@ -26,7 +26,7 @@ export function isSettingsOpen(flags: SettingsFlags): boolean {
 }
 
 export function isProjectPage(page: SettingsPage | null): boolean {
-  return page === 'general' || page === 'mcp';
+  return page === 'general' || page === 'mcp' || page === 'cohorte';
 }
 
 /** Which page shows after the flags moved from `prev` to `next`. */

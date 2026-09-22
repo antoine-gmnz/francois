@@ -6,7 +6,7 @@ status: frozen
 branch: feat/integration-cohorte
 created: 2026-09-23
 depends_on: [projects, session-engine, sessions-sidebar, conversation-view, app-shell, notifications, command-palette, wsl-filesystem, github-page]
-contract: contract/cohorte-integration.ts
+contract: contract/cohorte-integration.ts + contract/cohorte-events.ts
 reviewed_base:
 reviewed_digest:
 design_files:
@@ -605,7 +605,7 @@ and vice versa.
 
 ## 5. API contract
 
-Exact types: **`contract/cohorte-integration.ts`** (authoritative; summarised here). Error codes are
+Exact types: **`contract/cohorte-integration.ts`** (channels, projection, derived events) + **`contract/cohorte-events.ts`** (vocabulary, records, the event catalogue — split for the 1000-line cap) (authoritative; summarised here). Error codes are
 members of `ErrorCode` in `contract/common.ts`.
 
 | Channel | Tauri command | Request | `Result<T>` data | Errors |

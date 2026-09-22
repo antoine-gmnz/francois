@@ -30,6 +30,7 @@ import type {
     GithubUpdatePullBranchResponse,
     GithubWorktreeDiskUsageResponse,
 } from '../../contract/github-page';
+import { COHORTE_EVENT_CHANNEL, type CohorteApproveRequest, type CohorteCommandMap, type CohorteDenyRequest, type CohorteDetectRequest, type CohorteEvent, type CohorteInitRequest, type CohorteRootRequest, type CohorteRunControlRequest, type CohorteRunLogRequest, type CohorteRunRequest, type CohorteSendToFixRequest, type CohorteWatchRequest } from '../../contract/cohorte-integration';
 import type {
     AccountAddCodexPayload,
     AccountAddCodexResponse,
@@ -629,3 +630,31 @@ export const githubCreateWorktree = (req: GithubCreateWorktreeRequest) =>
   ipc<GithubCreateWorktreeResponse>('github_create_worktree', { req });
 export const githubPrune = (req: GithubPruneRequest) => ipc<GithubPruneResponse>('github_prune', { req });
 export const githubOpenUrl = (req: GithubOpenUrlRequest) => ipc<GithubOpenUrlResponse>('github_open_url', { req });
+
+// ---------- cohorte-integration (francois:cohorte:*) ----------
+// FR-50: one wrapper per CohorteCommandMap entry. Every command takes its
+// request as `req` (the github-page binding) and resolves to Result<T>.
+
+function cohorte<K extends keyof CohorteCommandMap>(cmd: K, req: CohorteCommandMap[K]['req']): Promise<CohorteCommandMap[K]['res']> {
+  return ipc<CohorteCommandMap[K]['res']>(cmd, { req });
+}
+
+export const cohorteDetect = (req: CohorteDetectRequest) => cohorte('cohorte_detect', req);
+export const cohorteDoctor = (req: CohorteRootRequest) => cohorte('cohorte_doctor', req);
+export const cohortePolicy = (req: CohorteRootRequest) => cohorte('cohorte_policy', req);
+export const cohorteInit = (req: CohorteInitRequest) => cohorte('cohorte_init', req);
+export const cohorteWatch = (req: CohorteWatchRequest) => cohorte('cohorte_watch', req);
+export const cohorteListRuns = (req: CohorteRootRequest) => cohorte('cohorte_list_runs', req);
+export const cohorteGetRun = (req: CohorteRunRequest) => cohorte('cohorte_get_run', req);
+export const cohorteRunLog = (req: CohorteRunLogRequest) => cohorte('cohorte_run_log', req);
+export const cohorteApprove = (req: CohorteApproveRequest) => cohorte('cohorte_approve', req);
+export const cohorteSendToFix = (req: CohorteSendToFixRequest) => cohorte('cohorte_send_to_fix', req);
+export const cohorteDeny = (req: CohorteDenyRequest) => cohorte('cohorte_deny', req);
+export const cohortePause = (req: CohorteRunControlRequest) => cohorte('cohorte_pause', req);
+export const cohorteResume = (req: CohorteRunControlRequest) => cohorte('cohorte_resume', req);
+export const cohorteCancel = (req: CohorteRunControlRequest) => cohorte('cohorte_cancel', req);
+
+/** Subscribe to francois://cohorte/event (every CohorteEvent member). */
+export function listenCohorte(cb: (e: CohorteEvent) => void): Promise<UnlistenFn> {
+  return stream<CohorteEvent>(COHORTE_EVENT_CHANNEL, cb);
+}

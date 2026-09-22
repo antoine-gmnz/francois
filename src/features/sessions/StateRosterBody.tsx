@@ -25,7 +25,9 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
+import type { CohorteRun } from '../../../contract/cohorte-integration';
 import { sessionAccountBadge } from '../accounts/accounts';
+import { CohorteRosterCard } from '../cohorte/CohorteRosterCard';
 import '../accounts/accounts.css';
 import type { RosterGroupTier } from './group-tier';
 import { askLine, formatLineCount, rowTitle, workLine } from './roster-row';
@@ -50,6 +52,17 @@ export interface StateRowContext {
   paneLabelOf: (session: SessionMeta) => { label: string; accent: boolean; focused: boolean } | null;
   onSelect: (id: string) => void;
   onContext: (id: string, x: number, y: number) => void;
+  /** cohorte-integration FR-85/FR-86 — absent ⇒ no Cohorte change to the roster. */
+  cohorte?: RosterCohorte;
+}
+
+export interface RosterCohorte {
+  /** origin session → its gated run (the row renders the gate card) */
+  gated: ReadonlyMap<string, CohorteRun>;
+  /** gated runs with no origin session in scope — run rows atop NEEDS YOU */
+  orphanGates: readonly CohorteRun[];
+  nested: ReadonlySet<string>;
+  runTags: ReadonlyMap<string, string>;
 }
 
 export interface StateRosterBodyProps extends StateRowContext {
@@ -74,13 +87,35 @@ export function StateRosterBody({
   // per row — the roster re-renders on every session event.
   let flatIndex = -1;
 
+  // cohorte-integration FR-85: gated runs with no origin in scope sit atop
+  // NEEDS YOU — which gets a heading of its own when no session is in it.
+  const orphans = row.cohorte?.orphanGates ?? [];
+  const orphanRows = orphans.map((run) => (
+    <div key={run.runId} className="roster-row-wrap">
+      <div className="roster-row roster-row--attention roster-row--card">
+        <CohorteRosterCard run={run} now={row.now} />
+      </div>
+    </div>
+  ));
+  const hasAttention = nodes.some((n) => n.state === 'attention');
+
   return (
     <>
+      {orphans.length > 0 && !hasAttention && (
+        <div className="roster-state roster-state--attention">
+          <div className="roster-state__head roster-state__head--attention">
+            <span className="roster-state__label">needs you</span>
+            <span className="roster-state__count">{orphans.length}</span>
+          </div>
+          {orphanRows}
+        </div>
+      )}
       {nodes.map((node) => {
         const isCollapsed = collapsed.has(node.key);
         return (
           <div key={node.key} className={`roster-state roster-state--${node.state}`}>
             <StateHeading node={node} collapsed={isCollapsed} onToggle={() => onToggle(node.key)} />
+            {!isCollapsed && node.state === 'attention' && orphanRows}
             {!isCollapsed &&
               (node.tiers
                 ? node.tiers.map((tier) => {
@@ -149,10 +184,14 @@ function StateRow({ session, state, index, ...ctx }: { session: SessionMeta; sta
   if (index === ctx.cursorIndex) classNames.push('roster-row--cursor');
   if (pane?.focused) classNames.push('roster-row--pane-focus');
 
-  const tags = <RowTags session={session} pane={pane} projectLabel={ctx.projectLabelOf(session)} />;
+  const runTag = ctx.cohorte?.runTags.get(session.id) ?? null;
+  const tags = <RowTags session={session} pane={pane} projectLabel={ctx.projectLabelOf(session)} runTag={runTag} />;
+  const gatedRun = state === 'attention' ? ctx.cohorte?.gated.get(session.id) : undefined;
+  if (gatedRun && !card) classNames.push('roster-row--card');
+  const nested = ctx.cohorte?.nested.has(session.id) ?? false;
 
   return (
-    <div className="roster-row-wrap">
+    <div className={nested ? 'roster-row-wrap roster-row-wrap--nested' : 'roster-row-wrap'}>
       <div
         className={classNames.join(' ')}
         title={rowTitle(session, ctx.home)}
@@ -162,7 +201,9 @@ function StateRow({ session, state, index, ...ctx }: { session: SessionMeta; sta
           ctx.onContext(session.id, e.clientX, e.clientY);
         }}
       >
-        {card ? (
+        {gatedRun && !card ? (
+          <CohorteRosterCard run={gatedRun} session={session} tags={tags} now={ctx.now} />
+        ) : card ? (
           <AskCard session={session} parked={parked} tags={tags} now={ctx.now} onOpen={() => ctx.onSelect(session.id)} />
         ) : state === 'attention' ? (
           <AttentionBody session={session} tags={tags} now={ctx.now} />
@@ -182,16 +223,20 @@ function RowTags({
   session,
   pane,
   projectLabel,
+  runTag,
 }: {
   session: SessionMeta;
   pane: { label: string; accent: boolean; focused: boolean } | null;
   projectLabel: string | null;
+  /** cohorte-integration FR-86: a step session whose run's origin is in another group */
+  runTag: string | null;
 }) {
   const accounts = useStore((s) => s.accounts);
   const accountBadge = sessionAccountBadge(accounts, session);
-  if (!accountBadge && !projectLabel && !pane) return null;
+  if (!accountBadge && !projectLabel && !pane && !runTag) return null;
   return (
     <>
+      {runTag && <Tag title="Cohorte run">{runTag}</Tag>}
       {accountBadge && (
         <span className="acc-badge" title={accountBadge.title}>
           {accountBadge.text}

@@ -590,3 +590,18 @@
 .sidebar--dense .roster-state + .roster-state {
   margin-top: var(--space-12);
 }
+
+/* cohorte-integration FR-86 — A step session nested under its run's origin row: 16px in, a thin guide. */
+.roster-row-wrap--nested {
+  position: relative;
+  padding-left: calc(var(--space-8) + 16px);
+}
+.roster-row-wrap--nested::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--space-8) + 7px);
+  width: 1px;
+  background: var(--line-subtle);
+}

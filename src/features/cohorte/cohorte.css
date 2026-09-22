@@ -1,0 +1,1215 @@
+/* cohorte-integration — Figma frames 25–28 (Graphite & Signal). Every colour is
+   an existing token (both themes); the only literal colour is the Cohorte mark's
+   own orange, inside its SVG. BEM-lite, `cohorte-*`. */
+
+.cohorte-mark {
+  display: inline-block;
+  flex-shrink: 0;
+}
+.cohorte-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.cohorte-label {
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--state-info);
+  font: var(--type-small);
+  cursor: pointer;
+}
+/* A CLI line: Mono Small faint, click copies. */
+.cohorte-cli {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  text-align: left;
+  cursor: copy;
+  white-space: nowrap;
+}
+.cohorte-cli:hover {
+  color: var(--text-muted);
+}
+.cohorte-tone--running {
+  color: var(--state-running);
+}
+.cohorte-tone--attention {
+  color: var(--state-attention-text);
+}
+.cohorte-tone--success {
+  color: var(--state-success-text);
+}
+.cohorte-tone--danger {
+  color: var(--state-danger-text);
+}
+.cohorte-tone--neutral {
+  color: var(--text-secondary);
+}
+
+/* ---------- state chip / run chip (FR-60) ---------- */
+
+.cohorte-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 20px;
+  padding: 0 var(--space-7);
+  border-radius: var(--radius-4);
+  font: var(--type-small-medium);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cohorte-chip--attention {
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+}
+.cohorte-chip--success {
+  background: var(--tint-success);
+  color: var(--state-success-text);
+}
+.cohorte-chip--danger {
+  background: var(--tint-danger);
+  color: var(--state-danger-text);
+}
+.cohorte-chip--running {
+  background: var(--tint-running);
+  color: var(--state-running);
+}
+.cohorte-chip--neutral {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.cohorte-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 20px;
+  padding: 0 var(--space-7);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font: var(--type-mono-small);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cohorte-run-chip:hover {
+  background: var(--bg-selected);
+}
+
+/* ---------- finding row ---------- */
+
+.cohorte-finding {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+}
+.cohorte-finding--full {
+  min-height: 32px;
+  padding: var(--space-8) var(--space-12);
+  background: var(--bg-canvas);
+}
+.cohorte-finding--compact {
+  gap: var(--space-8);
+}
+.cohorte-finding__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+.cohorte-finding__title {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.cohorte-finding__where {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-finding__label {
+  flex-shrink: 0;
+  font: var(--type-small-medium);
+}
+.cohorte-finding--blocking .cohorte-finding__dot,
+.cohorte-finding--blocking .cohorte-finding__label {
+  color: var(--state-danger);
+}
+.cohorte-finding--minor .cohorte-finding__dot,
+.cohorte-finding--minor .cohorte-finding__label {
+  color: var(--state-info);
+}
+.cohorte-finding--nit .cohorte-finding__dot,
+.cohorte-finding--nit .cohorte-finding__label {
+  color: var(--text-faint);
+}
+
+/* ---------- gate card (FR-61/FR-65; frame 25 `154:15465`) ---------- */
+
+.cohorte-inline-gate {
+  display: flex;
+}
+.cohorte-gate {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--tint-attention-line);
+  border-radius: var(--radius-6);
+  background: var(--tint-attention);
+}
+.cohorte-gate--full {
+  width: 100%;
+  max-width: 680px;
+  gap: var(--space-14);
+  padding: var(--space-14) var(--space-16) var(--space-16);
+}
+.cohorte-gate--compact {
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-14);
+}
+.cohorte-gate__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-gate__label {
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  color: var(--state-attention-text);
+  white-space: nowrap;
+}
+.cohorte-gate__label--grow {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cohorte-gate__age {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.cohorte-gate__question {
+  margin: 0;
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
+}
+.cohorte-gate__findings {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-5);
+  overflow: hidden;
+  background: var(--line-subtle);
+}
+.cohorte-gate__reason,
+.cohorte-gate__summary,
+.cohorte-gate__more {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-gate__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-5);
+  background: var(--bg-canvas);
+}
+.cohorte-gate__preview pre {
+  margin: 0;
+  font: var(--type-mono-small);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cohorte-gate__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+.cohorte-gate__actions--compact {
+  gap: var(--space-6);
+}
+.cohorte-gate__hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cohorte-gate__confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.cohorte-gate__confirm code {
+  font: var(--type-mono-small);
+}
+.cohorte-gate__confirm-keys {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-gate__outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cohorte-gate__step {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-gate__step--success {
+  color: var(--state-success-text);
+}
+.cohorte-gate__step--pending {
+  color: var(--text-secondary);
+}
+.cohorte-gate__step--danger {
+  color: var(--state-danger-text);
+}
+
+/* ---------- session panel tab (FR-67..FR-69; frame 25 panel) ---------- */
+
+.cohorte-panel {
+  gap: 0;
+}
+.cohorte-panel__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-14) var(--space-14) var(--space-12);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.cohorte-panel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-panel__title {
+  min-width: 0;
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+}
+.cohorte-panel__summary {
+  min-width: 0;
+  font: var(--type-small-medium);
+}
+.cohorte-panel__id {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-panel__note {
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-panel__note code {
+  font: var(--type-mono-small);
+  color: var(--text-secondary);
+}
+.cohorte-panel__note--warning {
+  color: var(--state-attention-text);
+}
+.cohorte-panel__note--danger {
+  color: var(--state-danger-text);
+}
+.cohorte-panel__gate {
+  padding: var(--space-12) var(--space-12) var(--space-4);
+}
+.cohorte-panel__runtime {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-panel__runtime-text {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-panel__actions {
+  display: flex;
+  gap: var(--space-6);
+}
+.cohorte-panel__open {
+  flex: 1 1 0;
+}
+.cohorte-panel__empty {
+  flex: 0 0 auto;
+  padding: var(--space-24) var(--space-14) var(--space-12);
+}
+.cohorte-panel__recent {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-6) var(--space-10);
+}
+.cohorte-panel__recent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+  border: 0;
+  border-radius: var(--radius-5);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.cohorte-panel__recent-row:hover {
+  background: var(--bg-raised);
+}
+.cohorte-panel__recent-name {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+
+.cohorte-phases {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-6) var(--space-6) var(--space-10);
+}
+.cohorte-phases__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-8) var(--space-8) var(--space-4) var(--space-10);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+.cohorte-phases__count {
+  font: var(--type-mono-small);
+  letter-spacing: 0;
+}
+.cohorte-phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-10);
+  border-radius: var(--radius-5);
+}
+.cohorte-phase--current {
+  background: var(--bg-raised);
+}
+.cohorte-phase__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.cohorte-phase__name {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.cohorte-phase__name--pending {
+  color: var(--text-muted);
+}
+.cohorte-phase__meta {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.cohorte-phase__meta--live {
+  color: var(--state-running);
+}
+.cohorte-phase__step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding-left: 21px;
+  min-width: 0;
+}
+.cohorte-phase__step-label {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-phase__step-label--pending {
+  color: var(--text-faint);
+}
+.cohorte-phase__step-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+
+/* Tail logs (FR-69) */
+.cohorte-log {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cohorte-log__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-10) var(--space-10) var(--space-6);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.cohorte-log__notice {
+  padding: var(--space-8) var(--space-14);
+  font: var(--type-small);
+  color: var(--state-attention-text);
+  background: var(--tint-attention);
+}
+.cohorte-log__body {
+  padding: 0;
+}
+.cohorte-log__rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-8) 0;
+}
+.cohorte-log__empty {
+  padding: var(--space-16) var(--space-14);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-log__row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: var(--space-8);
+  padding: 2px var(--space-14);
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-log__row--warning {
+  color: var(--state-attention-text);
+}
+.cohorte-log__row--error {
+  color: var(--state-danger-text);
+}
+.cohorte-log__at {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.cohorte-log__type {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.cohorte-log__row--warning .cohorte-log__type,
+.cohorte-log__row--error .cohorte-log__type {
+  color: inherit;
+}
+.cohorte-log__type--unknown {
+  font-style: italic;
+}
+.cohorte-log__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- run view (FR-70..FR-76; frame 26) ---------- */
+
+.cohorte-run {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+}
+.cohorte-run__header {
+  flex: 0 0 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 0 var(--space-24);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.cohorte-run__back {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.cohorte-run__back:hover {
+  background: var(--bg-raised);
+}
+.cohorte-run__title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.cohorte-run__crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-run__crumb--faint,
+.cohorte-run__crumb-sep {
+  color: var(--text-faint);
+}
+.cohorte-run__name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+}
+.cohorte-run__name {
+  min-width: 0;
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
+}
+.cohorte-run__meta {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.cohorte-run__strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-16);
+  padding: var(--space-8) var(--space-24);
+  border-bottom: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  color: var(--text-secondary);
+  background: var(--bg-rail);
+}
+.cohorte-run__strip code {
+  font: var(--type-mono-small);
+}
+.cohorte-run__strip--warning {
+  color: var(--state-attention-text);
+  background: var(--tint-attention);
+}
+.cohorte-run__strip--danger {
+  color: var(--state-danger-text);
+  background: var(--tint-danger);
+}
+.cohorte-run__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-24) var(--space-28);
+}
+.cohorte-run__columns {
+  display: flex;
+  gap: var(--space-20);
+  margin-top: var(--space-22);
+  align-items: flex-start;
+}
+.cohorte-run__side {
+  flex: 0 0 360px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-18);
+}
+.cohorte-run__modal-text {
+  margin: 0 0 var(--space-10);
+  font: var(--type-ui);
+  color: var(--text-secondary);
+}
+
+.cohorte-timeline {
+  display: flex;
+  gap: var(--space-4);
+}
+.cohorte-timeline__col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.cohorte-timeline__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-strong);
+}
+.cohorte-timeline__bar--success {
+  background: var(--state-success);
+}
+.cohorte-timeline__bar--running {
+  background: var(--state-running);
+}
+.cohorte-timeline__bar--attention {
+  background: var(--state-attention);
+}
+.cohorte-timeline__bar--danger {
+  background: var(--state-danger);
+}
+.cohorte-timeline__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.cohorte-timeline__name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+}
+.cohorte-timeline__name--pending {
+  color: var(--text-faint);
+}
+.cohorte-timeline__meta {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.cohorte-steps {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+.cohorte-steps__empty {
+  padding: var(--space-16) var(--space-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+/* Scrolls horizontally below ~720px of main width (§8 resize). */
+.cohorte-steps__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+.cohorte-steps__table {
+  width: 100%;
+  min-width: 600px;
+  border-collapse: collapse;
+}
+.cohorte-steps__table th {
+  height: 32px;
+  padding: 0 var(--space-12);
+  text-align: left;
+  background: var(--bg-rail);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-steps__table td {
+  height: 44px;
+  padding: 0 var(--space-12);
+  border-top: 1px solid var(--line-subtle);
+  white-space: nowrap;
+}
+.cohorte-steps__col-step {
+  width: 150px;
+}
+.cohorte-steps__col-agent {
+  width: 120px;
+}
+.cohorte-steps__col-session {
+  width: 130px;
+}
+.cohorte-steps__col-duration {
+  width: 90px;
+}
+.cohorte-steps__step {
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.cohorte-steps__agent,
+.cohorte-steps__duration {
+  font: var(--type-mono);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cohorte-steps__session {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--type-mono);
+  color: var(--state-info);
+  cursor: pointer;
+}
+.cohorte-steps__session:hover {
+  text-decoration: underline;
+}
+.cohorte-steps__none {
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+.cohorte-steps__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-steps__state--running {
+  color: var(--state-running);
+}
+.cohorte-steps__state--failed,
+.cohorte-steps__state--blocked {
+  color: var(--state-danger-text);
+}
+.cohorte-steps__state--waiting-approval {
+  color: var(--state-attention-text);
+}
+.cohorte-steps__error {
+  display: block;
+  font: var(--type-small);
+  color: var(--state-danger-text);
+}
+
+.cohorte-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.cohorte-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.cohorte-card__foot {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-artifact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.cohorte-artifact--link {
+  cursor: pointer;
+}
+.cohorte-artifact--link:hover .cohorte-artifact__name {
+  color: var(--text-primary);
+}
+.cohorte-artifact__icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.cohorte-artifact__name {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+}
+.cohorte-artifact__meta {
+  flex-shrink: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-kv {
+  display: flex;
+  gap: var(--space-6);
+  font: var(--type-small);
+}
+.cohorte-kv__k {
+  color: var(--text-faint);
+}
+.cohorte-kv__v {
+  color: var(--text-secondary);
+}
+.cohorte-kv__v--mono {
+  font: var(--type-mono-small);
+}
+.cohorte-command-bar {
+  flex: 0 0 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: 0 var(--space-24);
+  border-top: 1px solid var(--line-subtle);
+  background: var(--bg-rail);
+  min-width: 0;
+}
+.cohorte-command-bar__icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.cohorte-command-bar__cli {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: copy;
+}
+.cohorte-command-bar__note {
+  flex-shrink: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+
+/* ---------- Settings · Cohorte (FR-80..FR-82; frames 27/28) ---------- */
+
+.cohorte-nav-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+.cohorte-nav-dot--on {
+  background: var(--state-success);
+}
+.cohorte-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  max-width: 680px;
+  font: var(--type-ui);
+  color: var(--text-secondary);
+}
+.cohorte-settings__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.cohorte-settings__crumbs {
+  font: var(--type-small);
+  color: var(--text-faint);
+  white-space: pre;
+}
+.cohorte-settings__heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font: var(--type-heading);
+  letter-spacing: var(--tracking-heading);
+  color: var(--text-primary);
+}
+.cohorte-settings__lede {
+  margin: 0;
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+.cohorte-settings__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+.cohorte-settings__form--tight {
+  gap: var(--space-16);
+}
+.cohorte-settings__foot {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-detect {
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+.cohorte-detect__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16);
+}
+.cohorte-detect__badge {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-5);
+}
+.cohorte-detect__badge--success {
+  background: var(--tint-success);
+  color: var(--state-success);
+}
+.cohorte-detect__badge--danger {
+  background: var(--tint-danger);
+  color: var(--state-danger);
+}
+.cohorte-detect__badge--attention {
+  background: var(--tint-attention);
+  color: var(--state-attention);
+}
+.cohorte-detect__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.cohorte-detect__title {
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+}
+.cohorte-detect__sub {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+.cohorte-detect__seg--first {
+  color: var(--text-secondary);
+}
+.cohorte-detect__sep {
+  color: var(--text-disabled);
+  white-space: pre;
+}
+.cohorte-detect__checks {
+  border-top: 1px solid var(--line-subtle);
+}
+.cohorte-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  height: 34px;
+  padding: 0 var(--space-16);
+}
+.cohorte-check__glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.cohorte-check__glyph--ok {
+  color: var(--state-success);
+}
+.cohorte-check__glyph--warning {
+  color: var(--state-attention);
+}
+.cohorte-check__glyph--error {
+  color: var(--state-danger);
+}
+.cohorte-check__command {
+  font: var(--type-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.cohorte-check__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.cohorte-toggle--policy {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-10);
+}
+.cohorte-toggle__text {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cohorte-toggle__title {
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.cohorte-toggle__description {
+  max-width: 520px;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-policy__head {
+  display: flex;
+  align-items: center;
+}
+.cohorte-policy__hint {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-policy__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+.cohorte-policy__none {
+  color: var(--text-faint);
+}
+.cohorte-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-14);
+  padding: 40px var(--space-32);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+  text-align: center;
+}
+.cohorte-empty__glyph {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-8);
+  background: var(--bg-card);
+}
+.cohorte-empty__title {
+  margin: 0;
+  font: var(--type-heading);
+  letter-spacing: var(--tracking-heading);
+  color: var(--text-primary);
+}
+.cohorte-empty__body {
+  max-width: 440px;
+  margin: 0;
+  font: var(--type-body);
+  color: var(--text-muted);
+}
+.cohorte-empty__code {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-12) var(--space-14);
+  border-radius: var(--radius-5);
+  background: var(--bg-terminal);
+  text-align: left;
+}
+.cohorte-empty__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+}
+.cohorte-empty__prompt {
+  font: var(--type-mono-code);
+  color: var(--text-disabled);
+  white-space: pre;
+}
+.cohorte-empty__cmd {
+  margin-left: calc(-1 * var(--space-10));
+  font: var(--type-mono-code);
+  color: var(--text-primary);
+}
+.cohorte-empty__comment {
+  font: var(--type-mono-small);
+  color: var(--text-disabled);
+}
+.cohorte-empty__actions {
+  display: flex;
+  gap: var(--space-8);
+}
+.cohorte-empty__meta {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-empty__sep {
+  color: var(--text-disabled);
+  white-space: pre;
+}
+.cohorte-enables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.cohorte-enables__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+}
+.cohorte-enables__icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--text-faint);
+}
+.cohorte-enables__text {
+  display: flex;
+  flex-direction: column;
+}
+.cohorte-enables__title {
+  font: var(--type-ui);
+  color: var(--text-muted);
+}
+.cohorte-enables__body {
+  font: var(--type-small);
+  color: var(--text-disabled);
+}
+
+/* ---------- roster (FR-85/FR-86) ---------- */
+
+.cohorte-roster__id {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-roster__kind {
+  font: var(--type-small-medium);
+  color: var(--state-attention-text);
+}
+.cohorte-roster__question {
+  font: var(--type-small);
+  color: var(--text-secondary);
+}

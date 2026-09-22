@@ -36,6 +36,19 @@ import {
   WORKFLOWS,
   fileDiff,
 } from './fixtures';
+import type { CohorteCommandOutcome, CohorteEvent, CohorteRun } from '../../contract/cohorte-integration';
+import {
+  demoCohorteTranscript,
+  demoDetection,
+  demoDoctor,
+  demoOutcome,
+  demoPolicy,
+  demoRun,
+  demoRunAfter,
+  demoRunLog,
+  DEMO_COHORTE_ROOT,
+  DEMO_RUN_ID,
+} from './cohorte-fixtures';
 import {
   GITHUB_BRANCHES,
   GITHUB_PULL_DETAILS,
@@ -73,6 +86,8 @@ async function openingView() {
   // tab rather than the cross-project OVERVIEW dashboard.
   s.setActiveProjectId(PROJECT_ORBIT);
   s.setMainTab('session');
+  // cohorte-integration FR-89: frame 25 opens on the session panel's Cohorte tab.
+  s.setSessionPanelTab('cohorte');
   if (s.theme !== 'dark') s.setTheme('dark');
   if (!s.showLeftPane) s.toggleLeftPane();
   // design 12b: the roster's state groups are collapsible and persisted, so a
@@ -110,6 +125,46 @@ function emit(channel: string, payload: unknown) {
 const session = (e: SessionEvent) => emit('francois://session/event', e);
 const agents = (e: AgentEvent) => emit('francois://agents/event', e);
 const shell = (e: ShellEvent) => emit('francois://shell/event', e);
+const cohorteEvent = (e: CohorteEvent) => emit('francois://cohorte/event', e);
+
+// ---------- cohorte-integration (FR-89) ----------
+//
+// One run at a review gate. Answering it resolves the gate after 600 ms; 20 s
+// later the fixture loops back to the gate so a capture can answer it again.
+let cohorteRun: CohorteRun | null = null;
+let cohorteLoop: ReturnType<typeof setTimeout> | null = null;
+
+function currentCohorteRun(): CohorteRun {
+  if (!cohorteRun) cohorteRun = demoRun();
+  return cohorteRun;
+}
+
+function answerCohorteGate(action: 'approve' | 'fix' | 'deny'): CohorteCommandOutcome {
+  const run = currentCohorteRun();
+  const outcome = demoOutcome(run, action);
+  const approvalId = run.gate?.request.approvalId ?? '';
+  setTimeout(() => {
+    cohorteRun = demoRunAfter(run, action);
+    cohorteEvent({ type: 'francois.gate.resolved', projectRoot: DEMO_COHORTE_ROOT, runId: run.runId, approvalId, decision: action === 'approve' ? 'allow-once' : 'deny', actor: 'client:francois' });
+    cohorteEvent({ type: 'francois.run.updated', run: cohorteRun });
+  }, 600);
+  if (cohorteLoop) clearTimeout(cohorteLoop);
+  cohorteLoop = setTimeout(() => {
+    cohorteRun = demoRun();
+    cohorteEvent({ type: 'francois.run.updated', run: cohorteRun });
+    if (cohorteRun.gate) cohorteEvent({ type: 'francois.gate.opened', projectRoot: DEMO_COHORTE_ROOT, gate: cohorteRun.gate });
+  }, 20_000);
+  return { ...outcome, run };
+}
+
+function controlCohorteRun(view: 'paused' | 'running' | 'cancelled', cli: string): CohorteCommandOutcome {
+  const run = currentCohorteRun();
+  cohorteRun = { ...run, view, state: view === 'paused' ? 'PAUSED' : view === 'cancelled' ? 'CANCELLED' : 'REVIEW', gate: view === 'cancelled' ? null : run.gate };
+  if (view === 'running' && run.gate) cohorteRun = { ...cohorteRun, view: 'gate', state: 'WAITING_APPROVAL' };
+  const updated = cohorteRun;
+  setTimeout(() => cohorteEvent({ type: 'francois.run.updated', run: updated }), 300);
+  return { runId: run.runId, run: updated, steps: [{ cli: `cohorte ${cli} ${run.runId}`, outcome: 'completed', exitCode: 0 }] };
+}
 
 // ---------- mutable demo state ----------
 
@@ -274,7 +329,7 @@ function route(cmd: string, a: Args): unknown {
     // is just the whole thing — `before`/`limit` are accepted but ignored,
     // and hasMore is always false (there is nothing further back to page to).
     case 'conversation_get_transcript':
-      return ok({ blocks: sid(a) === S_API ? transcriptNow() : [], hasMore: false });
+      return ok({ blocks: sid(a) === S_API ? [...transcriptNow(), ...demoCohorteTranscript()] : [], hasMore: false });
 
     // ---- agents ----
     case 'agents_list':
@@ -463,6 +518,38 @@ function route(cmd: string, a: Args): unknown {
     case 'extensions_set_enabled':
     case 'extensions_detect':
       return ok([]);
+
+    // ---- cohorte-integration (FR-89): orbit is a Cohorte project, nothing else is ----
+    case 'cohorte_detect':
+      return ok(demoDetection(String(g?.startDir ?? '')));
+    case 'cohorte_doctor':
+      return ok(demoDoctor());
+    case 'cohorte_policy':
+      return ok(demoPolicy());
+    case 'cohorte_init':
+      return ok({ ...demoDetection(DEMO_COHORTE_ROOT), startDir: String(g?.projectRoot ?? DEMO_COHORTE_ROOT) });
+    case 'cohorte_watch':
+      return ok(null);
+    case 'cohorte_list_runs':
+      return ok(g?.root === DEMO_COHORTE_ROOT ? [currentCohorteRun()] : []);
+    case 'cohorte_get_run':
+      return g?.runId === DEMO_RUN_ID
+        ? ok(currentCohorteRun())
+        : { ok: false, error: { code: 'COHORTE_RUN_NOT_FOUND', message: 'run not found', detail: { runId: g?.runId } } };
+    case 'cohorte_run_log':
+      return ok(demoRunLog(currentCohorteRun()));
+    case 'cohorte_approve':
+      return ok(answerCohorteGate('approve'));
+    case 'cohorte_send_to_fix':
+      return ok(answerCohorteGate('fix'));
+    case 'cohorte_deny':
+      return ok(answerCohorteGate('deny'));
+    case 'cohorte_pause':
+      return ok(controlCohorteRun('paused', 'pause'));
+    case 'cohorte_resume':
+      return ok(controlCohorteRun('running', 'resume'));
+    case 'cohorte_cancel':
+      return ok(controlCohorteRun('cancelled', 'cancel'));
 
     default:
       // Anything not scripted resolves benignly rather than exploding a panel.

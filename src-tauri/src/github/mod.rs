@@ -22,7 +22,7 @@
 mod branches;
 mod commands;
 mod commits;
-mod gh;
+pub(crate) mod gh;
 mod pulls;
 mod repo;
 

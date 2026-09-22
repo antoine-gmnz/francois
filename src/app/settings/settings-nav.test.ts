@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { flagsForPage, isSettingsOpen, resolveSettingsPage, type SettingsFlags } from './settings-nav';
+import { flagsForPage, isProjectPage, isSettingsOpen, resolveSettingsPage, type SettingsFlags } from './settings-nav';
 
 const f = (projectsOpen: boolean, accountsOpen: boolean): SettingsFlags => ({ projectsOpen, accountsOpen });
 
@@ -41,5 +41,13 @@ describe('flagsForPage', () => {
     expect(flagsForPage('general')).toEqual(f(true, false));
     expect(flagsForPage('mcp')).toEqual(f(true, false));
     expect(flagsForPage('accounts')).toEqual(f(false, true));
+  });
+});
+
+describe('the Cohorte page (cohorte-integration FR-80)', () => {
+  it('is a project page, owned by the projects flag, kept while that flag stays up', () => {
+    expect(isProjectPage('cohorte')).toBe(true);
+    expect(flagsForPage('cohorte')).toEqual(f(true, false));
+    expect(resolveSettingsPage(f(true, false), f(true, false), 'cohorte')).toBe('cohorte');
   });
 });

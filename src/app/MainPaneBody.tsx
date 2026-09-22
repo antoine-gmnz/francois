@@ -9,6 +9,8 @@ import { extIdFromTab } from '../features/extensions/extensions';
 import WorkflowView from '../features/workflows/WorkflowView';
 import OverviewView from '../features/overview/OverviewView';
 import GitHubView from '../features/github/GitHubView';
+import CohorteRunView from '../features/cohorte/CohorteRunView';
+import { cohorteRunIdFromTab } from '../features/cohorte/tab';
 import type { MainTab } from '../lib/store';
 import { hostedTab, mainPaneBranch, type MainPaneBranch } from './appShell';
 import EmptyPaneMessage from './EmptyPaneMessage';
@@ -91,6 +93,13 @@ function MainPaneBranchBody({
     );
   }
 
+  if (branch === 'cohorte') {
+    // cohorte-integration FR-70: one run's view, keyed by run. App-scoped — it
+    // needs no session and survives a session switch.
+    const runId = cohorteRunIdFromTab(mainTab) as string;
+    return <CohorteRunView key={runId} runId={runId} />;
+  }
+
   if (branch === 'agent') {
     // agent-tab: one subagent's own conversation. Keyed by agent so
     // switching tabs remounts rather than leaking the previous state. The
@@ -116,7 +125,7 @@ function MainPaneBranchBody({
     );
   }
 
-  const renderers: Record<Exclude<MainPaneBranch, 'agent' | 'workflow' | 'ext'>, () => ReactNode> = {
+  const renderers: Record<Exclude<MainPaneBranch, 'agent' | 'workflow' | 'ext' | 'cohorte'>, () => ReactNode> = {
     // design 7a: the four dissolved panes are rendered by App.tsx's persistent
     // host, not here — they must not unmount on a tab switch (their feeds
     // publish the counts the roster rows read).

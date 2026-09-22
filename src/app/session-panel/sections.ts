@@ -18,6 +18,8 @@
 import type { ComponentType } from 'react';
 import type { SessionMeta } from '../../../contract/common';
 import ActivitySection, { ActivityBadge } from '../../features/agents/ActivitySection';
+import CohortePanelSection, { CohorteTabIcon } from '../../features/cohorte/CohortePanelSection';
+import { cohorteSectionVisible } from '../../features/cohorte/useCohorte';
 import ChangesSection, { ChangesBadge } from '../../features/diff/ChangesSection';
 import ContextSection from '../../features/mcp/ContextSection';
 import type { SessionPanelTab } from '../../lib/sessionPanelStore';
@@ -44,10 +46,25 @@ export interface SessionPanelSection {
   /** The compact figure on the tab; render null for none. */
   Badge?: ComponentType<{ session: SessionMeta }>;
   Body: ComponentType<SessionPanelSectionProps>;
+  /** cohorte-integration FR-67: hide the tab for this session (default: always shown). */
+  visible?: (session: SessionMeta) => boolean;
+  /** A tab glyph of its own instead of `icon` (the Cohorte mark). */
+  Icon?: ComponentType;
+  /** Label the tab even when it is not selected (Cohorte is the only one). */
+  showLabel?: boolean;
 }
 
 export const SESSION_PANEL_SECTIONS: readonly SessionPanelSection[] = [
   { id: 'changes', label: 'Changes', icon: 'branch', Badge: ChangesBadge, Body: ChangesSection },
   { id: 'activity', label: 'Activity', icon: 'activity', Badge: ActivityBadge, Body: ActivitySection },
   { id: 'context', label: 'Context', icon: 'layers', Body: ContextSection },
+  {
+    id: 'cohorte',
+    label: 'Cohorte',
+    icon: 'layers',
+    Icon: CohorteTabIcon,
+    showLabel: true,
+    visible: cohorteSectionVisible,
+    Body: CohortePanelSection,
+  },
 ];
