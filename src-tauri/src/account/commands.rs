@@ -399,9 +399,13 @@ pub fn account_remove(
         // A delete failure is never fatal to the removal itself (the row is
         // already gone from the registry), but it is logged rather than
         // silently discarded, so a leftover credential directory is at least
-        // visible somewhere.
+        // visible somewhere. The path is deliberately left out: it names the
+        // account's credential directory, which does not belong in a log.
         if let Err(e) = std::fs::remove_dir_all(&config_dir) {
-            eprintln!("accounts: could not remove {config_dir}: {e}");
+            eprintln!(
+                "accounts: could not remove a removed account's config directory: {}",
+                e.kind()
+            );
         }
     }
     // FR-9: driven from here, never from under the account lock.
