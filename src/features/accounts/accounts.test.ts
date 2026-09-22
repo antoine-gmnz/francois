@@ -1143,4 +1143,16 @@ describe('pi accounts (shared derivations)', () => {
   it('never probes plan limits — a Pi runtime is not yet connected', () => {
     expect(accountUsageProbeable(pi())).toBe(false);
   });
+
+  it('confirms removal without promising to delete a directory it never owned', () => {
+    // The core keeps a retired Pi account's directory (the user's own ~/.pi)
+    // and leaves its sessions pinned — nothing falls back to Default.
+    const view = removeConfirmView(pi({ label: 'Codex' }), [
+      session({ id: 's1', name: 'old pi', accountId: 'pi1' }),
+    ]);
+    expect(view.title).toBe('Remove Codex?');
+    expect(view.credentialsLine).toBe('Only the saved entry goes — its Pi directory is left untouched.');
+    expect(view.sessionsLine).toBeNull();
+    expect(view.names).toEqual([]);
+  });
 });

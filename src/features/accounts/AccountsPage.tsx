@@ -709,7 +709,14 @@ export default function AccountsPage(): JSX.Element {
 
 
         {piAccounts.map((account) => <div className="acc-section" key={account.id}>
-          <div className="acc-section-head">{account.label} · Unavailable</div>
+          <div className="acc-section-head">
+            <span className="acc-section-title">{account.label} · Unavailable</span>
+            {/* Removal is the one action a retired row keeps — the way out
+                when it is still saved as the default. */}
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmId(account.id)}>
+              Remove
+            </Button>
+          </div>
           <div className="acc-section-body">{account.configDir}</div>
         </div>)}
         {/* The keyboard model this modal has always had and never named —

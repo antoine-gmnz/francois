@@ -25,6 +25,7 @@ import type {
 import { DEFAULT_ACCOUNT_ID } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
 import { accountList, onAccountEvent } from '../../lib/api';
+import { accountIsRetired } from '../../lib/runtimeCapability';
 import { meterChipViews, sessionResetLabel, type MeterChipView } from '../usage/usage';
 
 // ---------------------------------------------------------------- the feed
@@ -509,9 +510,20 @@ export interface RemoveConfirmView {
 
 /**
  * FR-35: the confirmation names the sessions that will fall back to `Default`
- * (FR-9) and states that the credentials on disk are deleted (FR-8).
+ * (FR-9) and states that the credentials on disk are deleted (FR-8). A retired
+ * Pi account is the exception on both counts: the core never deletes its
+ * directory (the user's own `~/.pi`) and its sessions stay pinned to it.
  */
 export function removeConfirmView(account: Account, sessions: SessionMeta[]): RemoveConfirmView {
+  if (accountIsRetired(account)) {
+    return {
+      title: `Remove ${accountDisplayLabel(account)}?`,
+      credentialsLine: 'Only the saved entry goes — its Pi directory is left untouched.',
+      sessionsLine: null,
+      names: [],
+      moreLabel: null,
+    };
+  }
   const bound = sessions.filter((s) => s.accountId === account.id);
   const rest = bound.length - MAX_CONFIRM_SESSIONS;
   return {

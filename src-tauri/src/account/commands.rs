@@ -70,24 +70,31 @@ fn commit(
 }
 
 /// Undo a mutation by re-applying the snapshot taken before it — `commit`'s own
-/// rollback and `account_remove`'s refused-removal rollback are the same three
-/// assignments, and they move TOGETHER: `apply_remove` drops the row, its
-/// `auth_failed_at` stamp and (when it carried the flag) `default_account_id`,
-/// so putting the record back alone leaves the default moved and the row at
-/// the bottom of a registration-ordered list.
+/// rollback. Everything `apply_remove` touches moves TOGETHER: the row, its
+/// `auth_failed_at` stamp, (when it carried the flag) `default_account_id` and,
+/// for a retired Pi row, its raw persisted copy — so putting the record back
+/// alone leaves the default moved and the row at the bottom of a
+/// registration-ordered list.
 fn restore(inner: &mut AccountInner, previous: RegistrySnapshot) {
     inner.records = previous.0;
     inner.default_account_id = previous.1;
     inner.auth_failed_at = previous.2;
+    inner.retired_records = previous.3;
 }
 
-pub(crate) type RegistrySnapshot = (Vec<AccountRecord>, String, HashMap<String, u64>);
+pub(crate) type RegistrySnapshot = (
+    Vec<AccountRecord>,
+    String,
+    HashMap<String, u64>,
+    HashMap<String, serde_json::Value>,
+);
 
 pub(crate) fn snapshot(inner: &AccountInner) -> RegistrySnapshot {
     (
         inner.records.clone(),
         inner.default_account_id.clone(),
         inner.auth_failed_at.clone(),
+        inner.retired_records.clone(),
     )
 }
 
@@ -338,30 +345,21 @@ pub fn account_set_default(
 /// (credentials included), then repoint every session that was bound to it onto
 /// `default` — with the account lock already released (mod.rs LOCK ORDER).
 ///
-/// pi-provider-auth FR-6/FR-8: a `Pi` account never falls back to `default` —
-/// removal is refused with `ACCOUNT_IN_USE` (carrying the stranded session ids
-/// as `blockedSessions`) while any session is still pinned to it or its setup
-/// PTY is open, and even once removal succeeds its directory is NEVER deleted
-/// (it is the user's own, not one Francois created). The Pi-specific halves —
-/// the setup gate, the post-write recheck and its targeted undo — live in
-/// `pi::remove`.
+/// A retired `Pi` row is removable too — the only way out of a registry that
+/// still names it (as the default, say). Only the row goes: its directory is
+/// the user's own `~/.pi` and is NEVER deleted, and sessions pinned to it keep
+/// their reference (`reassign_account_sessions` skips Pi sessions,
+/// pi-retirement-data-compatibility FR-3).
 #[tauri::command(async)]
 pub fn account_remove(
     app: AppHandle,
     state: State<'_, AccountState>,
     account_id: String,
 ) -> IpcResult<AccountRemoveData> {
-    if let Err(e) = crate::account::resolve_new_session_account(&app, Some(&account_id)) {
-        return e.into();
-    }
-
     let (accounts, config_dir, removed_kind) = {
         let Ok(mut inner) = state.0.lock() else {
             return err(ErrorCode::Internal, "account state is unavailable");
         };
-        // Kept past the write: the Pi post-write recheck below undoes this
-        // removal from it — `apply_remove` touches three things, and
-        // `pi::undo_remove` needs all three to put exactly them back.
         let previous = snapshot(&inner);
         let removed = match apply_remove(&mut inner, &account_id) {
             Ok(r) => r,
@@ -374,14 +372,8 @@ pub fn account_remove(
         (build_list(&inner), config_dir, removed.kind)
     };
 
-    // pi-provider-auth FR-6/FR-8: close the TOCTOU window between the
-    // pre-write check above and the write just committed — a session that
-    // started using this Pi account in between must not have its row
-    // disappear under it. Mirrors `account_trust_pi`'s
-    // pre-check/write/post-write-recheck-and-rollback shape.
     // Only NOW is the removal final, so only now may an in-flight login for
-    // this row be killed: a refused Pi removal above must leave it running,
-    // and a PTY cannot be un-killed. Deferring it is safe because the registry
+    // this row be killed: a PTY cannot be un-killed. Deferring it is safe because the registry
     // itself refuses resurrection — `login::register` returns `None` for a
     // row that is gone, which `settle_success` reports as ACCOUNT_NOT_FOUND
     // rather than re-adding it.
@@ -688,9 +680,8 @@ mod tests {
         assert_eq!(v["accounts"][1]["id"], "a1");
     }
 
-    /// `restore`'s own contract: all three of the things `apply_remove`
-    /// mutates go back, not just the record it hands back. (The Pi refusal
-    /// path uses the TARGETED `pi::undo_remove` instead — tested there.)
+    /// `restore`'s own contract: everything `apply_remove` mutates goes back,
+    /// not just the record it hands back.
     #[test]
     fn restoring_a_snapshot_puts_back_the_flag_the_failures_and_the_row_order() {
         let mut inner = inner_fixture(&["a1", "a2"], "a1");
