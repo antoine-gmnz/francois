@@ -1,8 +1,9 @@
 // Run settings popover — the pure half. Redesign "Graphite & Signal", Figma
 // "20 · Run settings (model · effort · permissions)" (139:7373, light 142:16053).
-// The run chip opens it: the model list with effort inside the selected model's
-// row, then the four permission modes as radio rows, `bypass` tinted with a line
-// saying how long it has been on and where. RunSettingsPopover.tsx renders this.
+// The run chip opens it: Model (one row per family, versions in a segmented
+// track), then its own Effort section for the selected model, then the four
+// permission modes as radio rows, `bypass` tinted with a line saying how long
+// it has been on and where. RunSettingsPopover.tsx renders this.
 
 import type { ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
@@ -80,6 +81,90 @@ export function bypassSinceLine(session: SessionMeta, now: number): string | nul
 export function effortSurvivesSwitch(effort: string | undefined, next: ModelInfo | undefined): boolean {
   if (!effort) return true;
   return (next?.efforts ?? []).includes(effort);
+}
+
+/** One version of a model family — the version label shown in the segmented
+ *  track, carrying the exact `ModelInfo` it stands for. */
+export interface ModelFamilyVersion {
+  label: string;
+  model: ModelInfo;
+}
+
+/** A group of models sharing a family name (`Opus`, `Sonnet`, …), versions
+ *  newest first. A label with no parseable version is its own single-version
+ *  family, keyed by the whole label. */
+export interface ModelFamily {
+  family: string;
+  versions: ModelFamilyVersion[];
+}
+
+/**
+ * Splits a display label into `family` (everything before the first token
+ * that looks like a version number) and `version` (that token plus anything
+ * after it, so a suffix like `(1M)`/`[1m]` rides along as part of the version
+ * label). No such token ⇒ `version: null` — the whole label is the family.
+ */
+function splitFamilyVersion(label: string): { family: string; version: string | null } {
+  const tokens = label.split(' ');
+  const versionIdx = tokens.findIndex((t) => /^\d/.test(t));
+  if (versionIdx <= 0) return { family: label, version: null };
+  return { family: tokens.slice(0, versionIdx).join(' '), version: tokens.slice(versionIdx).join(' ') };
+}
+
+/** The leading dotted numeric run of a version label — `4.5` out of `4.5 (1M)`. */
+function versionSortKey(version: string): number[] {
+  const numeric = version.match(/^[\d.]+/)?.[0] ?? '';
+  return numeric
+    .split('.')
+    .filter((s) => s !== '')
+    .map(Number);
+}
+
+/** Numeric, per-dotted-segment, newest first — `5.10` sorts above `5.2`, unlike a string compare. */
+function compareVersionsDesc(a: string, b: string): number {
+  const ka = versionSortKey(a);
+  const kb = versionSortKey(b);
+  for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+    const diff = (kb[i] ?? 0) - (ka[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * Groups a catalogue into families so the run settings model list shows one
+ * row per family (`Opus`, `Sonnet`, …) instead of every version flattened
+ * out. Families keep the catalogue's first-appearance order (how the core
+ * advertises them); versions within a family sort newest first. Every
+ * `ModelInfo` is preserved exactly — grouping never drops or merges models
+ * across families, only within the same parsed family name.
+ */
+export function groupModelFamilies(models: ModelInfo[]): ModelFamily[] {
+  const order: string[] = [];
+  const map = new Map<string, ModelFamilyVersion[]>();
+  for (const model of models) {
+    const { family, version } = splitFamilyVersion(model.label);
+    if (!map.has(family)) {
+      map.set(family, []);
+      order.push(family);
+    }
+    map.get(family)!.push({ label: version ?? model.label, model });
+  }
+  return order.map((family) => ({
+    family,
+    versions: [...map.get(family)!].sort((a, b) => compareVersionsDesc(a.label, b.label)),
+  }));
+}
+
+/**
+ * The note under a family row: `project default` when the project's default
+ * model is any version in the family, else the brief of the selected version
+ * (falling back to the family's newest), else nothing.
+ */
+export function familyNote(family: ModelFamily, projectDefaultModelId: string | undefined, selectedModelId: string): string {
+  if (projectDefaultModelId !== undefined && family.versions.some((v) => v.model.id === projectDefaultModelId)) return 'project default';
+  const version = family.versions.find((v) => v.model.id === selectedModelId) ?? family.versions[0];
+  return version ? modelNote(version.model, undefined) : '';
 }
 
 /**

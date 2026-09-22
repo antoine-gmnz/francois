@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo, SessionMeta } from '../../../contract/common';
-import { bypassSinceLine, effortSurvivesSwitch, formatSince, modelNote, permissionRows, runSettingsPlacement } from './run-settings';
+import {
+  bypassSinceLine,
+  effortSurvivesSwitch,
+  familyNote,
+  formatSince,
+  groupModelFamilies,
+  modelNote,
+  permissionRows,
+  runSettingsPlacement,
+} from './run-settings';
 
 const model = (over: Partial<ModelInfo> = {}): ModelInfo => ({ id: 'opus', label: 'Opus 5', ...over });
 const session = (over: Partial<SessionMeta> = {}) =>
@@ -54,6 +63,61 @@ describe('effortSurvivesSwitch', () => {
     expect(effortSurvivesSwitch('low', model({ efforts: ['low', 'high'] }))).toBe(true);
     expect(effortSurvivesSwitch('max', model({ efforts: ['low'] }))).toBe(false);
     expect(effortSurvivesSwitch('low', undefined)).toBe(false);
+  });
+});
+
+describe('groupModelFamilies', () => {
+  it('groups by family, newest version first, preserving first-appearance family order', () => {
+    const opus5 = model({ id: 'opus-5', label: 'Opus 5' });
+    const opus55 = model({ id: 'opus-5.5', label: 'Opus 5.5' });
+    const sonnet45 = model({ id: 'sonnet-4.5', label: 'Sonnet 4.5' });
+    const sonnet5 = model({ id: 'sonnet-5', label: 'Sonnet 5' });
+    const families = groupModelFamilies([opus5, opus55, sonnet45, sonnet5]);
+    expect(families.map((f) => f.family)).toEqual(['Opus', 'Sonnet']);
+    expect(families[0]!.versions.map((v) => v.label)).toEqual(['5.5', '5']);
+    expect(families[0]!.versions.map((v) => v.model)).toEqual([opus55, opus5]);
+    expect(families[1]!.versions.map((v) => v.label)).toEqual(['5', '4.5']);
+  });
+
+  it('compares dotted version segments numerically, not lexically', () => {
+    const v2 = model({ id: 'a', label: 'Family 5.2' });
+    const v10 = model({ id: 'b', label: 'Family 5.10' });
+    const families = groupModelFamilies([v2, v10]);
+    expect(families[0]!.versions.map((v) => v.label)).toEqual(['5.10', '5.2']);
+  });
+
+  it('keeps a suffix like (1M) as part of the version label, family unaffected', () => {
+    const families = groupModelFamilies([model({ id: 'a', label: 'Sonnet 4.5 (1M)' }), model({ id: 'b', label: 'Sonnet 5 [1m]' })]);
+    expect(families).toHaveLength(1);
+    expect(families[0]!.family).toBe('Sonnet');
+    expect(families[0]!.versions.map((v) => v.label)).toEqual(['5 [1m]', '4.5 (1M)']);
+  });
+
+  it('gives an unparseable label its own single-version family, never dropped', () => {
+    const codex = model({ id: 'gpt-5-codex', label: 'gpt-5-codex' });
+    const o3 = model({ id: 'o3', label: 'o3' });
+    const families = groupModelFamilies([codex, o3]);
+    expect(families).toEqual([
+      { family: 'gpt-5-codex', versions: [{ label: 'gpt-5-codex', model: codex }] },
+      { family: 'o3', versions: [{ label: 'o3', model: o3 }] },
+    ]);
+  });
+
+  it('preserves every ModelInfo exactly', () => {
+    const m = model({ id: 'opus-5', label: 'Opus 5', brief: 'flagship', efforts: ['low', 'high'] });
+    const families = groupModelFamilies([m]);
+    expect(families[0]!.versions[0]!.model).toBe(m);
+  });
+});
+
+describe('familyNote', () => {
+  it('reads project default across any version in the family', () => {
+    const v55 = model({ id: 'opus-5.5', label: 'Opus 5.5' });
+    const v5 = model({ id: 'opus-5', label: 'Opus 5', brief: 'flagship' });
+    const family = groupModelFamilies([v55, v5])[0]!;
+    expect(familyNote(family, 'opus-5', 'opus-5.5')).toBe('project default');
+    expect(familyNote(family, undefined, 'opus-5.5')).toBe('');
+    expect(familyNote(family, undefined, 'opus-5')).toBe('flagship');
   });
 });
 
