@@ -83,9 +83,11 @@ export const createProjectsSlice: StateCreator<AppState, [], [], ProjectsState> 
     if (first) {
       s.setActiveSessionId(first.id);
       // Same rule as picking a card in the sidebar: arriving at a session means
-      // "read this one", so the dashboard steps aside. Any other tab is left
-      // alone — setActiveSessionId has already dropped the agent tabs.
-      if (get().mainTab === 'overview') s.setMainTab('session');
+      // "read this one", so the dashboard — or the GitHub view, the other
+      // app-scoped destination (app-bar.ts) — steps aside. Any other tab is
+      // left alone — setActiveSessionId has already dropped the agent tabs.
+      const t = get().mainTab;
+      if (t === 'overview' || t === 'github') s.setMainTab('session');
       set({ projectSwitchRollback: null });
       return;
     }

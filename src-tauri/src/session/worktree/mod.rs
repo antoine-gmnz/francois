@@ -15,7 +15,11 @@ use crate::ipc::{err, ok, IpcResult};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-mod git;
+// github-page: widened to pub(crate) so the github domain can call its git-shell
+// helpers directly (`crate::session::worktree::git::remote_name`, …) rather than
+// duplicating them — see the module doc on `pub(crate) mod worktree` in
+// `session/mod.rs`.
+pub(crate) mod git;
 pub use git::path_exists;
 use git::{
     branch_checked_out_at, branch_exists, check_ref_format, compute_status, current_branch,

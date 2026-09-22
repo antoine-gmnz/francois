@@ -7,6 +7,30 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { AccountId, AgentInfo, AgentStep, BlockId, McpServerInfo, PermissionMode, ProjectId, ResponseMode, Result, SessionEvent, SessionId, SessionMeta, SkillInfo, SlashCommandInfo, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
+    GithubCreateWorktreeRequest,
+    GithubCreateWorktreeResponse,
+    GithubFetchResponse,
+    GithubGetCommitRequest,
+    GithubGetCommitResponse,
+    GithubGetPullRequest,
+    GithubGetPullResponse,
+    GithubListBranchesResponse,
+    GithubListCommitsRequest,
+    GithubListCommitsResponse,
+    GithubListPullsRequest,
+    GithubListPullsResponse,
+    GithubMergePullRequest,
+    GithubMergePullResponse,
+    GithubOpenUrlRequest,
+    GithubOpenUrlResponse,
+    GithubPruneRequest,
+    GithubPruneResponse,
+    GithubRepoInfoResponse,
+    GithubUpdatePullBranchRequest,
+    GithubUpdatePullBranchResponse,
+    GithubWorktreeDiskUsageResponse,
+} from '../../contract/github-page';
+import type {
     AccountAddCodexPayload,
     AccountAddCodexResponse,
     AccountAddEndpointPayload,
@@ -579,3 +603,29 @@ export function onShellEvent(cb: (e: ShellEvent) => void): Promise<UnlistenFn> {
 export function onSessionEvent(cb: (e: SessionEvent) => void): Promise<UnlistenFn> {
   return stream<SessionEvent>('francois://session/event', cb);
 }
+
+// ---------- github-page (francois:github:*) ----------
+
+export const githubRepoInfo = (cwd: string) =>
+  ipc<GithubRepoInfoResponse>('github_repo_info', { req: { cwd } });
+export const githubFetch = (cwd: string) => ipc<GithubFetchResponse>('github_fetch', { req: { cwd } });
+export const githubListPulls = (req: GithubListPullsRequest) =>
+  ipc<GithubListPullsResponse>('github_list_pulls', { req });
+export const githubGetPull = (req: GithubGetPullRequest) =>
+  ipc<GithubGetPullResponse>('github_get_pull', { req });
+export const githubUpdatePullBranch = (req: GithubUpdatePullBranchRequest) =>
+  ipc<GithubUpdatePullBranchResponse>('github_update_pull_branch', { req });
+export const githubMergePull = (req: GithubMergePullRequest) =>
+  ipc<GithubMergePullResponse>('github_merge_pull', { req });
+export const githubListCommits = (req: GithubListCommitsRequest) =>
+  ipc<GithubListCommitsResponse>('github_list_commits', { req });
+export const githubGetCommit = (req: GithubGetCommitRequest) =>
+  ipc<GithubGetCommitResponse>('github_get_commit', { req });
+export const githubListBranches = (cwd: string) =>
+  ipc<GithubListBranchesResponse>('github_list_branches', { req: { cwd } });
+export const githubWorktreeDiskUsage = (cwd: string) =>
+  ipc<GithubWorktreeDiskUsageResponse>('github_worktree_disk_usage', { req: { cwd } });
+export const githubCreateWorktree = (req: GithubCreateWorktreeRequest) =>
+  ipc<GithubCreateWorktreeResponse>('github_create_worktree', { req });
+export const githubPrune = (req: GithubPruneRequest) => ipc<GithubPruneResponse>('github_prune', { req });
+export const githubOpenUrl = (req: GithubOpenUrlRequest) => ipc<GithubOpenUrlResponse>('github_open_url', { req });

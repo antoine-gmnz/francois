@@ -114,7 +114,9 @@ export function ProjectScopePicker({ onClose, position }: { onClose: () => void;
     onClose();
     if (row.id !== activeProjectId) setActiveProjectId(row.id);
     setActiveSessionId(sessionId);
-    if (mainTab === 'overview') setMainTab('session');
+    // Same rule as Sidebar.selectSession: picking a session leaves either
+    // app-scoped destination (Overview or GitHub — app-bar.ts).
+    if (mainTab === 'overview' || mainTab === 'github') setMainTab('session');
   };
 
   const onKeyDown = (e: KeyboardEvent) => {

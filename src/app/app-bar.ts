@@ -3,11 +3,14 @@
 
 import type { MainTab } from '../lib/store';
 
-/** The two nav pills. Everything that is not the cross-project dashboard is "Sessions". */
-export type AppNav = 'overview' | 'sessions';
+/** The three nav pills. Everything that is not one of the two app-scoped
+ *  destinations (Overview, GitHub) is "Sessions". */
+export type AppNav = 'overview' | 'github' | 'sessions';
 
 export function activeNav(mainTab: MainTab): AppNav {
-  return mainTab === 'overview' ? 'overview' : 'sessions';
+  if (mainTab === 'overview') return 'overview';
+  if (mainTab === 'github') return 'github';
+  return 'sessions';
 }
 
 /**

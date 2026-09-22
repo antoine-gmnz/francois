@@ -36,6 +36,14 @@ import {
   WORKFLOWS,
   fileDiff,
 } from './fixtures';
+import {
+  GITHUB_BRANCHES,
+  GITHUB_PULL_DETAILS,
+  GITHUB_PULLS,
+  GITHUB_REPO,
+  githubCommitDetail,
+  githubCommitsForRef,
+} from './github-fixtures';
 
 // Every guard here and at the call sites tests the `__FRANCOIS_DEMO__` literal
 // DIRECTLY, never an exported `DEMO` const. Vite's `define` substitutes the
@@ -180,6 +188,7 @@ export function demoInvoke<T>(cmd: string, args?: object): Promise<T> {
 }
 
 function route(cmd: string, a: Args): unknown {
+  const g = a?.req as Args;
   switch (cmd) {
     // ---- app ----
     case 'app_set_window_theme':
@@ -392,6 +401,59 @@ function route(cmd: string, a: Args): unknown {
       return ok(null);
     }
     case 'shell_resize':
+      return ok(null);
+
+    // ---- github-page: one fixed repo (antoine-gmnz/orbit), fed from
+    // GITHUB_* fixtures. `cwd` is accepted but ignored — the demo fleet has
+    // exactly one repo, whatever project/session scope resolved it. The core
+    // commands take one `req` struct, so the fields arrive under `a.req`.
+    case 'github_repo_info':
+      return ok(GITHUB_REPO);
+    case 'github_fetch':
+      return ok({ ...GITHUB_REPO, lastFetchedAt: Date.now() });
+    case 'github_list_pulls':
+      return ok(GITHUB_PULLS);
+    case 'github_get_pull': {
+      const detail = GITHUB_PULL_DETAILS[Number(g?.number)];
+      return detail ? ok(detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such pull request.' } };
+    }
+    case 'github_update_pull_branch':
+      return ok(null);
+    case 'github_merge_pull': {
+      const n = Number(g?.number);
+      const detail = GITHUB_PULL_DETAILS[n];
+      if (!detail) return { ok: false, error: { code: 'NOT_FOUND', message: 'No such pull request.' } };
+      const merged = { state: 'merged' as const, mergedAt: Date.now(), mergedBy: 'you', updatedAt: Date.now() };
+      Object.assign(detail, merged);
+      const summary = GITHUB_PULLS.find((p) => p.number === n);
+      if (summary) Object.assign(summary, merged);
+      return ok({ branchDeleted: Boolean(g?.deleteBranch) });
+    }
+    case 'github_list_commits': {
+      const ref = String(g?.ref ?? GITHUB_REPO.defaultBranch);
+      const commits = githubCommitsForRef(ref);
+      return ok({ ref, totalCount: commits.length, commits });
+    }
+    case 'github_get_commit': {
+      const detail = githubCommitDetail(String(g?.sha ?? ''));
+      return detail ? ok(detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such commit.' } };
+    }
+    case 'github_list_branches':
+      return ok(GITHUB_BRANCHES);
+    case 'github_worktree_disk_usage':
+      return ok({ bytes: 1_400_000_000, worktrees: GITHUB_BRANCHES.filter((b) => b.worktree).length });
+    case 'github_create_worktree': {
+      const branch = String(g?.branch ?? '');
+      const found = GITHUB_BRANCHES.find((b) => b.name === branch);
+      const displayPath = `../orbit-${branch}`;
+      if (found) found.worktree = { path: `~/code/orbit-${branch}`, displayPath, isMain: false, dirty: false };
+      return ok({ path: `~/code/orbit-${branch}`, displayPath, isMain: false, dirty: false });
+    }
+    case 'github_prune': {
+      const branches = (g?.branches as string[] | undefined) ?? [];
+      return ok(branches.map((branch) => ({ branch, removed: true })));
+    }
+    case 'github_open_url':
       return ok(null);
 
     // extensions: the demo fleet ships no providers, so the registry reads

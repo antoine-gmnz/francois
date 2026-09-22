@@ -3,7 +3,7 @@
 // genuinely centered regardless of what either side weighs (the grid is this
 // turn's stand-in for the mock's absolute centering — same result, no overlap
 // math). Left to right:
-//  · LEFT   — the mark + wordmark, then the Overview / Sessions nav;
+//  · LEFT   — the mark + wordmark, then the Overview / Sessions / GitHub nav;
 //  · CENTER — the command search (it IS the palette's trigger);
 //  · RIGHT  — the notification-mute chip, the plan-usage icon (opens a popover
 //             with the meters — too many Claude Code accounts made them too
@@ -66,7 +66,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
   const waiting = sessions.filter((s) => statusNeedsAttention(s.status));
   const nav = activeNav(mainTab);
 
-  const go = (tab: 'overview' | 'session') => {
+  const go = (tab: 'overview' | 'session' | 'github') => {
     if (settingsOpen) toggleSettings(); // the nav leaves Settings
     setFocusedPane('main');
     setMainTab(tab);
@@ -115,6 +115,14 @@ export default function AppBar({ appVersion }: AppBarProps) {
             onClick={() => go('session')}
           >
             Sessions
+          </button>
+          <button
+            type="button"
+            className={nav === 'github' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
+            title="pull requests, commits and branches"
+            onClick={() => go('github')}
+          >
+            GitHub
           </button>
         </nav>
       </div>
