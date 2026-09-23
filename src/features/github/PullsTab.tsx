@@ -40,7 +40,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
       const isCurrent = beginRequest();
       setLoading(true);
       setError(null);
-      const res = await githubListPulls({ cwd });
+      const res = await githubListPulls({ cwd, state: 'open' });
       if (!isCurrent()) return;
       setLoading(false);
       if (res.ok) setPulls(res.data);

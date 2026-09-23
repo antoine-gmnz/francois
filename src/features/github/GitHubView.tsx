@@ -72,9 +72,9 @@ export default function GitHubView(): JSX.Element {
     if (!isCurrent()) return;
     if (branches.ok) setBranchCount(branches.data.filter((b) => !b.isDefault).length);
     if (r.gh === 'ok') {
-      const pulls = await githubListPulls({ cwd: activeCwd });
+      const pulls = await githubListPulls({ cwd: activeCwd, state: 'open' });
       if (!isCurrent()) return;
-      if (pulls.ok) setPullCount(pulls.data.filter((p) => p.state === 'open' || p.state === 'draft').length);
+      if (pulls.ok) setPullCount(pulls.data.length);
     } else {
       setPullCount(null);
     }

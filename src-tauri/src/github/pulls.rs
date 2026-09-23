@@ -411,7 +411,11 @@ fn require_gh(host: &GitHost, root: &str, remote_host: Option<&str>) -> Result<(
 
 // ---------- commands' impls ----------
 
-pub(crate) fn do_list_pulls(cwd: &str, limit: u32) -> Result<Vec<PullSummary>, AppError> {
+pub(crate) fn do_list_pulls(
+    cwd: &str,
+    limit: u32,
+    open_only: bool,
+) -> Result<Vec<PullSummary>, AppError> {
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let limit = limit.clamp(1, 100);
@@ -422,7 +426,7 @@ pub(crate) fn do_list_pulls(cwd: &str, limit: u32) -> Result<Vec<PullSummary>, A
             "pr",
             "list",
             "--state",
-            "all",
+            if open_only { "open" } else { "all" },
             "--limit",
             &limit.to_string(),
             "--json",

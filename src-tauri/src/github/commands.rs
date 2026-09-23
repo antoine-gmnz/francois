@@ -25,6 +25,9 @@ pub struct GithubListPullsRequest {
     pub cwd: String,
     #[serde(default)]
     pub limit: Option<u32>,
+    /// `"open"` or `"all"` (default).
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -94,7 +97,8 @@ pub fn github_fetch(req: GithubScope) -> IpcResult<GithubRepoInfo> {
 
 #[tauri::command(async)]
 pub fn github_list_pulls(req: GithubListPullsRequest) -> IpcResult<Vec<PullSummary>> {
-    do_list_pulls(&req.cwd, req.limit.unwrap_or(30)).into()
+    let open_only = req.state.as_deref() == Some("open");
+    do_list_pulls(&req.cwd, req.limit.unwrap_or(30), open_only).into()
 }
 
 #[tauri::command(async)]

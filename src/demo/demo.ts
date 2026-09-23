@@ -467,7 +467,7 @@ function route(cmd: string, a: Args): unknown {
     case 'github_fetch':
       return ok({ ...GITHUB_REPO, lastFetchedAt: Date.now() });
     case 'github_list_pulls':
-      return ok(GITHUB_PULLS);
+      return ok(g?.state === 'open' ? GITHUB_PULLS.filter((p) => p.state === 'open' || p.state === 'draft') : GITHUB_PULLS);
     case 'github_get_pull': {
       const detail = GITHUB_PULL_DETAILS[Number(g?.number)];
       return detail ? ok(detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such pull request.' } };
