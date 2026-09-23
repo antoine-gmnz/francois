@@ -77,7 +77,7 @@ export default function ViewSwitcher({ active, diffCount, onSelect }: ViewSwitch
       observer.disconnect();
       cancelAnimationFrame(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only: the ResizeObserver covers every later size change
+     
   }, []);
 
   // The badge's digit count changes the diff segment's reveal width even
@@ -85,15 +85,15 @@ export default function ViewSwitcher({ active, diffCount, onSelect }: ViewSwitch
   // waiting on the ResizeObserver to notice the (still-clipped) span resize.
   useLayoutEffect(() => {
     measureReveals();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `measureReveals` closes over fresh refs every render on purpose
+     
   }, [diffCount]);
 
   const geometry = indicatorGeometry(activeIndex, revealWidths);
   if (geometry) lastGeometry.current = geometry;
   const indicatorStyle: CSSProperties = {
-    // eslint-disable-next-line no-restricted-syntax -- runtime geometry: computed from indicatorGeometry, not a design constant
+     
     transform: `translateX(${lastGeometry.current.left}px)`,
-    // eslint-disable-next-line no-restricted-syntax -- runtime geometry: computed from indicatorGeometry, not a design constant
+     
     width: `${lastGeometry.current.width}px`,
   };
 
@@ -142,7 +142,7 @@ export default function ViewSwitcher({ active, diffCount, onSelect }: ViewSwitch
             <Icon size={16} className="view-switcher__icon" />
             <span
               className="view-switcher__reveal"
-              // eslint-disable-next-line no-restricted-syntax -- runtime geometry: this segment's measured natural label+badge width
+               
               style={{ '--reveal-w': `${revealWidths[i] ?? 0}px` } as CSSProperties}
             >
               <span
