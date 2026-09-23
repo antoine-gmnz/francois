@@ -893,3 +893,23 @@ Frontend:
   Settings" works when Settings is already open; clear `lastOutcome` on gate resolved; `COHORTE_TIMEOUT` toast
   is a warning; no fallback to `gate.request.cli` (build `cohorte approve <runId> <approvalId>` or show nothing);
   split `cohorte.css` under 1000 lines.
+
+### Round 2 — 2026-09-23 (verification reviewer: FIX)
+
+Core:
+- **R2-1 [MAJOR]** WSL wrapper does not load nvm (`bash -lc` is non-interactive; `.bashrc` returns early): source
+  `${NVM_DIR:-$HOME/.nvm}/nvm.sh` when present before `exec cohorte "$@"` (args still passed as separate values).
+- **R2-2 [MAJOR]** Unparseable tail lines: log each once (seen-set keyed by a hash of the bytes) with its own log
+  key (a distinct `sub`), never re-logged on every tail pass.
+- **R2-3 [MINOR]** R-6 completion: terminal runs are backfilled lazily (not at startup), one at a time, only after
+  live runs are current.
+- **R2-4 [MINOR]** Job object: clear `KILL_ON_JOB_CLOSE` (or skip it) on the non-timeout path so a detached Cohorte host
+  spawned by a command survives; kill the tree only at the deadline.
+- **R2-5 [MINOR]** Bash meta `started run_<id>` only for launch verbs (`run`, `resume` as the frontend's `LAUNCH_VERBS`).
+- **R2-6 [MINOR]** `LoopGuard::drop` logs (eprintln) when the thread is panicking.
+
+Frontend:
+- **R2-7 [MINOR]** auth hint: fall back to `cohorte auth login` when no `auth.required` cli was seen.
+- **R2-8 [MINOR]** `answeredByLine` returns null for `decision: 'unknown'` (R-1 closures are not "someone else").
+- **R2-9 [MINOR]** doctor `COHORTE_TIMEOUT` in Settings shows a note: "cohorte doctor did not finish — known issue in
+  Cohorte 3.0.0-dev.1 on Windows when run without a terminal; run it in a shell" (only for that error code).
