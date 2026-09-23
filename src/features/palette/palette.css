@@ -91,6 +91,7 @@
 }
 
 .palette-row {
+  align-items: center;
   gap: var(--space-10);
   height: 36px;
   padding: 0 var(--space-10);

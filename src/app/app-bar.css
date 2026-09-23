@@ -46,12 +46,15 @@
   color: var(--text-primary);
 }
 .app-bar__nav {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
 }
 .app-bar__nav-item {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: var(--space-6);
@@ -69,9 +72,38 @@
 }
 .app-bar__nav-item--on,
 .app-bar__nav-item--on:hover {
-  background: var(--bg-raised);
   color: var(--text-primary);
   font: var(--type-ui-medium);
+}
+/* The active item's fill, drawn once under the nav and slid between items —
+   the view switcher's motion (view-switcher.css). Transitions wait for
+   `.app-bar__nav--ready` (a frame after mount) so the first paint never slides. */
+.app-bar__nav-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 30px;
+  border-radius: var(--radius-5);
+  background: var(--bg-raised);
+  pointer-events: none;
+}
+.app-bar__nav-indicator--hidden {
+  opacity: 0;
+}
+.app-bar__nav--ready .app-bar__nav-indicator {
+  transition:
+    transform 260ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    width 260ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    opacity 160ms ease;
+}
+.app-bar__nav--ready .app-bar__nav-item {
+  transition: color 160ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-bar__nav--ready .app-bar__nav-indicator,
+  .app-bar__nav--ready .app-bar__nav-item {
+    transition: none;
+  }
 }
 /* The attention count on Overview — violet, because it counts sessions blocked on you. */
 .app-bar__badge {
