@@ -4,6 +4,9 @@
 // fold-all and filter, and a footer carrying the context meter and `Review N
 // files`. Clicking a file opens the DIFF tab on that file (diff-focus.ts).
 //
+// Above the footer, SessionPullCard surfaces the PR open on the session's
+// branch (status, merge, links) — owned by features/github.
+//
 // Read-only on purpose: staging and committing stay in the DIFF tab, where the
 // hunks are in front of you.
 
@@ -11,6 +14,7 @@ import { useMemo, useState } from 'react';
 import type { SessionMeta } from '../../../contract/common';
 import type { DiffFileSummary } from '../../../contract/diff-view';
 import type { SessionPanelSectionProps } from '../../app/session-panel/sections';
+import { SessionPullCard } from '../github/SessionPullCard';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
@@ -113,6 +117,8 @@ export default function ChangesSection({ session, context }: SessionPanelSection
           )
         )}
       </SidePanelBody>
+
+      <SessionPullCard session={session} />
 
       <SidePanelFooter>
         {context && <MeterRow label="Context" fraction={context.fraction} figure={context.figure} />}
