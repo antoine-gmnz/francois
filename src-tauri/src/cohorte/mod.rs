@@ -36,6 +36,8 @@ mod documents;
 mod gate;
 mod payloads;
 mod projection;
+pub(crate) mod python_rpc;
+pub mod python_service;
 mod sanitize;
 mod watcher;
 mod wire;

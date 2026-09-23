@@ -4,7 +4,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen }));
 import * as api from './api';
 
-it('binds every CohorteCommandMap entry to cohorte_<verb> with the request as `req` (FR-50)', async () => {
+it('binds Cohorte actions to the Python service adapter with the request as `req`', async () => {
   const root = '/code/orbit';
   const run = { root, runId: 'run_abc' };
   const gate = { ...run, approvalId: 'apr_1' };
@@ -26,8 +26,14 @@ it('binds every CohorteCommandMap entry to cohorte_<verb> with the request as `r
   ];
   for (const [call, cmd, req] of calls) {
     await call();
-    expect(invoke).toHaveBeenLastCalledWith(cmd, { req });
+    expect(invoke).toHaveBeenLastCalledWith(cmd.replace('cohorte_', 'cohorte_v3_'), { req });
   }
+  await api.cohorteFeatures(root);
+  expect(invoke).toHaveBeenLastCalledWith('cohorte_v3_features', { req: { root } });
+  await api.cohorteStart({ root, featureId: 'feature_1' });
+  expect(invoke).toHaveBeenLastCalledWith('cohorte_v3_start', { req: { root, featureId: 'feature_1' } });
+  await api.cohorteAnswer({ ...gate, answer: 'Option A' });
+  expect(invoke).toHaveBeenLastCalledWith('cohorte_v3_answer', { req: { ...gate, answer: 'Option A' } });
 });
 
 it('subscribes to francois://cohorte/event and hands over the payload', async () => {

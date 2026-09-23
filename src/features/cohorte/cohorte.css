@@ -258,6 +258,22 @@
 .cohorte-gate__actions--compact {
   gap: var(--space-6);
 }
+.cohorte-gate__answer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+.cohorte-gate__answer input,
+.cohorte-gate__answer select {
+  min-width: 0;
+  flex: 1 1 160px;
+  padding: var(--space-6) var(--space-8);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-5);
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+}
 .cohorte-gate__hints {
   display: flex;
   flex-direction: column;

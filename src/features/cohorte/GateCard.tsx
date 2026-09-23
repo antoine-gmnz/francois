@@ -5,17 +5,19 @@
 //            the focused/hovered action, the deny confirm, the step outcome.
 //   compact  (frame 25 panel) head + summary + sm buttons + the approve CLI.
 //
-// Every action is the CLI through the core; the hint shows the exact argv.
+// Actions with a CLI hint show that command; local service actions have none.
 
 import { useState } from 'react';
 import type { CohorteGate, CohorteGateActionId, CohorteRun } from '../../../contract/cohorte-integration';
 import { formatRelativeTime } from '../../../contract/fleet-board';
 import { useCohorteStore } from '../../lib/cohorteStore';
+import { cohorteAnswer } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { Button } from '../../ui/Button';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
 import { answerGate, copyCli } from './actions';
+import { showToast } from '../palette/palette';
 import { FindingRow } from './CohorteParts';
 import './cohorte.css';
 import { ACTION_KEYS, ACTION_VARIANT, actionLabel, compactActionLabel, gateHint, gateKindLabel, gateQuestion, gateSummary, runSpecName } from './gate-view';
@@ -40,9 +42,39 @@ export function GateCard({ run, gate, variant, sessionId, keysActive = false }: 
   const outcome = useCohorteStore((s) => s.lastOutcome[run.runId] ?? null);
   const [armed, setArmed] = useState(false);
   const [hover, setHover] = useState<CohorteGateActionId | null>(null);
+  const [answer, setAnswer] = useState('');
+  const [answering, setAnswering] = useState(false);
   const now = useElapsedClock(true, 30_000);
   const deny = gate.actions.find((a) => a.id === 'deny');
   const kind = gate.request.kind;
+  const questionForm = kind === 'question' && (
+    <form className="cohorte-gate__answer" onSubmit={(event) => {
+      event.preventDefault();
+      if (!answer.trim() || answering) return;
+      setAnswering(true);
+      void cohorteAnswer({ root: run.projectRoot, runId: run.runId, approvalId: gate.request.approvalId, answer: answer.trim() })
+        .then((result) => {
+          if (result.ok) {
+            if (result.data.run) useCohorteStore.getState().upsertRun(result.data.run);
+            setAnswer('');
+          } else showToast(result.error.message, 'error');
+        })
+        .catch((cause) => showToast(cause instanceof Error ? cause.message : String(cause), 'error'))
+        .finally(() => setAnswering(false));
+    }}>
+      {gate.request.options?.length ? (
+        <select aria-label="Answer" value={answer} onChange={(event) => setAnswer(event.target.value)}>
+          <option value="">Choose an answer</option>
+          {gate.request.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      ) : (
+        <input aria-label="Answer" value={answer} maxLength={4000} onChange={(event) => setAnswer(event.target.value)} placeholder="Your answer" />
+      )}
+      <Button type="submit" size="sm" variant="secondary" disabled={!answer.trim() || answering || busy !== null}>
+        {answering ? 'Sending…' : 'Send answer'}
+      </Button>
+    </form>
+  );
 
   const run1 = (id: CohorteGateActionId) => {
     if (id === 'deny' && deny?.stopsRun && !armed) {
@@ -128,6 +160,7 @@ export function GateCard({ run, gate, variant, sessionId, keysActive = false }: 
           <span className="cohorte-gate__age">{waiting}</span>
         </div>
         <p className="cohorte-gate__summary">{gateSummary(gate)}</p>
+        {questionForm}
         <div className="cohorte-gate__actions cohorte-gate__actions--compact">{buttons}</div>
         {confirm}
         {steps}
@@ -163,6 +196,7 @@ export function GateCard({ run, gate, variant, sessionId, keysActive = false }: 
         gate.request.reason && gateQuestion(gate, runSpecName(run)) !== gate.request.reason && <p className="cohorte-gate__reason">{gate.request.reason}</p>
       )}
       {showPreview && <PreviewBlock text={preview.text} truncated={preview.truncated} />}
+      {questionForm}
       {gate.morePending > 0 && <p className="cohorte-gate__more">+{gate.morePending} more pending</p>}
       <div className="cohorte-gate__actions">
         {buttons}

@@ -632,12 +632,19 @@ export const githubPrune = (req: GithubPruneRequest) => ipc<GithubPruneResponse>
 export const githubOpenUrl = (req: GithubOpenUrlRequest) => ipc<GithubOpenUrlResponse>('github_open_url', { req });
 
 // ---------- cohorte-integration (francois:cohorte:*) ----------
-// FR-50: one wrapper per CohorteCommandMap entry. Every command takes its
-// request as `req` (the github-page binding) and resolves to Result<T>.
+// Keep the existing UI contract while routing actions to the Python cohorte/1
+// service adapter. Every command takes its request as `req`.
 
 function cohorte<K extends keyof CohorteCommandMap>(cmd: K, req: CohorteCommandMap[K]['req']): Promise<CohorteCommandMap[K]['res']> {
-  return ipc<CohorteCommandMap[K]['res']>(cmd, { req });
+  return ipc<CohorteCommandMap[K]['res']>(`cohorte_v3_${cmd.slice('cohorte_'.length)}`, { req });
 }
+
+export interface CohorteFeatureChoice { id: string; title: string; status: string }
+export const cohorteFeatures = (root: string) => ipc<Result<CohorteFeatureChoice[]>>('cohorte_v3_features', { req: { root } });
+export const cohorteStart = (req: { root: string; featureId: string; stage?: string }) =>
+  ipc<Result<import('../../contract/cohorte-integration').CohorteRun>>('cohorte_v3_start', { req });
+export const cohorteAnswer = (req: { root: string; runId: string; approvalId: string; answer: string }) =>
+  ipc<Result<import('../../contract/cohorte-integration').CohorteCommandOutcome>>('cohorte_v3_answer', { req });
 
 export const cohorteDetect = (req: CohorteDetectRequest) => cohorte('cohorte_detect', req);
 export const cohorteDoctor = (req: CohorteRootRequest) => cohorte('cohorte_doctor', req);

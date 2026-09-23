@@ -1,8 +1,8 @@
 // cohorte-integration FR-80..FR-82 — Settings · PROJECT · Cohorte (frames 27
 // `158:15589` and 28 `159:15655`). Detected: the detection card with the doctor
 // rows, the four Francois-side switches and the read-only gate policy. Not
-// detected: the empty state with `Run cohorte init` — the one write Francois
-// ever triggers, through the CLI. Francois never writes to .cohorte/ itself.
+// detected: the empty state offers project registration through the local
+// Python service. François does not write Cohorte's state directly.
 
 import { Check, Lock, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -26,7 +26,7 @@ import { checkGlyph, COHORTE_DOCS_URL, detectionHead, detectionSegments, doctorC
 import { detectProject, useProjectDetection } from './useCohorte';
 
 const SWITCHES: { key: keyof CohortePrefs; title: string; description: string }[] = [
-  { key: 'showPanelTab', title: 'Show Cohorte in the session panel', description: 'A fifth panel tab, only in projects where .cohorte/ exists.' },
+  { key: 'showPanelTab', title: 'Show Cohorte in the session panel', description: 'A fifth panel tab for projects registered with Cohorte.' },
   {
     key: 'gatesInNeedsYou',
     title: 'Surface gates in Needs you',
@@ -110,14 +110,14 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
           Cohorte
         </h1>
         <p className="cohorte-settings__lede">
-          {mode === 'not-detected' ? `No .cohorte/ in ${abbreviate(root, home)}` : detection?.dir ? abbreviate(detection.dir, home) : ' '}
+          {mode === 'not-detected' ? `Project not registered: ${abbreviate(root, home)}` : abbreviate(root, home)}
         </p>
       </header>
       {mode === 'detected' && detection && (
         <Detected detection={detection} doctor={doctor} doctorRunning={doctorRunning} doctorNote={doctorNote} onDoctor={runDoctor} />
       )}
       {mode === 'not-detected' && detection && <NotDetected detection={detection} root={root} />}
-      {mode === 'checking' && <p className="cohorte-settings__foot">Checking for .cohorte/…</p>}
+      {mode === 'checking' && <p className="cohorte-settings__foot">Checking the Cohorte service…</p>}
     </div>
   );
 }
@@ -168,7 +168,7 @@ function Detected({
           {detection.state === 'detected' && (
             <Button size="sm" variant="secondary" disabled={doctorRunning} onClick={onDoctor}>
               {doctorRunning && <StateIcon kind="running" size={12} />}
-              Run doctor
+              Check service
             </Button>
           )}
         </div>
@@ -176,7 +176,7 @@ function Detected({
         {((doctor?.rows.length ?? 0) > 0 || !detection.hasProjectFile) && (
           <div className="cohorte-detect__checks">
             {!detection.hasProjectFile && (
-              <CheckRow status="warning" command=".cohorte/project.yaml missing" summary="run cohorte init" />
+              <CheckRow status="warning" command="project not registered" summary="Register project" />
             )}
             {doctor?.rows.map((row) => (
               <CheckRow key={row.command} status={row.status} command={row.command} summary={row.summary} title={row.remediation} />
@@ -199,17 +199,17 @@ function Detected({
         <div className="cohorte-policy__head">
           <span className="cohorte-toggle__title">Steps that always ask you first</span>
           <span className="cohorte-spacer" />
-          <code className="cohorte-policy__hint">cohorte config get</code>
+          <code className="cohorte-policy__hint">cohorte/1 projects.get</code>
         </div>
         <div className="cohorte-policy__tags">
           {policy ? policy.gatedSteps.map((step) => <Tag key={step}>{step}</Tag>) : <span className="cohorte-policy__none">—</span>}
         </div>
         <p className="cohorte-toggle__description">
-          Everything else runs unattended. Policy lives in {policy?.file ?? '.cohorte/config.yaml'} — François reads it, never edits it.
+          François reads the project policy from {policy?.file ?? 'the Cohorte service'}.
         </p>
       </div>
 
-      <p className="cohorte-settings__foot">François never writes to .cohorte/ — every action here maps to a CLI command.</p>
+      <p className="cohorte-settings__foot">François sends project and run actions to the local Cohorte service.</p>
     </div>
   );
 }
@@ -254,31 +254,31 @@ function NotDetected({ detection, root }: { detection: CohorteDetection; root: s
         </span>
         <h2 className="cohorte-empty__title">Cohorte is not set up here</h2>
         <p className="cohorte-empty__body">
-          François looks for a .cohorte/ directory in the project root. Until it exists, the Cohorte tab, the run grouping and the gate inbox stay hidden for this project.
+          François looks for this project in the local Cohorte service. Register it to show runs and requests here.
         </p>
         <div className="cohorte-empty__code">
           <div className="cohorte-empty__line">
             <span className="cohorte-empty__prompt">$ </span>
             <span className="cohorte-empty__cmd">cohorte init</span>
             <span className="cohorte-spacer" />
-            <span className="cohorte-empty__comment">creates .cohorte/</span>
+            <span className="cohorte-empty__comment">registers the project</span>
           </div>
           <div className="cohorte-empty__line">
             <span className="cohorte-empty__prompt">$ </span>
             <span className="cohorte-empty__cmd">cohorte doctor</span>
             <span className="cohorte-spacer" />
-            <span className="cohorte-empty__comment">checks runtime + providers</span>
+            <span className="cohorte-empty__comment">checks service health</span>
           </div>
         </div>
         <div className="cohorte-empty__actions">
           <Button
             variant="primary"
             disabled={!installed || busy !== null}
-            title={installed ? 'Runs cohorte init in the project root' : 'Install Cohorte first: npm i -g cohorte'}
+            title={installed ? 'Registers this project with the Cohorte service' : 'Install the Python Cohorte service first'}
             onClick={init}
           >
             {busy === 'init' && <StateIcon kind="running" size={12} />}
-            Run cohorte init
+            Register project
           </Button>
           <Button variant="secondary" disabled={busy !== null} onClick={check}>
             Check again

@@ -1,7 +1,7 @@
 // cohorte-integration — the imperative half: answering a gate (FR-42..FR-44 via
 // the core), run controls (FR-46), opening/closing the run view (FR-70), the
 // log fetch (FR-69) and the once-per-root policy read (FR-74). Every command
-// is the CLI through the core; this module only tracks busy/outcome state and
+// is routed through the local service; this module tracks busy/outcome state and
 // words the result (outcome.ts).
 
 import type { CohorteCommandResponse, CohorteGateActionId, CohorteRun } from '../../../contract/cohorte-integration';
