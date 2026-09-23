@@ -509,6 +509,11 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       const s2 = transcriptReducer(s1, { t: 'optimisticUser', blockId: 'u1', text: 'hi again' });
       expect(s2).toBe(s1); // no-op, not a duplicate insert
     });
+
+    it('stamps the send time when the action carries one (prompt-send animation + header clock)', () => {
+      const s = transcriptReducer(S0, { t: 'optimisticUser', blockId: 'u1', text: 'hi', at: 1234 });
+      expect(s.blocks).toEqual([{ kind: 'user', blockId: 'u1', isStreaming: false, text: 'hi', at: 1234 }]);
+    });
   });
 
   describe('msgUser', () => {

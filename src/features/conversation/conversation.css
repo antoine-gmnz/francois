@@ -577,6 +577,13 @@
 .composer-send:hover {
   background: color-mix(in srgb, var(--action-primary) 88%, var(--bg-canvas));
 }
+/* The press half of the send animation — the prompt card's landing is the other. */
+.composer-send:not(.is-disabled) {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.composer-send:not(.is-disabled):active {
+  transform: scale(0.9);
+}
 .composer-send.is-disabled {
   cursor: default;
   background: var(--bg-strong);
@@ -821,6 +828,28 @@
   background: var(--bg-card);
   border: 1px solid var(--line-subtle);
   border-radius: var(--radius-6);
+}
+/* A prompt that was just sent lands: it rises into place with a slight
+   overshoot, and its border flashes the ivory of the Send button that launched
+   it before settling back to the hairline. Transform + opacity only, so it
+   never reflows the transcript. Only `turn--sent` (Turn.tsx) — never a restored
+   or remounted turn. The global reduce-motion override in styles.css flattens it. */
+.turn--sent .turn__col {
+  transform-origin: 100% 100%;
+  animation:
+    turn-sent-land 240ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both,
+    turn-sent-flash 520ms var(--ease-out) both;
+}
+@keyframes turn-sent-land {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+@keyframes turn-sent-flash {
+  from {
+    border-color: var(--action-primary);
+  }
 }
 
 /* Who spoke · on what · then a rule out to the cost of the turn. This is one of

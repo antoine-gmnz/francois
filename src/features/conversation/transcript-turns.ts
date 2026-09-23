@@ -142,6 +142,21 @@ export function turnStartedAt(turn: TranscriptTurn): number | null {
   return null;
 }
 
+/** How recent a prompt's stamp must be for it to count as "just sent". */
+export const FRESH_PROMPT_MS = 2000;
+
+/**
+ * True iff this is a prompt the user sent a moment ago — the only turn that
+ * lands with the send animation. Judged against the block's own stamp rather
+ * than "first mount", because a restored transcript and a turn remounted by
+ * scrolling back both mount for the first time without being new.
+ */
+export function isFreshPrompt(turn: TranscriptTurn, now: number): boolean {
+  if (turn.role !== 'user') return false;
+  const at = turnStartedAt(turn);
+  return at !== null && now - at < FRESH_PROMPT_MS;
+}
+
 /**
  * transcript-perf FR-4: true iff any block in the turn is still streaming.
  * The caller (ConversationView) uses this to decide whether a turn's `now`

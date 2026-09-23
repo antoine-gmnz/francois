@@ -9,6 +9,7 @@ import {
   formatClock,
   formatTurnDuration,
   groupTurns,
+  isFreshPrompt,
   toolResultChips,
   turnIsStreaming,
   turnMeta,
@@ -290,5 +291,27 @@ describe('toolResultChips (design 9a: a result is chips, not a trailing sentence
     expect(toolResultChips('the run was cancelled upstream')).toEqual([
       { tone: 'plain', text: 'the run was cancelled upstream' },
     ]);
+  });
+});
+
+// prompt-send animation: only a prompt that was JUST sent lands with motion —
+// a transcript restored on resume, or a turn remounted by scrolling back, must
+// not replay the animation for every old message.
+describe('isFreshPrompt', () => {
+  const [prompt] = groupTurns([user('u1', 10_000)]) as TranscriptTurn[];
+  const [reply] = groupTurns([assistant('a1', 10_000)]) as TranscriptTurn[];
+
+  it('is true for a prompt stamped within the window', () => {
+    expect(isFreshPrompt(prompt!, 10_500)).toBe(true);
+  });
+  it('is false once the prompt is older than the window', () => {
+    expect(isFreshPrompt(prompt!, 12_500)).toBe(false);
+  });
+  it('is false for a reply, however fresh', () => {
+    expect(isFreshPrompt(reply!, 10_000)).toBe(false);
+  });
+  it('is false for an unstamped prompt — nothing proves it is new', () => {
+    const [bare] = groupTurns([user('u2')]) as TranscriptTurn[];
+    expect(isFreshPrompt(bare!, 10_000)).toBe(false);
   });
 });

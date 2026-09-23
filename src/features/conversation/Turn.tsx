@@ -9,10 +9,11 @@
 // The grouping and every derived string are pure (./transcript-turns); this
 // file is DOM assembly only.
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { AssistantBody, SubagentBanner, ToolRail, UserBody } from './Block';
 import {
   formatClock,
+  isFreshPrompt,
   turnMeta,
   turnStartedAt,
   type TranscriptTurn,
@@ -53,9 +54,12 @@ function TurnImpl({
   // A prompt is stamped with the wall clock it was sent at; a reply with what it
   // cost. Same slot, because they answer the same question about the turn.
   const right = turn.role === 'user' ? (startedAt === null ? '' : formatClock(startedAt)) : meta;
+  // Decided once, at mount: the class must not drop off mid-animation when the
+  // stamp ages past the window on a later render.
+  const [sent] = useState(() => isFreshPrompt(turn, Date.now()));
 
   return (
-    <div className={`turn turn--${turn.role}`}>
+    <div className={`turn turn--${turn.role}${sent ? ' turn--sent' : ''}`}>
       <span className="turn__gutter">{GUTTER[turn.role]}</span>
       <div className="turn__col">
         <div className="turn__head">
