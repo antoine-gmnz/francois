@@ -488,13 +488,20 @@
   color: var(--text-secondary);
   font: var(--type-ui);
 }
-/* A turn finished while another session was active — cleared on select. */
-.roster-row__unseen {
+/* A turn finished while another session was active — cleared on select.
+   Figma 127:28 "Finished tag": the success tint with its edge. */
+.roster-row__finished {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--state-success);
+  padding: 0 5px;
+  border: 1px solid var(--tint-success-line);
+  border-radius: var(--radius-4);
+  background: var(--tint-success);
+  color: var(--state-success-text);
+  font: var(--type-mono-small);
+  font-weight: 500;
+  white-space: nowrap;
 }
 .roster-row__lead {
   flex: 1;

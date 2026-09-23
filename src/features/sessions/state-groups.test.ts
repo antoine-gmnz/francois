@@ -179,3 +179,24 @@ describe('groupSessionsByState — Cohorte gates (cohorte-integration FR-85)', (
     expect(nodes.map((n) => n.state)).toEqual(['attention']);
   });
 });
+
+describe('groupSessionsByState — finished, unseen turns', () => {
+  it('floats unseen rows to the top of IDLE, keeping order within each half', () => {
+    const nodes = groupSessionsByState(
+      [
+        session({ id: 'a', status: 'idle' }),
+        session({ id: 'b', status: 'idle' }),
+        session({ id: 'c', status: 'idle' }),
+        session({ id: 'd', status: 'idle' }),
+      ],
+      undefined,
+      { c: true, d: true },
+    );
+    expect(nodes[0].sessions.map((s) => s.id)).toEqual(['c', 'd', 'a', 'b']);
+  });
+
+  it('leaves the order alone when nothing is unseen', () => {
+    const nodes = groupSessionsByState([session({ id: 'a', status: 'idle' }), session({ id: 'b', status: 'idle' })], undefined, {});
+    expect(nodes[0].sessions.map((s) => s.id)).toEqual(['a', 'b']);
+  });
+});

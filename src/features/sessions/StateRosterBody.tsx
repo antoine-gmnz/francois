@@ -374,7 +374,8 @@ function RunningBody({ session, tags, now }: { session: SessionMeta; tags: JSX.E
 }
 
 /** IDLE / ARCHIVED: one line, plus the uncommitted work when there is any. A
- *  turn that finished while you were elsewhere carries a dot until you open it. */
+ *  turn that finished while you were elsewhere reads as news until you open it:
+ *  the Done glyph, the name at full strength, and a `done` tag (Figma 127:28). */
 function QuietBody({
   session,
   state,
@@ -393,11 +394,11 @@ function QuietBody({
   return (
     <>
       <div className="roster-row__head">
-        <StateIcon status={session.status} />
-        <span className="roster-row__name roster-row__name--quiet truncate">{session.name}</span>
-        {unseen && <span className="roster-row__unseen" role="img" aria-label="Turn finished" title="Turn finished" />}
+        {unseen ? <StateIcon kind="done" title="Turn finished" /> : <StateIcon status={session.status} />}
+        <span className={`roster-row__name truncate${unseen ? '' : ' roster-row__name--quiet'}`}>{session.name}</span>
         {tags}
         <span className="app-flex-spacer" />
+        {unseen && <span className="roster-row__finished" title="Turn finished while you were elsewhere — open to clear">done</span>}
         <span className="roster-row__age" title={state === 'archived' ? 'done' : 'idle'}>
           {formatRelativeTime(session.lastActivityAt, now)}
         </span>
