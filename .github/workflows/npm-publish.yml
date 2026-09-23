@@ -98,10 +98,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .assets
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir .assets \
-            --pattern 'francois-darwin-universal.tar.gz' \
-            --pattern 'francois-linux-x64.tar.gz' \
-            --pattern 'francois-win32-x64.zip'
+          # Fetch by public download URL — the same URL the postinstall uses — not
+          # `gh release download`, which reads the release object's `assets` array.
+          # GitHub has served that array empty while every asset was uploaded and
+          # downloadable (v0.50.0), failing the publish with "no assets to download".
+          for name in francois-darwin-universal.tar.gz francois-linux-x64.tar.gz francois-win32-x64.zip; do
+            curl -fsSL --retry 5 --retry-all-errors -o ".assets/$name" \
+              "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name"
+          done
 
           entry() { echo "\"$1\": { \"name\": \"$2\", \"sha256\": \"$(sha256sum ".assets/$2" | cut -d' ' -f1)\" }"; }
           cat > manifest.json <<EOF
