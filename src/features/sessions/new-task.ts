@@ -2,27 +2,60 @@
 // "19 · New task" (139:6889; light 142:15513). The dialog is the old create
 // sheet regrouped around the task: what the agent should do, where (project +
 // model, then "Where it works" — the current checkout or a dedicated worktree),
-// and everything else folded under one "Advanced" line that states its current
-// values so it rarely needs opening. NewTaskDialog.tsx renders it.
+// and everything else folded under "Advanced", which recaps every value it
+// holds so it rarely needs opening. The session name sits outside the fold —
+// it is the one setting nearly every task touches. NewTaskDialog.tsx renders it.
 
-import type { PermissionMode } from '../../../contract/common';
+import type { ClaudeRuntime, PermissionMode, ResponseMode } from '../../../contract/common';
 import { permissionRows } from './run-settings';
 import type { WorktreeMode } from './worktree';
 
+/** One entry of the folded Advanced recap: `Account  Work`. */
+export interface RecapItem {
+  key: string;
+  label: string;
+  value: string;
+  /** Off its default — rendered brighter so a changed setting reads at a glance. */
+  changed: boolean;
+}
+
 /**
- * The folded Advanced line: `Advanced · Work account · api-default profile ·
- * accept edits`. Parts that are at their default and say nothing are left out —
- * no profile, the default permission mode.
+ * The folded Advanced recap — every setting under the fold with its current
+ * value, so the section only needs opening to change one. Runtime shows only
+ * where there is a choice (Windows), base ref only while a worktree is created.
  */
-export function advancedSummary(parts: { accountLabel: string | null; profileName: string | null; permissionMode: PermissionMode }): string {
-  const bits = ['Advanced'];
-  if (parts.accountLabel) bits.push(parts.accountLabel);
-  if (parts.profileName) bits.push(`${parts.profileName} profile`);
-  if (parts.permissionMode !== 'default') {
-    const row = permissionRows().find((r) => r.mode === parts.permissionMode);
-    bits.push((row?.label ?? parts.permissionMode).toLowerCase());
+export function advancedRecap(parts: {
+  accountLabel: string | null;
+  accountIsDefault: boolean;
+  profileName: string | null;
+  effort: string;
+  defaultEffort: string | null;
+  showEffort: boolean;
+  runtime: ClaudeRuntime | null;
+  permissionMode: PermissionMode;
+  responseMode: ResponseMode;
+  allowGit: boolean;
+  baseRef: string | null;
+}): RecapItem[] {
+  const items: RecapItem[] = [];
+  if (parts.accountLabel) items.push({ key: 'account', label: 'Account', value: parts.accountLabel, changed: !parts.accountIsDefault });
+  items.push({ key: 'profile', label: 'Profile', value: parts.profileName ?? 'none', changed: parts.profileName !== null });
+  if (parts.showEffort) {
+    const value = parts.effort || (parts.defaultEffort ? `default · ${parts.defaultEffort}` : 'default');
+    items.push({ key: 'effort', label: 'Effort', value, changed: parts.effort !== '' });
   }
-  return bits.join(' · ');
+  if (parts.runtime) items.push({ key: 'runtime', label: 'Runtime', value: parts.runtime, changed: parts.runtime !== 'native' });
+  const permission = permissionRows().find((r) => r.mode === parts.permissionMode);
+  items.push({
+    key: 'permissions',
+    label: 'Permissions',
+    value: (permission?.label ?? parts.permissionMode).toLowerCase(),
+    changed: parts.permissionMode !== 'default',
+  });
+  items.push({ key: 'response', label: 'Response', value: parts.responseMode, changed: parts.responseMode !== 'default' });
+  items.push({ key: 'git', label: 'Git', value: parts.allowGit ? 'auto-approve' : 'ask', changed: parts.allowGit });
+  if (parts.baseRef !== null) items.push({ key: 'base', label: 'Base', value: parts.baseRef, changed: false });
+  return items;
 }
 
 /**
