@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionMeta } from '../../../contract/common';
 import type { ProjectMeta } from '../../../contract/projects';
-import { groupKeyFor, pathLeaf } from './roster-groups';
+import { groupKeyFor, pathLeaf, sortSessionsByProject } from './roster-groups';
 
 function session(over: Partial<SessionMeta> & { id: string }): SessionMeta {
   return {
@@ -86,3 +86,35 @@ describe('groupKeyFor', () => {
   });
 });
 
+
+describe('sortSessionsByProject', () => {
+  const projects = [project('p1', 'zeta'), project('p2', 'Alpha'), project('p3', 'mid')];
+
+  it('clusters sessions by project name, case-insensitive, keeping incoming order inside a project', () => {
+    const sessions = [
+      session({ id: 'z1', projectId: 'p1' }),
+      session({ id: 'a1', projectId: 'p2' }),
+      session({ id: 'm1', projectId: 'p3' }),
+      session({ id: 'z2', projectId: 'p1' }),
+      session({ id: 'a2', projectId: 'p2' }),
+    ];
+    expect(sortSessionsByProject(sessions, projects).map((s) => s.id)).toEqual(['a1', 'a2', 'm1', 'z1', 'z2']);
+  });
+
+  it('places project-less sessions by their cwd leaf and never interleaves same-named projects', () => {
+    const twins = [...projects, project('p4', 'mid', '/other/mid')];
+    const sessions = [
+      session({ id: 'x', projectId: 'p4' }),
+      session({ id: 'y', projectId: 'p3' }),
+      session({ id: 'w', cwd: '/tmp/beta' }),
+      session({ id: 'v', projectId: 'p4' }),
+    ];
+    expect(sortSessionsByProject(sessions, twins).map((s) => s.id)).toEqual(['w', 'y', 'x', 'v']);
+  });
+
+  it('does not mutate its input', () => {
+    const sessions = [session({ id: 'z', projectId: 'p1' }), session({ id: 'a', projectId: 'p2' })];
+    sortSessionsByProject(sessions, projects);
+    expect(sessions.map((s) => s.id)).toEqual(['z', 'a']);
+  });
+});
