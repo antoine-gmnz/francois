@@ -30,6 +30,7 @@ import { createSessionPanelSlice, type SessionPanelSlice } from './sessionPanelS
 import { createSessionsSlice, type SessionsSlice } from './sessionsStore';
 import { createThemeSlice, type Theme, type ThemeSlice } from './theme';
 import { createUpdateSlice, type UpdateSlice } from './updateStore';
+import { markFinishedTurns } from './unseen-turns';
 import { createUsageSlice, type UsageSlice } from './usageStore';
 
 export type { Pane, RightPane, MainTab, Theme };
@@ -98,4 +99,18 @@ useStore.subscribe(
     }
   },
   { equalityFn: shallow },
+);
+
+// The single detection point for the roster's "turn finished" dot: every path
+// that rewrites `sessions` (patchStatus, run.state, upsertSession, setSessions)
+// lands here with the previous array, so no write path has to know about it.
+// `markFinishedTurns` returns the same object on a no-op, and the guard below
+// skips the write, so an unrelated session event mints nothing.
+useStore.subscribe(
+  (state) => state.sessions,
+  (sessions, prev) => {
+    const state = useStore.getState();
+    const unseenTurns = markFinishedTurns(prev, sessions, state.activeSessionId, state.unseenTurns);
+    if (unseenTurns !== state.unseenTurns) useStore.setState({ unseenTurns });
+  },
 );

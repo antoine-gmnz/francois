@@ -373,7 +373,8 @@ function RunningBody({ session, tags, now }: { session: SessionMeta; tags: JSX.E
   );
 }
 
-/** IDLE / ARCHIVED: one line, plus the uncommitted work when there is any. */
+/** IDLE / ARCHIVED: one line, plus the uncommitted work when there is any. A
+ *  turn that finished while you were elsewhere carries a dot until you open it. */
 function QuietBody({
   session,
   state,
@@ -388,11 +389,13 @@ function QuietBody({
   derived: SessionDerived | undefined;
 }) {
   const work = workLine(derived);
+  const unseen = useStore((s) => s.unseenTurns[session.id] === true);
   return (
     <>
       <div className="roster-row__head">
         <StateIcon status={session.status} />
         <span className="roster-row__name roster-row__name--quiet truncate">{session.name}</span>
+        {unseen && <span className="roster-row__unseen" role="img" aria-label="Turn finished" title="Turn finished" />}
         {tags}
         <span className="app-flex-spacer" />
         <span className="roster-row__age" title={state === 'archived' ? 'done' : 'idle'}>

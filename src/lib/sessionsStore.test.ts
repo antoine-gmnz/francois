@@ -435,3 +435,50 @@ describe('patchStatus/patchError/patchUsage no-op bails', () => {
     expect(useStore.getState().sessions[0].lastActivityAt).toBe(stamped);
   });
 });
+
+describe('unseen finished turns', () => {
+  beforeEach(() => {
+    useStore.setState({ unseenTurns: {} });
+    useStore.getState().setSessions([{ ...meta('a'), status: 'running' }, { ...meta('b'), status: 'running' }]);
+  });
+
+  it('does not mark on initial hydration', () => {
+    useStore.setState({ sessions: [], unseenTurns: {} });
+    useStore.getState().setSessions([meta('a')]);
+    expect(useStore.getState().unseenTurns).toEqual({});
+  });
+
+  it('marks a session whose turn finishes (patchStatus)', () => {
+    useStore.getState().patchStatus('a', 'idle');
+    expect(useStore.getState().unseenTurns).toEqual({ a: true });
+  });
+
+  it('marks a session whose turn finishes (run.state)', () => {
+    useStore.getState().applyRuntimeEvent({
+      sessionId: 'a',
+      event: { kind: 'run.state', state: 'idle' } as RuntimeEventPayload,
+    } as Parameters<ReturnType<typeof useStore.getState>['applyRuntimeEvent']>[0]);
+    expect(useStore.getState().unseenTurns).toEqual({ a: true });
+  });
+
+  it('does not mark the active session', () => {
+    useStore.getState().setActiveSessionId('a');
+    useStore.getState().patchStatus('a', 'idle');
+    expect(useStore.getState().unseenTurns).toEqual({});
+  });
+
+  it('clears the mark when the session is selected', () => {
+    useStore.getState().patchStatus('a', 'idle');
+    useStore.getState().patchStatus('b', 'idle');
+    useStore.getState().setActiveSessionId('a');
+    expect(useStore.getState().unseenTurns).toEqual({ b: true });
+    useStore.getState().reassignActiveSessionId('b');
+    expect(useStore.getState().unseenTurns).toEqual({});
+  });
+
+  it('drops the mark when the session is removed', () => {
+    useStore.getState().patchStatus('a', 'idle');
+    useStore.getState().removeSession('a');
+    expect(useStore.getState().unseenTurns).toEqual({});
+  });
+});

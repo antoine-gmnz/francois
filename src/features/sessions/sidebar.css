@@ -488,6 +488,14 @@
   color: var(--text-secondary);
   font: var(--type-ui);
 }
+/* A turn finished while another session was active — cleared on select. */
+.roster-row__unseen {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-success);
+}
 .roster-row__lead {
   flex: 1;
   min-width: 0;
