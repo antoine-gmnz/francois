@@ -13,6 +13,7 @@ import type { SessionMeta, SessionStatus } from '../../../contract/common';
 // group-tier.ts (which imports RosterStateNode from here) — erased by tsc,
 // no runtime circular import.
 import type { RosterGroupTier } from './group-tier';
+import type { UnseenTurns } from '../../lib/unseen-turns';
 
 /**
  * The four buckets. `attention` is everything that is stalled ON THE USER —
@@ -90,8 +91,14 @@ export function stateGroupKey(state: SessionState): string {
  *
  * Sessions keep their incoming order inside a bucket, so the roster still
  * tracks whatever order the fleet store imposes rather than inventing a second.
+ * The one exception: IDLE rows whose turn finished while you were elsewhere
+ * (`unseen`) float to the top of IDLE — they are the ones with news.
  */
-export function groupSessionsByState(sessions: readonly SessionMeta[], forceAttention?: ReadonlySet<string>): RosterStateNode[] {
+export function groupSessionsByState(
+  sessions: readonly SessionMeta[],
+  forceAttention?: ReadonlySet<string>,
+  unseen?: UnseenTurns,
+): RosterStateNode[] {
   const byState = new Map<SessionState, SessionMeta[]>();
   for (const session of sessions) {
     // cohorte-integration FR-85: a session whose Cohorte run waits at a gate
@@ -105,8 +112,15 @@ export function groupSessionsByState(sessions: readonly SessionMeta[], forceAtte
     key: stateGroupKey(state),
     state,
     label: STATE_LABEL[state],
-    sessions: byState.get(state)!,
+    sessions: state === 'idle' && unseen ? floatUnseen(byState.get(state)!, unseen) : byState.get(state)!,
   }));
+}
+
+/** `sessions` with the unseen ones first — a stable partition, not a sort. */
+function floatUnseen(sessions: SessionMeta[], unseen: UnseenTurns): SessionMeta[] {
+  const fresh = sessions.filter((s) => unseen[s.id]);
+  if (fresh.length === 0) return sessions;
+  return [...fresh, ...sessions.filter((s) => !unseen[s.id])];
 }
 
 /** The painted order, flattened — what the keyboard cursor indexes (a collapsed

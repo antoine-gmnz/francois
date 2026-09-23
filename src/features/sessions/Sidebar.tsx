@@ -113,7 +113,12 @@ export default function Sidebar({ home }: { home: string }) {
   // cohorte-integration FR-85/FR-86: gated runs pull their origin session into
   // NEEDS YOU; step sessions nest under their run's origin (both pref-gated).
   const cohorte = useCohorteRoster(inScope);
-  const stateNodes = useMemo(() => groupSessionsByState(inScope, cohorte.forced), [inScope, cohorte.forced]);
+  // A turn that finished while you were elsewhere floats to the top of IDLE.
+  const unseenTurns = useStore((s) => s.unseenTurns);
+  const stateNodes = useMemo(
+    () => groupSessionsByState(inScope, cohorte.forced, unseenTurns),
+    [inScope, cohorte.forced, unseenTurns],
+  );
   const [collapsedStates, setCollapsedStates] = useState<ReadonlySet<string>>(loadCollapsedStates);
 
   // roster-group-tier: the innermost tier, nested inside every state band —
