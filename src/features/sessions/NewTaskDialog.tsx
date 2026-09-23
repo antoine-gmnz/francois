@@ -6,12 +6,14 @@
 //   What should the agent do?   — optional; sent as the first message once the
 //                                 session exists (parked in the pending queue so
 //                                 it shows until the core mints the turn)
+//   Name                        — outside the fold: nearly every task sets it
 //   Project · Model             — the project (or, with no project, the directory)
 //   Where it works              — Current checkout / Dedicated worktree cards over
 //                                 the worktree group's off / create modes, with
 //                                 "attach to an existing worktree" as a link
-//   Advanced · …                — folded: name, account, profile, effort, runtime,
-//                                 permissions, response, git, base ref
+//   Advanced                    — folded: account, profile, effort, runtime,
+//                                 permissions, response, git, base ref — with a
+//                                 recap of every value shown while it is closed
 //
 // Every state, default and guard is the create sheet's own, unchanged: project
 // defaults (useProjectDefaults), the worktree group (useWorktreeGroup), the
@@ -43,8 +45,7 @@ import { AccountField } from './AccountField';
 import { DirectoryField } from './DirectoryField';
 import { ModelCatalogStatus } from '../../ui/ModelCatalogStatus';
 import ModelPicker from './ModelPicker';
-import { NameField } from './NameField';
-import { advancedSummary, firstPrompt, isStartChord, whereCard } from './new-task';
+import { advancedRecap, firstPrompt, isStartChord, whereCard } from './new-task';
 import { modelSelectionMismatch, profileRuntimeMismatch } from './new-session-form';
 import { ProfileField } from './ProfileField';
 import { RUNTIME_CHIP_OPTIONS, submitSettingsOnEnter, type SessionSettingsCarryOver } from './session-settings';
@@ -243,8 +244,6 @@ export function NewTaskDialog({
     !projectRootMissing &&
     !worktree.blocked;
   const cwdIsWsl = isWslUncPath(cwd);
-  // A blank name blocks Start, and the name lives under Advanced — so open it.
-  const showAdvanced = advancedOpen || (cwd.trim() !== '' && name.trim() === '');
 
   const createSession = async (overrideCwd: string, worktreeOpts?: { branch: string; baseRef: string; adopt?: boolean }) => {
     if (retiredDefault || isPiAccount || profileIsRetired(selectedProfile)) return;
@@ -349,6 +348,19 @@ export function NewTaskDialog({
               value={prompt}
               placeholder="Describe the task — or leave it empty to start an idle session"
               onChange={(e) => setPrompt(e.target.value)}
+            />
+          </label>
+
+          <label className="new-task__field">
+            <span className="new-task__label">Name</span>
+            <input
+              className="new-task__input"
+              value={name}
+              placeholder="session name"
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameTouched(true);
+              }}
             />
           </label>
 
@@ -462,21 +474,34 @@ export function NewTaskDialog({
           )}
 
           <div className="new-task__advanced">
-            <button type="button" className="new-task__advanced-toggle" aria-expanded={showAdvanced} onClick={() => setAdvancedOpen(!showAdvanced)}>
-              <Icon name={showAdvanced ? 'chevron-down' : 'chevron-right'} size={12} />
-              <span className="truncate">
-                {advancedSummary({ accountLabel: selectedAccount?.label ?? null, profileName: selectedProfile?.name ?? null, permissionMode })}
-              </span>
+            <button type="button" className="new-task__advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(!advancedOpen)}>
+              <Icon name={advancedOpen ? 'chevron-down' : 'chevron-right'} size={12} />
+              Advanced
             </button>
-            {showAdvanced && (
+            {!advancedOpen && (
+              <button type="button" className="new-task__recap" aria-label="Advanced settings" onClick={() => setAdvancedOpen(true)}>
+                {advancedRecap({
+                  accountLabel: selectedAccount?.label ?? null,
+                  accountIsDefault: accountId === DEFAULT_ACCOUNT_ID,
+                  profileName: selectedProfile?.name ?? null,
+                  effort,
+                  defaultEffort: selectedModel?.defaultEffort ?? null,
+                  showEffort: modelEfforts.length > 0,
+                  runtime: IS_WINDOWS ? runtime : null,
+                  permissionMode,
+                  responseMode,
+                  allowGit,
+                  baseRef: worktree.mode === 'create' && probe?.isRepo ? worktree.baseRef.trim() || probe.defaultBranch || 'main' : null,
+                }).map((item) => (
+                  <span key={item.key} className={item.changed ? 'new-task__recap-item new-task__recap-item--changed' : 'new-task__recap-item'}>
+                    <span className="new-task__recap-label">{item.label}</span>
+                    <span className="new-task__recap-value">{item.value}</span>
+                  </span>
+                ))}
+              </button>
+            )}
+            {advancedOpen && (
               <div className="new-task__advanced-body">
-                <NameField
-                  name={name}
-                  onChange={(value) => {
-                    setName(value);
-                    setNameTouched(true);
-                  }}
-                />
                 {modelEfforts.length > 0 && (
                   <div>
                     <label className="new-session-modal__label">EFFORT</label>

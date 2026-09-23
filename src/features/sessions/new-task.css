@@ -87,6 +87,24 @@
   color: var(--text-faint);
 }
 
+/* The name input wears the select face below it. */
+.new-task__input {
+  height: 38px;
+  padding: 0 var(--space-12);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+  outline: none;
+  color: var(--text-primary);
+  font: var(--type-ui);
+}
+.new-task__input:focus {
+  border-color: var(--line-strong);
+}
+.new-task__input::placeholder {
+  color: var(--text-faint);
+}
+
 /* A styled face with the native <select> laid invisibly over it, so picking
    stays the platform's accessible control. */
 .new-task__select {
@@ -259,6 +277,45 @@
 }
 .new-task__advanced-toggle:hover {
   color: var(--text-primary);
+}
+/* The closed fold's recap: every value under it, the changed ones brighter.
+   Clicking it opens the fold. */
+.new-task__recap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin-top: calc(-1 * var(--space-6));
+  padding: 0 0 0 var(--space-20);
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.new-task__recap-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-6);
+  height: 22px;
+  padding: 3px var(--space-8);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-4);
+  font: var(--type-small);
+}
+.new-task__recap-label {
+  color: var(--text-faint);
+}
+.new-task__recap-value {
+  color: var(--text-muted);
+}
+.new-task__recap-item--changed {
+  border-color: var(--line-default);
+}
+.new-task__recap-item--changed .new-task__recap-value {
+  color: var(--text-primary);
+}
+.new-task__recap:hover .new-task__recap-item {
+  border-color: var(--line-strong);
 }
 .new-task__advanced-body {
   display: flex;
