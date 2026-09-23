@@ -1,0 +1,324 @@
+/* cohorte-integration — Settings · Cohorte (frames 27/28); shared pieces live in cohorte.css. */
+
+/* ---------- Settings · Cohorte (FR-80..FR-82; frames 27/28) ---------- */
+
+.cohorte-nav-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+.cohorte-nav-dot--on {
+  background: var(--state-success);
+}
+.cohorte-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  max-width: 680px;
+  font: var(--type-ui);
+  color: var(--text-secondary);
+}
+.cohorte-settings__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.cohorte-settings__crumbs {
+  font: var(--type-small);
+  color: var(--text-faint);
+  white-space: pre;
+}
+.cohorte-settings__heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font: var(--type-heading);
+  letter-spacing: var(--tracking-heading);
+  color: var(--text-primary);
+}
+.cohorte-settings__lede {
+  margin: 0;
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+.cohorte-settings__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+.cohorte-settings__form--tight {
+  gap: var(--space-16);
+}
+.cohorte-settings__foot {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-detect {
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+.cohorte-detect__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16);
+}
+.cohorte-detect__badge {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-5);
+}
+.cohorte-detect__badge--success {
+  background: var(--tint-success);
+  color: var(--state-success);
+}
+.cohorte-detect__badge--danger {
+  background: var(--tint-danger);
+  color: var(--state-danger);
+}
+.cohorte-detect__badge--attention {
+  background: var(--tint-attention);
+  color: var(--state-attention);
+}
+.cohorte-detect__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.cohorte-detect__title {
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+}
+.cohorte-detect__sub {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cohorte-detect__seg--first {
+  color: var(--text-secondary);
+}
+.cohorte-detect__sep {
+  color: var(--text-disabled);
+  white-space: pre;
+}
+.cohorte-detect__checks {
+  border-top: 1px solid var(--line-subtle);
+}
+.cohorte-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  height: 34px;
+  padding: 0 var(--space-16);
+}
+.cohorte-check__glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.cohorte-check__glyph--ok {
+  color: var(--state-success);
+}
+.cohorte-check__glyph--warning {
+  color: var(--state-attention);
+}
+.cohorte-check__glyph--error {
+  color: var(--state-danger);
+}
+.cohorte-check__command {
+  font: var(--type-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.cohorte-check__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.cohorte-toggle--policy {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-10);
+}
+.cohorte-toggle__text {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cohorte-toggle__title {
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.cohorte-toggle__description {
+  max-width: 520px;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-policy__head {
+  display: flex;
+  align-items: center;
+}
+.cohorte-policy__hint {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-policy__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+.cohorte-policy__none {
+  color: var(--text-faint);
+}
+.cohorte-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-14);
+  padding: 40px var(--space-32);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+  text-align: center;
+}
+.cohorte-empty__glyph {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-8);
+  background: var(--bg-card);
+}
+.cohorte-empty__title {
+  margin: 0;
+  font: var(--type-heading);
+  letter-spacing: var(--tracking-heading);
+  color: var(--text-primary);
+}
+.cohorte-empty__body {
+  max-width: 440px;
+  margin: 0;
+  font: var(--type-body);
+  color: var(--text-muted);
+}
+.cohorte-empty__code {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-12) var(--space-14);
+  border-radius: var(--radius-5);
+  background: var(--bg-terminal);
+  text-align: left;
+}
+.cohorte-empty__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+}
+.cohorte-empty__prompt {
+  font: var(--type-mono-code);
+  color: var(--text-disabled);
+  white-space: pre;
+}
+.cohorte-empty__cmd {
+  margin-left: calc(-1 * var(--space-10));
+  font: var(--type-mono-code);
+  color: var(--text-primary);
+}
+.cohorte-empty__comment {
+  font: var(--type-mono-small);
+  color: var(--text-disabled);
+}
+.cohorte-empty__actions {
+  display: flex;
+  gap: var(--space-8);
+}
+.cohorte-empty__meta {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-empty__sep {
+  color: var(--text-disabled);
+  white-space: pre;
+}
+.cohorte-enables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.cohorte-enables__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+}
+.cohorte-enables__icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--text-faint);
+}
+.cohorte-enables__text {
+  display: flex;
+  flex-direction: column;
+}
+.cohorte-enables__title {
+  font: var(--type-ui);
+  color: var(--text-muted);
+}
+.cohorte-enables__body {
+  font: var(--type-small);
+  color: var(--text-disabled);
+}
+
+/* R2-9: why doctor did not finish. */
+.cohorte-detect__note {
+  margin: 0;
+  padding: var(--space-10) var(--space-16);
+  border-top: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  color: var(--state-attention-text);
+}
+
+/* The policy note is one line across the block (frame 27). */
+.cohorte-toggle--policy .cohorte-toggle__description {
+  max-width: none;
+}
+
+/* The doctor chip reads in full; the sub-line is what gives way (frame 27). */
+.cohorte-detect__head .cohorte-chip {
+  flex-shrink: 0;
+}

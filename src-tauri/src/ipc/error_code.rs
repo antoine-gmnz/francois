@@ -16,9 +16,9 @@
 // that need a `&str` without going through serde; a test pins the two together
 // so they cannot drift.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     SessionNotFound,
@@ -223,6 +223,26 @@ pub enum ErrorCode {
     GhUnavailable,
     /// github-page: gh ran and exited non-zero (detail: { code, stderr })
     GhFailed,
+    /// cohorte-integration: no .cohorte/ for that root (detail: { startDir })
+    CohorteNotDetected,
+    /// cohorte-integration: `cohorte` does not resolve on the login-shell PATH
+    CohorteCliMissing,
+    /// cohorte-integration: version outside the supported range (detail: { version, supportedRange })
+    CohorteCliIncompatible,
+    /// cohorte-integration: a CLI spawn was killed at its deadline (detail: { cli, timeoutMs })
+    CohorteTimeout,
+    /// cohorte-integration: stdout past the cap (detail: { cli, capBytes })
+    CohorteOutputCapped,
+    /// cohorte-integration: stdout is not a document Francois can read (detail: { cli })
+    CohorteOutputInvalid,
+    /// cohorte-integration: exit code other than 0/3/4 (detail: { cli, code, stderr })
+    CohorteCommandFailed,
+    /// cohorte-integration: exit 3 on the FIRST step (detail: { cli, cohorteCode, message })
+    CohorteRejected,
+    /// cohorte-integration: runId unknown to status (detail: { runId })
+    CohorteRunNotFound,
+    /// cohorte-integration: the approval is no longer pending (resolved elsewhere)
+    CohorteGateNotPending,
     Internal,
 }
 
@@ -335,6 +355,16 @@ impl ErrorCode {
         ErrorCode::ProfileRuntimeMismatch,
         ErrorCode::GhUnavailable,
         ErrorCode::GhFailed,
+        ErrorCode::CohorteNotDetected,
+        ErrorCode::CohorteCliMissing,
+        ErrorCode::CohorteCliIncompatible,
+        ErrorCode::CohorteTimeout,
+        ErrorCode::CohorteOutputCapped,
+        ErrorCode::CohorteOutputInvalid,
+        ErrorCode::CohorteCommandFailed,
+        ErrorCode::CohorteRejected,
+        ErrorCode::CohorteRunNotFound,
+        ErrorCode::CohorteGateNotPending,
         ErrorCode::Internal,
     ];
 
@@ -447,6 +477,16 @@ impl ErrorCode {
             ErrorCode::ProfileRuntimeMismatch => "PROFILE_RUNTIME_MISMATCH",
             ErrorCode::GhUnavailable => "GH_UNAVAILABLE",
             ErrorCode::GhFailed => "GH_FAILED",
+            ErrorCode::CohorteNotDetected => "COHORTE_NOT_DETECTED",
+            ErrorCode::CohorteCliMissing => "COHORTE_CLI_MISSING",
+            ErrorCode::CohorteCliIncompatible => "COHORTE_CLI_INCOMPATIBLE",
+            ErrorCode::CohorteTimeout => "COHORTE_TIMEOUT",
+            ErrorCode::CohorteOutputCapped => "COHORTE_OUTPUT_CAPPED",
+            ErrorCode::CohorteOutputInvalid => "COHORTE_OUTPUT_INVALID",
+            ErrorCode::CohorteCommandFailed => "COHORTE_COMMAND_FAILED",
+            ErrorCode::CohorteRejected => "COHORTE_REJECTED",
+            ErrorCode::CohorteRunNotFound => "COHORTE_RUN_NOT_FOUND",
+            ErrorCode::CohorteGateNotPending => "COHORTE_GATE_NOT_PENDING",
             ErrorCode::Internal => "INTERNAL",
         }
     }

@@ -280,7 +280,42 @@ fn meta_write(input: &Value, _result: &str) -> String {
     )
 }
 
-fn meta_bash(_input: &Value, result: &str) -> String {
+/// cohorte-integration R-7: the run id a `cohorte` invocation printed. Claude
+/// Code's Bash block never exposes its output to the frontend, so the meta
+/// carries it (`started run_<id>`) for the session↔run `launched` link (FR-30).
+fn cohorte_run_id(command: &str, result: &str) -> Option<String> {
+    static RUN_ID: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let invokes = command.split([';', '|', '&', '\n']).any(|segment| {
+        let mut words = segment
+            .split_whitespace()
+            .skip_while(|w| w.contains('=') && !w.starts_with('-'));
+        let program = match words.next() {
+            Some("npx") => words.find(|w| !w.starts_with('-')),
+            other => other,
+        };
+        let is_cohorte = program.is_some_and(|p| {
+            let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
+            matches!(name, "cohorte" | "cohorte.cmd" | "cohorte.exe")
+        });
+        // R2-5: only the launch verbs start a run — FR-30 rule 1, the same set as
+        // the frontend's LAUNCH_VERBS (src/features/cohorte/tool-row.ts).
+        is_cohorte
+            && matches!(
+                words.find(|w| !w.starts_with('-')),
+                Some("run" | "loop" | "build" | "fix" | "review")
+            )
+    });
+    if !invokes {
+        return None;
+    }
+    let re = RUN_ID.get_or_init(|| regex::Regex::new(r"\brun_[0-9a-f]{6,32}\b").unwrap());
+    re.find(result).map(|m| m.as_str().to_string())
+}
+
+fn meta_bash(input: &Value, result: &str) -> String {
+    if let Some(run_id) = cohorte_run_id(str_field(input, "command").unwrap_or(""), result) {
+        return format!("started {run_id}");
+    }
     if result.trim().is_empty() {
         "done".into()
     } else {
@@ -377,6 +412,58 @@ mod tests {
         assert_eq!(
             tool_meta("Write", &json!({ "content": "a\nb" }), ""),
             "2 lines"
+        );
+    }
+
+    /// cohorte-integration R-7: a `cohorte` launch surfaces its run id in the
+    /// meta; any other command (even one printing a run id) is unchanged.
+    #[test]
+    fn bash_meta_carries_a_cohorte_run_id() {
+        let out = "Detached run run_7fa3c1deadbeef0123456789abcdef01\nhost pid 42\n";
+        for cmd in [
+            "cohorte run auth-retry --detach",
+            "npx cohorte run auth-retry --detach",
+            "cd /r && FOO=1 cohorte run x",
+            r"C:\nvm4w\nodejs\cohorte.cmd run x",
+        ] {
+            assert_eq!(
+                tool_meta("Bash", &json!({ "command": cmd }), out),
+                "started run_7fa3c1deadbeef0123456789abcdef01",
+                "{cmd}"
+            );
+        }
+        assert_eq!(
+            tool_meta("Bash", &json!({ "command": "echo cohorte" }), out),
+            "2 lines"
+        );
+        // R2-5: a non-launch verb printing a run id is not a launch
+        assert_eq!(
+            tool_meta(
+                "Bash",
+                &json!({ "command": "cohorte status run_7fa3c1deadbeef" }),
+                out
+            ),
+            "2 lines"
+        );
+        assert_eq!(
+            tool_meta(
+                "Bash",
+                &json!({ "command": "cohorte resume run_7fa3c1deadbeef" }),
+                out
+            ),
+            "2 lines"
+        );
+        assert_eq!(
+            tool_meta(
+                "Bash",
+                &json!({ "command": "cohorte loop auth-retry --detach" }),
+                out
+            ),
+            "started run_7fa3c1deadbeef0123456789abcdef01"
+        );
+        assert_eq!(
+            tool_meta("Bash", &json!({ "command": "cohorte status" }), "ok\n"),
+            "1 lines"
         );
     }
 

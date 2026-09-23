@@ -78,6 +78,27 @@ async function fire(trigger: NotifyTrigger): Promise<void> {
   }
 }
 
+/** cohorte-integration FR-87: whether the window has focus (the FR-9 tracker). */
+export function isWindowFocused(): boolean {
+  return windowFocused;
+}
+
+/**
+ * cohorte-integration FR-87: one OS notification through this feature's path —
+ * the same permission cache, title and click-to-focus as a session trigger.
+ * `sessionId` is where a click lands.
+ */
+export async function notifyDesktop(body: string, sessionId?: SessionId): Promise<void> {
+  if (!(await ensurePermission())) return;
+  const id = nextId++;
+  if (sessionId) lastNotifiedSessionId = sessionId;
+  try {
+    sendNotification({ title: NOTIFICATION_TITLE, body, extra: sessionId ? { sessionId } : {}, id });
+  } catch {
+    /* FR-11: a throw never breaks the caller */
+  }
+}
+
 /** audio-cues FR-4: registered as a sink instead of subscribing directly. */
 function handleTrigger(trigger: NotifyTrigger): void {
   const ctx: GateContext = {

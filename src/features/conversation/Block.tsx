@@ -9,7 +9,7 @@
 // agent trail keep saying the same thing the same way; only the container
 // around them differs.
 
-import { memo, useState, type KeyboardEvent } from 'react';
+import { memo, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
   formatElapsed,
   toolBody,
@@ -23,6 +23,8 @@ import type { AssistantConversationBlock } from '../../../contract/conversation-
 import type { RuntimeToolCall, SessionId } from '../../../contract/common';
 import type { StepDetail } from '../../../contract/command-inspect';
 import CommandBlock from '../commands/CommandCard';
+import { classifyCohorteTool } from '../cohorte/tool-row';
+import { useCohorteStore } from '../../lib/cohorteStore';
 import { toneVar } from '../../lib/tone';
 import { stepDetail as fetchStepDetail } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
@@ -228,7 +230,18 @@ function ToolRowImpl({
   /** command-inspect FR-16: threaded to the mounted StepDetailPanel. */
   onOpenShell?: () => void;
 }) {
-  const chips = toolResultChips(b.meta);
+  // cohorte-integration FR-66: a `cohorte …` Bash call reads as a Cohorte row;
+  // a launching call that printed a run id records FR-30's `launched` link.
+  const cohorte = useMemo(
+    () => classifyCohorteTool(b.tool, b.summary, `${b.meta ?? ''}
+${b.execution?.outputText ?? ''}`),
+    [b.tool, b.summary, b.meta, b.execution?.outputText],
+  );
+  const launchedRef = cohorte?.launchedRef ?? null;
+  useEffect(() => {
+    if (sessionId && launchedRef) useCohorteStore.getState().recordLaunch(sessionId, launchedRef);
+  }, [sessionId, launchedRef]);
+  const chips = toolResultChips(cohorte?.meta ?? b.meta);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<StepDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -286,11 +299,11 @@ function ToolRowImpl({
         <span className="toolrow__glyph" style={{ color: toneVar(b.glyphColor) }}>
           {b.glyph}
         </span>
-        <span className="toolrow__name">{b.tool}</span>
+        <span className="toolrow__name">{cohorte ? 'Cohorte' : b.tool}</span>
         {/* The full call stays reachable on hover — the target column truncates,
             and a truncated path is exactly when you want the whole one. */}
         <span className="toolrow__target" title={toolBody(b.tool, b.summary)}>
-          {b.summary}
+          {cohorte ? cohorte.target : b.summary}
         </span>
         {/* One cell for the whole right edge: the meta chips and, after them,
             the disclosure. They have to share the grid's 4th column — as a 5th

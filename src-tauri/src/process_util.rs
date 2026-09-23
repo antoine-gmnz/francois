@@ -160,7 +160,7 @@ pub fn grok_program() -> String {
 
 /// One implementation for both, which is what moving them here bought: the
 /// second one used to be a copy of the first with the constant swapped.
-fn resolve_cli_program(bin: &str) -> String {
+pub(crate) fn resolve_cli_program(bin: &str) -> String {
     // Non-Windows installs are a real binary (or a shebang script, which
     // `execvp` handles); the bare name is correct and PATH does the work.
     if !cfg!(windows) {

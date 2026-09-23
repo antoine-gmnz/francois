@@ -6,8 +6,8 @@
 // crate relative to it.
 
 use francois::{
-    account, diagnostics, diff, dnd, editor, extensions, github, permissions, profiles, project,
-    session, shell, update, usage, window,
+    account, cohorte, diagnostics, diff, dnd, editor, extensions, github, permissions, profiles,
+    project, session, shell, update, usage, window,
 };
 
 use tauri::RunEvent;
@@ -49,6 +49,8 @@ fn main() {
         // log-tail streams. Another LEAF lock — nothing under extensions/ ever
         // takes Engine.sessions, and no other domain takes this one.
         .manage(extensions::ExtensionState::default())
+        // cohorte-integration §6: detection/probe caches + the per-root watchers.
+        .manage(cohorte::CohorteState::default())
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
             // core-architecture-wave3 FR-9: the crate root is the one place that
@@ -228,6 +230,20 @@ fn main() {
             github::github_create_worktree,
             github::github_prune,
             github::github_open_url,
+            cohorte::cohorte_detect,
+            cohorte::cohorte_doctor,
+            cohorte::cohorte_policy,
+            cohorte::cohorte_init,
+            cohorte::cohorte_watch,
+            cohorte::cohorte_list_runs,
+            cohorte::cohorte_get_run,
+            cohorte::cohorte_run_log,
+            cohorte::cohorte_approve,
+            cohorte::cohorte_send_to_fix,
+            cohorte::cohorte_deny,
+            cohorte::cohorte_pause,
+            cohorte::cohorte_resume,
+            cohorte::cohorte_cancel,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,

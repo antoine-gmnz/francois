@@ -99,6 +99,86 @@ pub(crate) struct OwnedChild {
     job: windows::Job,
 }
 impl CommandBuilder {
+    /// [`CommandBuilder::run_bounded`], but at the deadline the whole process
+    /// TREE dies (a Windows job object / a unix process group) and whatever
+    /// stdout arrived before it is kept. cohorte-integration FR-6b: `cohorte`
+    /// on Windows is an npm `.cmd` shim — killing `cmd.exe` alone leaves its
+    /// `node` holding the pipes, so the pumps (and the caller) would block
+    /// until node exits on its own; and dev.1's `doctor --json` prints its
+    /// whole document, then lingers.
+    pub(crate) fn run_bounded_tree(
+        mut self,
+        timeout: Duration,
+        output_cap: usize,
+    ) -> super::BoundedRun {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            self.cmd.process_group(0);
+        }
+        if !self.stdout_set {
+            self.cmd.stdout(Stdio::piped());
+        }
+        if !self.stderr_set {
+            self.cmd.stderr(Stdio::piped());
+        }
+        let mut child = match self.cmd.spawn() {
+            Ok(c) => c,
+            Err(_) => {
+                return super::BoundedRun {
+                    status: None,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                    spawn_failed: true,
+                    timed_out: false,
+                }
+            }
+        };
+        #[cfg(windows)]
+        // R2-4: a PLAIN job (no KILL_ON_JOB_CLOSE): the tree dies only at the
+        // deadline, so a detached host a command spawned outlives this call.
+        let job = windows::Job::attach_plain(&child).ok();
+        let stdout_pump = child
+            .stdout
+            .take()
+            .map(|s| std::thread::spawn(move || super::pump_capped(s, output_cap)));
+        let stderr_pump = child
+            .stderr
+            .take()
+            .map(|s| std::thread::spawn(move || super::pump_capped(s, output_cap)));
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                _ => break None,
+            }
+        };
+        if status.is_none() {
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                let _ = job.terminate();
+            }
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let stdout = stdout_pump.and_then(|p| p.join().ok()).unwrap_or_default();
+        let stderr = stderr_pump.and_then(|p| p.join().ok()).unwrap_or_default();
+        super::BoundedRun {
+            timed_out: status.is_none(),
+            status,
+            stdout,
+            stderr,
+            spawn_failed: false,
+        }
+    }
+
     pub(crate) fn start_owned(mut self) -> io::Result<OwnedChild> {
         #[cfg(unix)]
         {
@@ -248,6 +328,36 @@ mod windows {
                 Ok(job)
             }
         }
+        /// A job WITHOUT `KILL_ON_JOB_CLOSE` — closing the handle leaves the
+        /// processes running; only [`Job::terminate`] kills them.
+        pub fn attach_plain(child: &Child) -> io::Result<Self> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let job = Self(handle);
+                if AssignProcessToJobObject(handle, child.as_raw_handle()) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(job)
+            }
+        }
+        /// The job's basic limit flags (tests: R2-4).
+        #[cfg(test)]
+        pub fn limit_flags(&self) -> u32 {
+            unsafe {
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                QueryInformationJobObject(
+                    self.0,
+                    JobObjectExtendedLimitInformation,
+                    &mut info as *mut _ as *mut _,
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                );
+                info.BasicLimitInformation.LimitFlags
+            }
+        }
         pub fn terminate(&self) -> io::Result<()> {
             if unsafe { TerminateJobObject(self.0, 1) } == 0 {
                 Err(io::Error::last_os_error())
@@ -266,3 +376,23 @@ mod windows {
 #[cfg(test)]
 #[path = "supervision_tests.rs"]
 mod tests;
+
+/// R2-4: the bounded-tree job never kills on close; the owned-child one does.
+#[cfg(all(test, windows))]
+mod job_tests {
+    use super::windows::Job;
+    use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+    #[test]
+    fn the_plain_job_does_not_kill_on_close() {
+        let mut child = crate::process_util::spawn("cmd")
+            .args(["/c", "exit"])
+            .start()
+            .unwrap();
+        let plain = Job::attach_plain(&child);
+        let _ = child.wait();
+        if let Ok(job) = plain {
+            assert_eq!(job.limit_flags() & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0);
+        }
+    }
+}

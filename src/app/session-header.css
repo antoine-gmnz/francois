@@ -35,9 +35,14 @@
   align-items: center;
   gap: var(--space-10);
   min-width: 0;
+  overflow: hidden;
 }
 /* The one element in the header that may shrink. */
 .session-header__name {
+  /* cohorte-integration QA: the chips beside it shrink to their glyph before
+     the name gives way; a long name still truncates, at half the row. */
+  flex-shrink: 0;
+  max-width: 50%;
   min-width: 0;
   padding: 0;
   border: 0;

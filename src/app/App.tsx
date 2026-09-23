@@ -3,6 +3,9 @@ import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab, tabsForSession } from '../lib/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
+import { initCohorteFeed } from '../features/cohorte/cohorteFeed';
+import { registerCohortePaletteCommands } from '../features/cohorte/cohortePaletteCommands';
+import { useCohorteWatch } from '../features/cohorte/useCohorteWatch';
 import ExtensionsModal from '../features/extensions/ExtensionsModal';
 import { detectionRoot, initExtensionEvents, refreshExtensions } from '../features/extensions/extensionsFeed';
 import McpPanel from '../features/mcp/McpPanel';
@@ -29,7 +32,7 @@ import { clampRosterWidth } from '../lib/rosterWidth';
 import { useStore } from '../lib/store';
 import './app.css';
 import AppBar from './AppBar';
-import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns, showsPanes } from './appShell';
+import { dividerGridArea, isPanelTab, PANEL_TABS, paneGridArea, shellColumns, showsPanes, showsSessionHeader, showsSessionPanel } from './appShell';
 import MainPaneBody from './MainPaneBody';
 import RosterDivider from './RosterDivider';
 import SessionRail from './SessionRail';
@@ -45,6 +48,8 @@ import { useDiffBadge } from './useDiffBadge';
 
 // Register the built-in palette commands once, before first paint (FR-6).
 registerBuiltinCommands();
+// cohorte-integration FR-88: registered after the built-ins, so they list last.
+registerCohortePaletteCommands();
 
 /** design 7a: the four dissolved right-column panes, in roster-row order. */
 const PANELS = {
@@ -189,7 +194,12 @@ export default function App() {
     // same shared trigger source (trigger.ts) — no gesture needed to init,
     // only to actually hear the first tone (FR-10).
     initAudioCues();
+    // cohorte-integration FR-51: ONE app-wide subscription to francois://cohorte/event.
+    initCohorteFeed();
   }, []);
+
+  // cohorte-integration FR-52: detection + the declarative watch set.
+  useCohorteWatch();
 
   // multi-account §6: ONE app-wide registry feed — account_list at boot, then
   // francois://account/event. Everything that shows an account (the ACCOUNT
@@ -305,7 +315,10 @@ export default function App() {
   // panel belong to the Sessions view; the OVERVIEW dashboard takes the whole
   // workspace.
   const showSessionPanel = useStore((s) => s.showSessionPanel);
-  const sessionView = mainTab !== 'overview' && mainTab !== 'github';
+  // cohorte-integration FR-70: the run view trades the session header for its
+  // own, but keeps the session panel beside it (frame 26).
+  const sessionView = showsSessionHeader(mainTab);
+  const panelView = showsSessionPanel(mainTab);
 
   return (
     <div className="app-root">
@@ -472,7 +485,7 @@ export default function App() {
               </div>
             </div>
           </div>
-          {sessionView && showSessionPanel && <SessionPanel session={active} />}
+          {panelView && showSessionPanel && <SessionPanel session={active} />}
         </div>
       </div>
 

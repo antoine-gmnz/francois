@@ -91,10 +91,12 @@ export function stateGroupKey(state: SessionState): string {
  * Sessions keep their incoming order inside a bucket, so the roster still
  * tracks whatever order the fleet store imposes rather than inventing a second.
  */
-export function groupSessionsByState(sessions: readonly SessionMeta[]): RosterStateNode[] {
+export function groupSessionsByState(sessions: readonly SessionMeta[], forceAttention?: ReadonlySet<string>): RosterStateNode[] {
   const byState = new Map<SessionState, SessionMeta[]>();
   for (const session of sessions) {
-    const state = stateOf(session.status);
+    // cohorte-integration FR-85: a session whose Cohorte run waits at a gate
+    // joins NEEDS YOU whatever its own status.
+    const state = forceAttention?.has(session.id) ? 'attention' : stateOf(session.status);
     const bucket = byState.get(state);
     if (bucket) bucket.push(session);
     else byState.set(state, [session]);

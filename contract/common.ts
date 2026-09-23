@@ -114,10 +114,10 @@ export type ErrorCode =
   | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
   | 'GH_UNAVAILABLE' | 'GH_FAILED' // github-page: gh missing/unauthenticated/not GitHub (detail: { status }) · gh exited non-zero (detail: { code, stderr })
+  | 'COHORTE_NOT_DETECTED' | 'COHORTE_CLI_MISSING' | 'COHORTE_CLI_INCOMPATIBLE' | 'COHORTE_TIMEOUT' | 'COHORTE_OUTPUT_CAPPED' | 'COHORTE_OUTPUT_INVALID' | 'COHORTE_COMMAND_FAILED' | 'COHORTE_REJECTED' | 'COHORTE_RUN_NOT_FOUND' | 'COHORTE_GATE_NOT_PENDING' // cohorte-integration (detail shapes: CohorteErrorCode in contract/cohorte-integration.ts)
   | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
   | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
-  | 'RUNTIME_UNAVAILABLE'
-  | 'RUNTIME_INCOMPATIBLE'
+  | 'RUNTIME_UNAVAILABLE' | 'RUNTIME_INCOMPATIBLE'
   | 'RUNTIME_PROTOCOL_ERROR'
   | 'RUNTIME_TIMEOUT'
   | 'RUNTIME_EXITED'

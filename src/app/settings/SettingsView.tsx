@@ -17,6 +17,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import AccountsPage from '../../features/accounts/AccountsPage';
 import { accountSessionCounts } from '../../features/accounts/accounts';
 import { providerGroups, splitRail } from '../../features/accounts/providers';
+import { CohorteMark } from '../../features/cohorte/CohorteParts';
+import CohorteSettingsPage, { CohorteNavDot } from '../../features/cohorte/CohorteSettingsPage';
+import { useProjectDetection } from '../../features/cohorte/useCohorte';
+import { navDotOn } from '../../features/cohorte/settings';
+import { onCohorteSettingsRequest, takeCohorteSettingsRequest } from '../../features/cohorte/settings-request';
 import McpServersPage from '../../features/mcp/McpServersPage';
 import { mcpReferenceSessionId } from '../../features/mcp/mcp-settings';
 import { useMcpServers } from '../../features/mcp/useMcpServers';
@@ -53,6 +58,13 @@ export default function SettingsView({ home, paneSessionId }: SettingsViewProps)
     // `page` is read, not tracked: navigating is not a flag change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectsOpen, accountsOpen]);
+
+  // cohorte-integration FR-88: "Cohorte: Settings" lands on the Cohorte page.
+  useEffect(() => {
+    if (projectsOpen && takeCohorteSettingsRequest()) go('cohorte');
+  }, [projectsOpen]);
+  // R-16: a request while Settings is already open navigates in place.
+  useEffect(() => onCohorteSettingsRequest(() => go('cohorte')));
 
   const go = (next: SettingsPage) => {
     const st = useStore.getState();
@@ -101,6 +113,8 @@ export default function SettingsView({ home, paneSessionId }: SettingsViewProps)
   const profilesCount = useStore((s) => s.profiles.length);
   const extensionsCount = useStore((s) => s.extensions.filter((x) => x.enabled).length);
   const accounts = useStore((s) => s.accounts);
+  // cohorte-integration FR-80: the nav dot reads the project root's detection.
+  const cohorteDetection = useProjectDetection(selectedProject?.root ?? null);
   const connectedProviders = useMemo(
     () => splitRail(providerGroups(accounts, accountSessionCounts(accounts, sessions))).connected.length,
     [accounts, sessions],
@@ -146,6 +160,13 @@ export default function SettingsView({ home, paneSessionId }: SettingsViewProps)
             title={paneSessionId ? 'Opens the permission rules editor' : 'Open a session first — rules are read against its folder'}
             onSelect={() => useStore.getState().setPermissionsOpen(true)}
           />
+          <SettingsNavItem
+            label="Cohorte"
+            leading={<CohorteMark size={13} />}
+            trailing={<CohorteNavDot on={navDotOn(cohorteDetection)} />}
+            selected={page === 'cohorte'}
+            onSelect={() => go('cohorte')}
+          />
         </SettingsNavGroup>
         <SettingsNavGroup label="App">
           <SettingsNavItem label="Accounts" count={connectedProviders} selected={page === 'accounts'} onSelect={() => go('accounts')} />
@@ -171,6 +192,7 @@ export default function SettingsView({ home, paneSessionId }: SettingsViewProps)
               onAddServer={addServer}
             />
           )}
+          {page === 'cohorte' && <CohorteSettingsPage project={selectedProject ?? null} home={home} />}
           {page === 'accounts' && <AccountsPage />}
         </div>
       </main>

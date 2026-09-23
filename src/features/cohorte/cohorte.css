@@ -1,0 +1,571 @@
+/* cohorte-integration — Figma frames 25–28 (Graphite & Signal). Every colour is
+   an existing token (both themes); the only literal colour is the Cohorte mark's
+   own orange, inside its SVG. BEM-lite, `cohorte-*`. */
+
+.cohorte-mark {
+  display: inline-block;
+  flex-shrink: 0;
+}
+.cohorte-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.cohorte-label {
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--state-info);
+  font: var(--type-small);
+  cursor: pointer;
+}
+/* A CLI line: Mono Small faint, click copies. */
+.cohorte-cli {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  text-align: left;
+  cursor: copy;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cohorte-cli:hover {
+  color: var(--text-muted);
+}
+.cohorte-tone--running {
+  color: var(--state-running);
+}
+.cohorte-tone--attention {
+  color: var(--state-attention-text);
+}
+.cohorte-tone--success {
+  color: var(--state-success-text);
+}
+.cohorte-tone--danger {
+  color: var(--state-danger-text);
+}
+.cohorte-tone--neutral {
+  color: var(--text-secondary);
+}
+
+/* ---------- state chip / run chip (FR-60) ---------- */
+
+.cohorte-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 20px;
+  padding: 0 var(--space-7);
+  border-radius: var(--radius-4);
+  font: var(--type-small-medium);
+  white-space: nowrap;
+  flex-shrink: 1;
+  /* never narrower than its glyph */
+  min-width: 25px;
+  overflow: hidden;
+}
+.cohorte-chip__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cohorte-chip--attention {
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+}
+.cohorte-chip--success {
+  background: var(--tint-success);
+  color: var(--state-success-text);
+}
+.cohorte-chip--danger {
+  background: var(--tint-danger);
+  color: var(--state-danger-text);
+}
+.cohorte-chip--running {
+  background: var(--tint-running);
+  color: var(--state-running);
+}
+.cohorte-chip--neutral {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.cohorte-run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 20px;
+  padding: 0 var(--space-7);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font: var(--type-mono-small);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cohorte-run-chip:hover {
+  background: var(--bg-selected);
+}
+
+/* ---------- finding row ---------- */
+
+.cohorte-finding {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+}
+.cohorte-finding--full {
+  min-height: 32px;
+  padding: var(--space-8) var(--space-12);
+  background: var(--bg-canvas);
+}
+.cohorte-finding--compact {
+  gap: var(--space-8);
+}
+.cohorte-finding__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+.cohorte-finding__title {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.cohorte-finding__where {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-finding__label {
+  flex-shrink: 0;
+  font: var(--type-small-medium);
+}
+.cohorte-finding--blocking .cohorte-finding__dot,
+.cohorte-finding--blocking .cohorte-finding__label {
+  color: var(--state-danger);
+}
+.cohorte-finding--minor .cohorte-finding__dot,
+.cohorte-finding--minor .cohorte-finding__label {
+  color: var(--state-info);
+}
+.cohorte-finding--nit .cohorte-finding__dot,
+.cohorte-finding--nit .cohorte-finding__label {
+  color: var(--text-faint);
+}
+
+/* ---------- gate card (FR-61/FR-65; frame 25 `154:15465`) ---------- */
+
+.cohorte-inline-gate {
+  display: flex;
+}
+.cohorte-gate {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--tint-attention-line);
+  border-radius: var(--radius-6);
+  background: var(--tint-attention);
+}
+.cohorte-gate--full {
+  width: 100%;
+  max-width: 680px;
+  gap: var(--space-14);
+  padding: var(--space-14) var(--space-16) var(--space-16);
+}
+.cohorte-gate--compact {
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-14);
+}
+.cohorte-gate__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-gate__label {
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  color: var(--state-attention-text);
+  white-space: nowrap;
+}
+.cohorte-gate__label--grow {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cohorte-gate__age {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.cohorte-gate__question {
+  margin: 0;
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
+}
+.cohorte-gate__findings {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-5);
+  overflow: hidden;
+  background: var(--line-subtle);
+}
+.cohorte-gate__reason,
+.cohorte-gate__summary,
+.cohorte-gate__more {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-gate__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-5);
+  background: var(--bg-canvas);
+}
+.cohorte-gate__preview pre {
+  margin: 0;
+  font: var(--type-mono-small);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cohorte-gate__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+.cohorte-gate__actions--compact {
+  gap: var(--space-6);
+}
+.cohorte-gate__hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.cohorte-gate__confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.cohorte-gate__confirm code {
+  font: var(--type-mono-small);
+}
+.cohorte-gate__confirm-keys {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-gate__outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cohorte-gate__step {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-gate__step--success {
+  color: var(--state-success-text);
+}
+.cohorte-gate__step--pending {
+  color: var(--text-secondary);
+}
+.cohorte-gate__step--danger {
+  color: var(--state-danger-text);
+}
+
+/* ---------- session panel tab (FR-67..FR-69; frame 25 panel) ---------- */
+
+.cohorte-panel {
+  gap: 0;
+}
+.cohorte-panel__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-14) var(--space-14) var(--space-12);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.cohorte-panel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-panel__title {
+  min-width: 0;
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+}
+.cohorte-panel__summary {
+  min-width: 0;
+  font: var(--type-small-medium);
+}
+.cohorte-panel__id {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-panel__note {
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-panel__note code {
+  font: var(--type-mono-small);
+  color: var(--text-secondary);
+}
+.cohorte-panel__note--warning {
+  color: var(--state-attention-text);
+}
+.cohorte-panel__note--danger {
+  color: var(--state-danger-text);
+}
+.cohorte-panel__gate {
+  padding: var(--space-12) var(--space-12) var(--space-4);
+}
+.cohorte-panel__runtime {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-panel__runtime-text {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-panel__actions {
+  display: flex;
+  gap: var(--space-6);
+}
+.cohorte-panel__open {
+  flex: 1 1 0;
+}
+.cohorte-panel__empty {
+  flex: 0 0 auto;
+  padding: var(--space-24) var(--space-14) var(--space-12);
+}
+.cohorte-panel__recent {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-6) var(--space-10);
+}
+.cohorte-panel__recent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+  border: 0;
+  border-radius: var(--radius-5);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.cohorte-panel__recent-row:hover {
+  background: var(--bg-raised);
+}
+.cohorte-panel__recent-name {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+
+.cohorte-phases {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-6) var(--space-6) var(--space-10);
+}
+.cohorte-phases__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-8) var(--space-8) var(--space-4) var(--space-10);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+.cohorte-phases__count {
+  font: var(--type-mono-small);
+  letter-spacing: 0;
+}
+.cohorte-phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-10);
+  border-radius: var(--radius-5);
+}
+.cohorte-phase--current {
+  background: var(--bg-raised);
+}
+.cohorte-phase__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.cohorte-phase__name {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.cohorte-phase__name--pending {
+  color: var(--text-muted);
+}
+.cohorte-phase__meta {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.cohorte-phase__meta--live {
+  color: var(--state-running);
+}
+.cohorte-phase__step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding-left: 21px;
+  min-width: 0;
+}
+.cohorte-phase__step-label {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-phase__step-label--pending {
+  color: var(--text-faint);
+}
+.cohorte-phase__step-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+
+/* Tail logs (FR-69) */
+.cohorte-log {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cohorte-log__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-10) var(--space-10) var(--space-6);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.cohorte-log__notice {
+  padding: var(--space-8) var(--space-14);
+  font: var(--type-small);
+  color: var(--state-attention-text);
+  background: var(--tint-attention);
+}
+.cohorte-log__body {
+  padding: 0;
+}
+.cohorte-log__rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-8) 0;
+}
+.cohorte-log__empty {
+  padding: var(--space-16) var(--space-14);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-log__row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: var(--space-8);
+  padding: 2px var(--space-14);
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-log__row--warning {
+  color: var(--state-attention-text);
+}
+.cohorte-log__row--error {
+  color: var(--state-danger-text);
+}
+.cohorte-log__at {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.cohorte-log__type {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.cohorte-log__row--warning .cohorte-log__type,
+.cohorte-log__row--error .cohorte-log__type {
+  color: inherit;
+}
+.cohorte-log__type--unknown {
+  font-style: italic;
+}
+.cohorte-log__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- roster (FR-85/FR-86) ---------- */
+
+/* Three answers share the width; Open keeps its own. */
+.cohorte-roster__decide {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cohorte-roster__id {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-roster__kind {
+  font: var(--type-small-medium);
+  color: var(--state-attention-text);
+}
+.cohorte-roster__question {
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+
+/* R-15: someone else answered the gate. */
+.cohorte-answered {
+  font: var(--type-small);
+  color: var(--text-secondary);
+}

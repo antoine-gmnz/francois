@@ -171,3 +171,11 @@ describe('parseCollapsedStates', () => {
     expect(COLLAPSED_STATES_KEY).toBe('francois.collapsedStateGroups');
   });
 });
+
+describe('groupSessionsByState — Cohorte gates (cohorte-integration FR-85)', () => {
+  it('moves a forced session into NEEDS YOU whatever its status', () => {
+    const running = { id: 'r', status: 'running' } as SessionMeta;
+    const nodes = groupSessionsByState([running], new Set(['r']));
+    expect(nodes.map((n) => n.state)).toEqual(['attention']);
+  });
+});

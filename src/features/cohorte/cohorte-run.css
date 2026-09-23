@@ -1,0 +1,374 @@
+/* cohorte-integration — the run view (frame 26); shared pieces live in cohorte.css. */
+
+/* ---------- run view (FR-70..FR-76; frame 26) ---------- */
+
+.cohorte-run {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+}
+.cohorte-run__header {
+  flex: 0 0 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 0 var(--space-24);
+  border-bottom: 1px solid var(--line-subtle);
+  min-width: 0;
+}
+.cohorte-run__back {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-5);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.cohorte-run__back:hover {
+  background: var(--bg-raised);
+}
+.cohorte-run__title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.cohorte-run__crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-run__crumb--faint,
+.cohorte-run__crumb-sep {
+  color: var(--text-faint);
+}
+.cohorte-run__name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+  overflow: hidden;
+}
+.cohorte-run__name {
+  flex-shrink: 0;
+  max-width: 40%;
+  min-width: 0;
+  font: var(--type-title);
+  letter-spacing: var(--tracking-title);
+  color: var(--text-primary);
+}
+.cohorte-run__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.cohorte-run__strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-16);
+  padding: var(--space-8) var(--space-24);
+  border-bottom: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  color: var(--text-secondary);
+  background: var(--bg-rail);
+}
+.cohorte-run__strip code {
+  font: var(--type-mono-small);
+}
+.cohorte-run__strip--warning {
+  color: var(--state-attention-text);
+  background: var(--tint-attention);
+}
+.cohorte-run__strip--danger {
+  color: var(--state-danger-text);
+  background: var(--tint-danger);
+}
+.cohorte-run__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-24) var(--space-28);
+}
+.cohorte-run__columns {
+  display: flex;
+  gap: var(--space-20);
+  margin-top: var(--space-22);
+  align-items: flex-start;
+}
+.cohorte-run__side {
+  flex: 0 0 360px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-18);
+}
+.cohorte-run__modal-text {
+  margin: 0 0 var(--space-10);
+  font: var(--type-ui);
+  color: var(--text-secondary);
+}
+
+.cohorte-timeline {
+  display: flex;
+  gap: var(--space-4);
+}
+.cohorte-timeline__col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.cohorte-timeline__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-strong);
+}
+.cohorte-timeline__bar--success {
+  background: var(--state-success);
+}
+.cohorte-timeline__bar--running {
+  background: var(--state-running);
+}
+.cohorte-timeline__bar--attention {
+  background: var(--state-attention);
+}
+.cohorte-timeline__bar--danger {
+  background: var(--state-danger);
+}
+.cohorte-timeline__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.cohorte-timeline__name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+}
+.cohorte-timeline__name--pending {
+  color: var(--text-faint);
+}
+.cohorte-timeline__meta {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.cohorte-steps {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+.cohorte-steps__empty {
+  padding: var(--space-16) var(--space-12);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+/* Scrolls horizontally below ~720px of main width (§8 resize). */
+.cohorte-steps__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+.cohorte-steps__table {
+  width: 100%;
+  min-width: 600px;
+  border-collapse: collapse;
+}
+.cohorte-steps__table th {
+  height: 32px;
+  padding: 0 var(--space-12);
+  text-align: left;
+  background: var(--bg-rail);
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-steps__table td {
+  height: 44px;
+  padding: 0 var(--space-12);
+  border-top: 1px solid var(--line-subtle);
+  white-space: nowrap;
+}
+.cohorte-steps__col-step {
+  width: 150px;
+}
+.cohorte-steps__col-agent {
+  width: 120px;
+}
+.cohorte-steps__col-session {
+  width: 130px;
+}
+.cohorte-steps__col-duration {
+  width: 90px;
+}
+.cohorte-steps__step {
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.cohorte-steps__agent,
+.cohorte-steps__duration {
+  font: var(--type-mono);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cohorte-steps__session {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--type-mono);
+  color: var(--state-info);
+  cursor: pointer;
+}
+.cohorte-steps__session:hover {
+  text-decoration: underline;
+}
+.cohorte-steps__none {
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+.cohorte-steps__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-steps__state--running {
+  color: var(--state-running);
+}
+.cohorte-steps__state--failed,
+.cohorte-steps__state--blocked {
+  color: var(--state-danger-text);
+}
+.cohorte-steps__state--waiting-approval {
+  color: var(--state-attention-text);
+}
+.cohorte-steps__error {
+  display: block;
+  font: var(--type-small);
+  color: var(--state-danger-text);
+}
+
+.cohorte-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+  background: var(--bg-rail);
+}
+.cohorte-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.cohorte-card__foot {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-artifact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.cohorte-artifact--link {
+  cursor: pointer;
+}
+.cohorte-artifact--link:hover .cohorte-artifact__name {
+  color: var(--text-primary);
+}
+.cohorte-artifact__icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.cohorte-artifact__name {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+}
+.cohorte-artifact__meta {
+  flex-shrink: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-kv {
+  display: flex;
+  gap: var(--space-6);
+  font: var(--type-small);
+}
+.cohorte-kv__k {
+  color: var(--text-faint);
+}
+.cohorte-kv__v {
+  color: var(--text-secondary);
+}
+.cohorte-kv__v--mono {
+  font: var(--type-mono-small);
+}
+.cohorte-command-bar {
+  flex: 0 0 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  padding: 0 var(--space-24);
+  border-top: 1px solid var(--line-subtle);
+  background: var(--bg-rail);
+  min-width: 0;
+}
+.cohorte-command-bar__icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.cohorte-command-bar__cli {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: copy;
+}
+.cohorte-command-bar__note {
+  flex-shrink: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
