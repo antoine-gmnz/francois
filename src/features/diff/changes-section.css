@@ -110,3 +110,11 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
+.changes-section__actions {
+  display: flex;
+  gap: var(--space-8);
+}
+.changes-section__actions > .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}

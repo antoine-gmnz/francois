@@ -15,6 +15,7 @@ import { useStore } from '../../lib/store';
 import { statusNeedsAttention } from '../../../contract/fleet-board';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
+import { createPrAvailability, requestCreatePr } from '../diff/create-pr';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 import { skillRowKey } from '../skills/skills-loaded';
@@ -308,6 +309,26 @@ export function registerBuiltinCommands(): void {
     run: (ctx) => {
       const sid = ctx.activeSessionId;
       if (sid) delegate(sessionCompact(sid) as Promise<Result<unknown>>);
+    },
+  });
+
+  // Create PR (Changes panel footer's twin) — hands the job to the agent as a turn.
+  registerPaletteCommand({
+    id: 'create-pull-request',
+    glyph: '⎇',
+    name: 'Create pull request',
+    hint: () => {
+      const st = useStore.getState();
+      const cap = createPrAvailability(st.sessions.find((x) => x.id === st.activeSessionId));
+      return cap.reason ?? 'agent commits, pushes, opens the PR';
+    },
+    enabled: (ctx) => createPrAvailability(useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId)).available,
+    run: (ctx) => {
+      const sid = ctx.activeSessionId;
+      if (!sid) return;
+      void requestCreatePr(sid).then((ok) => {
+        if (!ok) showToast('Could not send — the prompt is in the composer.', 'error');
+      });
     },
   });
 
