@@ -20,8 +20,9 @@
 // different phrasings — the same discipline providers.ts applies to the
 // "coming soon" sentences.
 
-import { Check, Download, ExternalLink, Loader } from 'lucide-react';
+import { Check, Download, ExternalLink } from 'lucide-react';
 import type { CliToolStatus } from '../../../contract/multi-account';
+import { Caret } from '../../ui/Loaders';
 import './accounts.css';
 import {
     cliToolHeadline,
@@ -65,9 +66,7 @@ export function CliToolCard({ spec, tool, state, busy, onInstall }: CliToolCardP
   return (
     <div className="acc-cli-card">
       <div className="acc-cli-card-icon" aria-hidden="true">
-        {/* The endpoint form's spinner, reused rather than re-declared — one
-            rotation idiom for the whole modal. */}
-        {installing ? <Loader size={14} className="acc-endpoint-spin" /> : <Download size={14} />}
+        <Download size={14} />
       </div>
       <div className="acc-cli-card-body">
         <div className="acc-cli-card-title">{cliToolHeadline(tool)}</div>
@@ -85,7 +84,7 @@ export function CliToolCard({ spec, tool, state, busy, onInstall }: CliToolCardP
               disabled={busy || installing}
               onClick={onInstall}
             >
-              {installButtonLabel(state, tool)}
+              {installing ? <Caret>{installButtonLabel(state, tool)}</Caret> : installButtonLabel(state, tool)}
             </button>
             <a
               className="acc-cli-docs"

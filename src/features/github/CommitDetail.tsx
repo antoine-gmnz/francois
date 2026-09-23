@@ -11,6 +11,7 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
+import { Orbit, LoaderPane } from '../../ui/Loaders';
 import { openOnGithub, openSession, startSessionAtCommit } from './actions';
 import { commitAuthorLabel, commitChecksChip, commitTimeLabel, otherCommitFiles } from './commits';
 import { sessionForBranch } from './linkage';
@@ -67,7 +68,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
   if (loading && !detail) {
     return (
       <div className="commit-detail commit-detail--empty">
-        <span className="commit-detail__loading">Loading…</span>
+        <LoaderPane label="Loading commit…" />
       </div>
     );
   }
@@ -219,7 +220,11 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
               <p className="pull-side-card__label">Checks on this commit</p>
               {detail.checkRuns.map((run) => (
                 <div className="pull-kv" key={run.name}>
-                  <Icon name={run.state === 'failed' ? 'x' : 'check'} size={12} />
+                  {run.state === 'pending' ? (
+                    <Orbit size={14} label={`${run.name} running`} />
+                  ) : (
+                    <Icon name={run.state === 'failed' ? 'x' : 'check'} size={12} />
+                  )}
                   <span className="commit-check__name">{run.name}</span>
                   <span className="pull-row__sp" />
                   <span className="commit-check__value">

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CapabilityState, SessionId } from '../../../contract/common';
 import { mcpDecide, remoteGet, remoteStart, remoteStop } from '../../lib/api';
 import { useStore } from '../../lib/store';
+import { LoaderCaret } from '../../ui/Loaders';
 import './remote.css';
 import {
   approvalRequiredOf,
@@ -182,7 +183,7 @@ export function RemoteControlBadge({ sessionId, capability }: { sessionId: Sessi
         title={actions.reason ?? remoteLabel(state)}
         className={`rc-chip${busy ? ' rc-chip--busy' : ''}${live ? ' rc-chip--live' : ''}`}
       >
-        <span className="rc-dot" style={{ background: TONE[remoteDotTone(state)] }} />
+        {busy ? <LoaderCaret /> : <span className="rc-dot" style={{ background: TONE[remoteDotTone(state)] }} />}
         rc
         {handle && (
           <span title={handle} className="rc-handle">

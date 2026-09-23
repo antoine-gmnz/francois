@@ -61,6 +61,9 @@ const PANELS = {
 
 export default function App() {
   const activeSessionId = useStore((s) => s.activeSessionId);
+  // loaders: gates the SESSION empty state between "boot, still hydrating"
+  // and "loaded, no session picked" (MainPaneBody).
+  const sessionsHydrated = useStore((s) => s.sessionsHydrated);
   const focusedPane = useStore((s) => s.focusedPane);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const mainTab = useStore((s) => s.mainTab);
@@ -475,6 +478,7 @@ export default function App() {
                       home={home}
                       setMainTab={setMainTab}
                       projectName={activeProjectName}
+                      sessionsHydrated={sessionsHydrated}
                     />
                   </section>
                 )}

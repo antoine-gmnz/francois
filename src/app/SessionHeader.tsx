@@ -37,6 +37,7 @@ import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
 import { IconButton } from '../ui/IconButton';
 import { StateIcon } from '../ui/StateIcon';
+import { WatchedStateIcon } from '../ui/WatchedStateIcon';
 import { sessionStateLabel, stateKindForStatus } from '../ui/state-kind';
 import { Tab, TabGroup } from '../ui/Tab';
 import { sessionMetaLine } from './session-header';
@@ -165,10 +166,7 @@ export default function SessionHeader({
               onClick={() => openView(tabIdFor(t) as MainTab)}
               className={mainTab === tabIdFor(t) ? 'session-header__agent session-header__agent--on' : 'session-header__agent'}
             >
-              <StateIcon
-                kind={t.status === 'running' ? 'running' : t.status === 'done' ? 'done' : t.status === 'error' ? 'failed' : 'idle'}
-                size={12}
-              />
+              <WatchedStateIcon status={t.status} size={12} name={t.name} />
               {extTabDisplay(tier) !== 'folded' && <span className="truncate">{agentTabLabel(t.name)}</span>}
               <span
                 role="button"

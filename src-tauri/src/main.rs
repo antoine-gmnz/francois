@@ -11,10 +11,10 @@ use francois::{
 };
 
 use tauri::RunEvent;
-// `get_webview_window` is a `Manager` method; only the windows-only chrome tint
-// below calls it, so the import is gated too (an unconditional one warns as
-// unused on macOS/Linux).
-#[cfg(windows)]
+// `get_webview_window` is a `Manager` method — needed unconditionally now:
+// the windows-only chrome tint below, the rework-topbar frameless-window setup
+// (Windows/Linux), and the post-setup `show()` every platform needs (the
+// window starts hidden — see the `visible: false` note below).
 use tauri::Manager;
 
 fn main() {
@@ -109,6 +109,28 @@ fn main() {
             extensions::load_registry(app.handle());
             // usage-bar FR-11/FR-12: probe once now, then every 5 minutes.
             usage::start_timers(app.handle().clone());
+            // rework-topbar: Windows/Linux go frameless — this app bar draws
+            // its own caption buttons (WindowControls.tsx); the OS chrome
+            // would otherwise draw a second set. macOS keeps its native
+            // traffic lights untouched. Tauri 2 keeps resize borders on an
+            // undecorated Windows window as long as the shadow stays on, so
+            // that gets re-asserted right after — `set_decorations` can drop
+            // it on some Windows builds.
+            #[cfg(not(target_os = "macos"))]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_decorations(false);
+                #[cfg(windows)]
+                let _ = w.set_shadow(true);
+            }
+            // The window starts hidden (`"visible": false` in tauri.conf.json
+            // / tauri.dev.conf.json) precisely so `set_decorations` above runs
+            // BEFORE the first paint — undecorating a window already on
+            // screen is a visible flash (the native caption disappearing out
+            // from under the content). Shown here, once, after every setup
+            // step above has had its say.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

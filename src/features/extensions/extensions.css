@@ -149,34 +149,6 @@
   margin-top: var(--space-10);
 }
 
-/* -- loading skeletons ----------------------------------------------------- */
-
-.ext-skeleton {
-  background: var(--bg-hover);
-  border-radius: var(--radius-base);
-}
-.ext-skeleton-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-}
-.ext-skeleton-row {
-  height: 16px;
-}
-.ext-skeleton-row:nth-child(2) {
-  width: 88%;
-}
-.ext-skeleton-row:nth-child(3) {
-  width: 72%;
-}
-.ext-skeleton-row:nth-child(4) {
-  width: 80%;
-}
-.ext-stat.ext-skeleton {
-  height: 52px;
-  min-width: 120px;
-}
-
 /* -- key-value ------------------------------------------------------------- */
 
 .ext-kv {
@@ -186,10 +158,19 @@
 }
 .ext-kv__row {
   display: grid;
-  grid-template-columns: 10px 180px 1fr;
+  grid-template-columns: 14px 180px 1fr;
   align-items: center;
   gap: var(--space-8);
   min-width: 0;
+}
+/* Fixed-size slot for the status glyph — a resting StatusDot and a running
+   Orbit (14px) are different footprints, so the column centers whichever is
+   showing rather than shifting the key/value columns. */
+.ext-kv__status-slot {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
 }
 .ext-kv__key {
   font-size: var(--font-size-11);

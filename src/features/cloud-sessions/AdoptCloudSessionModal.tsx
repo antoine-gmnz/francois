@@ -19,10 +19,12 @@ import type { ProjectId } from '../../../contract/common';
 import type { CloudDestination, CloudSession } from '../../../contract/cloud-sessions';
 import type { ProjectMeta } from '../../../contract/projects';
 import { cloudAdopt, cloudResolve, onCloudEvent, projectList, sessionList } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { ChipGroup, type ChipOption } from '../../ui/ChipGroup';
+import { Caret } from '../../ui/Loaders';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { safeCall } from '../projects/projects';
 import { AdoptPhaseList } from './AdoptPhaseList';
@@ -137,6 +139,8 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
   // retry costs one click.
   const showForm = progress === null || progress.error !== null;
   const enabled = canAdopt(form) && !inFlight;
+  // Nothing under 300ms — an adoption that resolves fast never gets a caret flash.
+  const showAdoptCaret = useDelayedFlag(inFlight, 300);
 
   const project = projects.find((p) => p.id === projectId) ?? null;
   // FR-14: quiet when the repo matched, promoted to a visibly-empty required
@@ -368,7 +372,7 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
             {inFlight ? 'Run in background' : 'Cancel'}
           </Button>
           <Button variant="primary" onClick={submit} disabled={!enabled}>
-            {inFlight ? 'Adopting…' : 'Adopt'}
+            {showAdoptCaret ? <Caret>Adopting</Caret> : 'Adopt'}
           </Button>
         </div>
       </ModalFooter>

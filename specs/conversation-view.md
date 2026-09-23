@@ -312,7 +312,7 @@ Main pane `[2]`, SESSION tab content — `Claude Terminal.dc.html:88-116` (the `
 | `tool.start` tool `Task` (subagent) | `⇉` | `#c8a15a` | `#b9bcc4` | body = `Dispatched subagent  <agentName>` |
 | `tool.start`, any other tool | `●` | `#868a93` | `#868a93` | fallback |
 
-**Streaming cursor**: `display:inline-block; width:8px; height:15px; background:#c8a15a; vertical-align:text-bottom; margin-left:2px; animation:blink 1s step-end infinite;` (`@keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }`) — appended immediately after an assistant block's text while `isStreaming === true`; removed the instant `assistant.done` is applied.
+**Streaming cursor**: `display:inline-block; width:8px; height:15px; background:#c8a15a; vertical-align:text-bottom; margin-left:2px; animation:blink 1s step-end infinite;` (`@keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }`) — appended immediately after an assistant block's text while `isStreaming === true`; removed the instant `assistant.done` is applied. **Superseded (loaders adoption):** this is now the shared `Caret` primitive (`src/ui/Loaders.tsx` / `src/ui/loaders.css`, `fr-blink` keyframe) — a bare trailing cursor with no props, cyan (`var(--state-running)`) rather than the mock's amber, inheriting font-size/color from the row instead of the literal pixel geometry above.
 
 **Transcript container**: `padding:16px 18px; display:flex; flex-direction:column; gap:14px; overflow:auto;` 8px thin scrollbar (`.scz` track transparent, thumb `#2a2c33`, radius 4px), matching the rest of the app.
 

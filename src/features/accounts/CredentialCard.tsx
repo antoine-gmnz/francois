@@ -14,6 +14,7 @@
 import { useEffect, useRef } from 'react';
 import type { Account } from '../../../contract/multi-account';
 import type { UsageSnapshot } from '../../../contract/usage-bar';
+import { LoaderCaret } from '../../ui/Loaders';
 import { Meter } from '../../ui/Meter';
 import {
   accountDisplayLabel,
@@ -55,7 +56,12 @@ function Meters({ snapshot, now }: { snapshot: UsageSnapshot | undefined; now: n
       </div>
     );
   }
-  if (view.kind === 'loading') return <div className="acc-empty">Reading usage…</div>;
+  if (view.kind === 'loading')
+    return (
+      <div className="acc-empty">
+        <LoaderCaret label="reading usage" />
+      </div>
+    );
   return null;
 }
 

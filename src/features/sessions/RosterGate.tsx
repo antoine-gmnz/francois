@@ -12,6 +12,9 @@ import './sidebar.css';
 
 export interface RosterGateProps {
   hydrationError: AppError | null;
+  /** False until the fleet's first session_list settles — the main pane owns the
+   *  boot loader then, so the roster paints nothing rather than "no sessions yet". */
+  hydrated: boolean;
   onRetry: () => void;
   /** Sessions in the cache, before any filtering. */
   sessionCount: number;
@@ -26,6 +29,7 @@ export interface RosterGateProps {
 
 export function RosterGate({
   hydrationError,
+  hydrated,
   onRetry,
   sessionCount,
   activeProjectId,
@@ -44,7 +48,7 @@ export function RosterGate({
           </div>
         </div>
       ) : sessionCount === 0 ? (
-        <EmptyPane className="sidebar-empty">no sessions yet · press n</EmptyPane>
+        hydrated ? <EmptyPane className="sidebar-empty">no sessions yet · press n</EmptyPane> : null
       ) : activeProjectId !== null && inProjectCount === 0 ? (
         // projects FR-29: a project is active and owns no session — distinct
         // from the global "no sessions yet" state.

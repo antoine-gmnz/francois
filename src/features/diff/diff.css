@@ -3,11 +3,21 @@
    tree and the diff pane (file header + windowed rows). Tokens only. */
 
 .diff-view {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--bg-canvas);
+}
+/* The refresh hairline overlays the top edge rather than sitting in flow —
+   in flow it pushed the review bar down 2px on every mount. */
+.diff-view > .fr-stitch {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
 }
 
 /* ── review bar (135:5161) ── */
@@ -307,6 +317,9 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* loaders: anchors the refresh LoaderStitch (DiffListBody), pinned to this
+     pane's top edge rather than the whole DIFF tab. */
+  position: relative;
 }
 /* file header (135:5238) */
 .diff-file-header {
@@ -455,4 +468,9 @@
 }
 .diff-placeholder--error {
   color: var(--state-danger-text);
+}
+.diff-placeholder--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }

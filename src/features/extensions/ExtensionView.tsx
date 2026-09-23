@@ -19,7 +19,7 @@ import type { PanelId, TableRow } from '../../../contract/extensions';
 import { extensionsSetEnabled } from '../../lib/api';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { useStore } from '../../lib/store';
-import { EmptyPane } from '../../ui/EmptyPane';
+import { LoaderPane } from '../../ui/Loaders';
 import LogTailSection from './LogTailSection';
 import PanelSection from './PanelSection';
 import { DISABLE_COPY, panelRoot, sanitizeForDisplay, tokenFromRow } from './extensions';
@@ -68,7 +68,7 @@ export default function ExtensionView({ extensionId, root, sessionId, projectNam
   if (!info) {
     // The list has not landed yet (or no longer carries this extension) — the
     // tab still exists; it simply has nothing to render.
-    return <EmptyPane>loading extension…</EmptyPane>;
+    return <LoaderPane label="loading extension…" />;
   }
 
   const sourcePanelIds = new Set(

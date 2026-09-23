@@ -16,10 +16,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { McpServerInfo } from '../../../contract/common';
 import type { McpServerDetail } from '../../../contract/mcp-panel';
 import { mcpDetail, mcpReconnect } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { Button } from '../../ui/Button';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
+import { Caret } from '../../ui/Loaders';
 import { SettingsCard, SettingsHeader, SettingsNote } from '../../ui/Settings';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tab, TabGroup } from '../../ui/Tab';
@@ -57,6 +59,8 @@ export interface McpServersPageProps {
 export default function McpServersPage({ projectName, sessionId, sessionName, feed, onAddServer }: McpServersPageProps) {
   const { servers, setServers, listError, reload, checkedAt } = feed;
   const { approvals, decide, deciding, decideError } = useApprovals(sessionId, reload);
+  // Nothing under 300ms — a decision that settles fast never gets a caret flash.
+  const showSavingCaret = useDelayedFlag(deciding, 300);
   const capability = sessionCapability(useSessionMeta(sessionId), 'mcp');
   const [filter, setFilter] = useState<McpScopeFilter>('all');
   const [details, setDetails] = useState<Record<string, McpServerDetail>>({});
@@ -178,7 +182,7 @@ export default function McpServersPage({ projectName, sessionId, sessionName, fe
               description={decideError?.message ?? 'Claude Code asks before it starts these. They take effect on the session’s next turn.'}
             >
               <Button variant="attention" disabled={deciding} onClick={() => void decide(approveAllDecision(approvals))}>
-                {deciding ? 'Saving…' : 'Approve all'}
+                {showSavingCaret ? <Caret>Saving</Caret> : 'Approve all'}
               </Button>
             </SettingsCard>
           )}

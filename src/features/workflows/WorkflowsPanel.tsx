@@ -14,6 +14,7 @@ import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
+import { LoaderPane, Orbit } from '../../ui/Loaders';
 import { PanelHeader } from '../../ui/PanelHeader';
 import { StatusDot } from '../../ui/StatusDot';
 import { useWorkflowsFeed } from './useWorkflowsFeed';
@@ -101,7 +102,9 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
           <CapabilityNotice reason={capability.reason ?? ''} />
         ) : listError ? (
           <div className="workflows-error-text">{listError.message}</div>
-        ) : loading ? null : list.length === 0 ? (
+        ) : loading ? (
+          <LoaderPane size={16} label="Loading workflows…" />
+        ) : list.length === 0 ? (
           <div className="workflows-empty">{EMPTY_LABEL}</div>
         ) : (
           list.map((run) => (
@@ -157,7 +160,9 @@ function Card({
   return (
     <div onClick={onClick} className={cardClass}>
       <div className="workflow-inline-row">
-        <StatusDot color={sc} pulsing={run.status === 'running'} />
+        <span className="workflow-status-slot">
+          {run.status === 'running' ? <Orbit size={14} label={null} /> : <StatusDot color={sc} />}
+        </span>
         <span className="workflow-card__name truncate">{run.name}</span>
         {phaseCount && <span className="workflow-phase-badge">{phaseCount}</span>}
         <span className="workflow-card__status" style={{ color: sc }}>

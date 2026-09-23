@@ -1,5 +1,6 @@
-// cloud-sessions §8 — the adopt modal's session list: skeleton rows while it
-// loads, one calm line when it degraded, otherwise the rows themselves.
+// cloud-sessions §8 — the adopt modal's session list: the shared LoaderPane
+// while it loads, one calm line when it degraded, otherwise the rows
+// themselves.
 //
 // Two rules from the brief run through this file:
 //  - The list NEVER gates the paste field. Its loading, degraded and empty
@@ -10,6 +11,7 @@
 
 import type { CloudSession } from '../../../contract/cloud-sessions';
 import { ListRow } from '../../ui/ListRow';
+import { LoaderPane } from '../../ui/Loaders';
 import { cloudListRender, cloudRowMeta, cloudRowTitle, type CloudListState } from './cloud-sessions';
 import './cloud-sessions.css';
 
@@ -26,16 +28,7 @@ export function CloudSessionList({ list, selectedId, cursor, onPick }: CloudSess
   const rendered = cloudListRender(list);
 
   if (rendered.kind === 'loading') {
-    return (
-      <div className="cloud-list cloud-list--skeleton" aria-busy="true">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="cloud-list__skeleton-row">
-            <span className="cloud-list__skeleton-bar cloud-list__skeleton-bar--title" />
-            <span className="cloud-list__skeleton-bar cloud-list__skeleton-bar--meta" />
-          </div>
-        ))}
-      </div>
-    );
+    return <LoaderPane label="Fetching cloud sessions…" />;
   }
 
   // FR-17: the common state for anyone offline. One line, --text-disabled, no

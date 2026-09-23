@@ -329,15 +329,6 @@
   align-items: center;
   gap: var(--space-6);
 }
-@keyframes acc-endpoint-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.acc-endpoint-spin {
-  animation: acc-endpoint-spin 0.8s linear infinite;
-}
-
 /* ── vendor CLI: installed-ness, and the npm that fixes it ──────────────────
    A CLI you have not installed yet is a NORMAL state, not a fault, so this
    borrows the dashed "empty slot" register the API KEYS section already uses
@@ -416,6 +407,9 @@
   gap: var(--space-8);
 }
 .acc-cli-install {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
   background: var(--bg-raised);
   border: 0;
   border-radius: var(--radius-base);

@@ -4,38 +4,33 @@
    brief), so only the panel's responsive cap and its contents live here;
    `.scz` (thin scrollbar) comes from styles.css. */
 
-/* ── status-bar chip ────────────────────────────────────────────────────── */
-/* Ambient information: no animation, no pulse, no focus stealing. Same 10px
-   uppercase mono metrics as the neighbouring `.app-key` chips so the bar's
-   rhythm does not shift when the state flips. */
-.upd-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-6);
-  height: 26px;
-  padding: 0 var(--space-8);
-  background: var(--tint-success);
-  border: 1px solid var(--tint-success-line);
-  border-radius: var(--radius-4);
-  color: var(--state-success-text);
-  font: var(--type-mono-small);
-  white-space: nowrap;
-  flex-shrink: 0;
-  cursor: pointer;
+/* ── app bar control ────────────────────────────────────────────────────── */
+/* Ambient information: no animation, no pulse, no focus stealing. redesign App
+   bar "Update": a 28px square (IconButton's own size/radius/hover), the arrow
+   tinted success and a 5px success dot at its top-right corner (centre 19.5,8.5
+   inside the 28px box — left/top below are that centre minus the 2.5px radius). */
+.upd-icon-btn {
+  position: relative;
 }
-.upd-chip:hover {
-  background: color-mix(in srgb, var(--state-success) 16%, transparent);
+.icon-btn.upd-icon-btn,
+.icon-btn.upd-icon-btn:hover {
+  color: var(--state-success);
 }
-/* No update: the running version, quiet. */
+.upd-dot {
+  position: absolute;
+  left: 17px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--state-success);
+}
+/* App bar 126:2: the running version, always shown — quiet, mono-small. */
 .upd-version {
-  color: var(--text-faint);
+  color: var(--text-muted);
   font: var(--type-mono-small);
   white-space: nowrap;
   flex-shrink: 0;
-}
-.upd-chip:focus-visible {
-  outline: 1px solid var(--border-focus);
-  outline-offset: 0;
 }
 
 /* ── modal ──────────────────────────────────────────────────────────────── */
@@ -165,6 +160,9 @@
 
 /* primary action */
 .upd-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
   height: 26px;
   padding: 0 var(--space-14);
   background: var(--accent);
@@ -181,12 +179,6 @@
 }
 .upd-apply:disabled {
   cursor: not-allowed;
-}
-/* applying: the accent at reduced emphasis, label dimmed — no spinner, no motion */
-.upd-apply--busy:disabled {
-  background: var(--accent);
-  box-shadow: none;
-  opacity: 0.6;
 }
 /* blocked: reason carried by TEXT as well as colour (§Accessibility) */
 .upd-apply--blocked:disabled {

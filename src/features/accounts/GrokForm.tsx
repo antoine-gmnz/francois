@@ -6,11 +6,12 @@
 // and it happens from the row afterwards (FR-21).
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import type { AppError } from '../../../contract/common';
 import { accountAddGrok } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { Button } from '../../ui/Button';
+import { Caret } from '../../ui/Loaders';
 import './accounts.css';
 import { endpointErrorLine, grokAddPayload, grokSaveDisabled } from './accounts';
 
@@ -46,6 +47,8 @@ export function GrokForm({ onCancel, onSaved }: Props) {
   }
 
   const resultLine = saveError !== null ? endpointErrorLine(saveError) : null;
+  // Nothing under 300ms — a save that settles fast never gets a caret flash.
+  const showSaveCaret = useDelayedFlag(saving, 300);
 
   return (
     <div className="acc-endpoint-form">
@@ -80,8 +83,7 @@ export function GrokForm({ onCancel, onSaved }: Props) {
 
       <div className="acc-endpoint-actions">
         <Button variant="primary" onClick={save} disabled={grokSaveDisabled(label, saving)}>
-          {saving && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
-          Save
+          {showSaveCaret ? <Caret>Save</Caret> : 'Save'}
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel

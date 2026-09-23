@@ -56,6 +56,7 @@ const PANE_ROWS: readonly { pane: CountedPane; label: string; key: number }[] = 
 
 export default function Sidebar({ home }: { home: string }) {
   const sessions = useStore((s) => s.sessions);
+  const sessionsHydrated = useStore((s) => s.sessionsHydrated);
   const removeSessionFromCache = useStore((s) => s.removeSession);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSessionId = useStore((s) => s.setActiveSessionId);
@@ -361,6 +362,7 @@ export default function Sidebar({ home }: { home: string }) {
       {/* list — one gate, two bodies (design 12b's grouping toggle). */}
       <RosterGate
         hydrationError={fleet.hydrationError}
+        hydrated={sessionsHydrated}
         onRetry={fleet.retryHydration}
         sessionCount={sessions.length}
         activeProjectId={activeProjectId}

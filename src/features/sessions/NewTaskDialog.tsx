@@ -563,8 +563,8 @@ export function NewTaskDialog({
             {submitError ? submitError.message : firstPrompt(prompt) ? 'Sent as the first message once the session starts' : 'Leave the prompt empty to start an idle session'}
           </span>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" shortcut="⌘⏎" onClick={() => void submit()} disabled={!canCreate}>
-            {submitting ? 'Starting…' : 'Start task'}
+          <Button variant="primary" shortcut="⌘⏎" onClick={() => void submit()} disabled={!canCreate} busy={submitting}>
+            Start task
           </Button>
         </div>
       </div>

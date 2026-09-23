@@ -12,6 +12,7 @@ import GitHubView from '../features/github/GitHubView';
 import CohorteRunView from '../features/cohorte/CohorteRunView';
 import { cohorteRunIdFromTab } from '../features/cohorte/tab';
 import type { MainTab } from '../lib/store';
+import { LoaderPane } from '../ui/Loaders';
 import { hostedTab, mainPaneBranch, type MainPaneBranch } from './appShell';
 import EmptyPaneMessage from './EmptyPaneMessage';
 import SessionViewHost from './SessionViewHost';
@@ -25,6 +26,10 @@ export interface MainPaneBodyProps {
   setMainTab: (tab: MainTab) => void;
   /** extensions FR-13: the project name the `not available in <x>` copy names. */
   projectName: string | null;
+  /** loaders: false until `session_list`'s first mount hydration settles — the
+   *  SESSION empty state shows Figma "33 · Loaders" `LoaderPane` instead of
+   *  "select a session" while this is still false (App owns the store read). */
+  sessionsHydrated: boolean;
 }
 
 /** The main pane's body: one renderer per `MainTab` (Phase 5 dispatch table),
@@ -37,7 +42,7 @@ export interface MainPaneBodyProps {
  * meant a session switch — and a tab switch away and back — re-ran hydration
  * over IPC, re-parsed every markdown block, and destroyed and replayed every
  * xterm. The table still owns their EMPTY states, which need no host. */
-export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab, projectName }: MainPaneBodyProps) {
+export default function MainPaneBody({ mainTab, activeAgentId, active, home, setMainTab, projectName, sessionsHydrated }: MainPaneBodyProps) {
   const branch = mainPaneBranch(mainTab);
   // quality fix: a stable callback so ConversationView's `onOpenShell` prop
   // does not break the Turn/Block/ToolRow shallow-memo chain on every render.
@@ -57,6 +62,7 @@ export default function MainPaneBody({ mainTab, activeAgentId, active, home, set
         home={home}
         setMainTab={setMainTab}
         projectName={projectName}
+        sessionsHydrated={sessionsHydrated}
       />
     </>
   );
@@ -72,6 +78,7 @@ function MainPaneBranchBody({
   home,
   setMainTab,
   projectName,
+  sessionsHydrated,
 }: MainPaneBodyProps & { branch: MainPaneBranch }) {
   if (branch === 'ext') {
     // extensions FR-15: keyed by extension id, so switching extension tabs
@@ -134,8 +141,13 @@ function MainPaneBranchBody({
     github: () => <GitHubView />,
     // SESSION/SHELL: the body itself is the host's (see MainPaneBody above) —
     // only the sessionless prompt is rendered here.
+    // loaders: "nothing to show yet" while the fleet's first hydration is
+    // still in flight owns the area (Figma "33 · Loaders" LoaderPane) instead
+    // of claiming there is nothing to select.
     session: () =>
-      active ? null : (
+      active ? null : !sessionsHydrated ? (
+        <LoaderPane label="Starting François" size={40} />
+      ) : (
         <EmptyPaneMessage>
           select a session, or press <span className="app-inline-key">n</span> to start one
         </EmptyPaneMessage>

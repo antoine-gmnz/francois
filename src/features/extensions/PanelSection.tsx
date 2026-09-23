@@ -6,10 +6,12 @@
 // `log-tail` opens a stream instead and has its own component.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { EXT_PAGE_SIZE, type ExtensionInfo, type PanelInfo, type TableRow } from '../../../contract/extensions';
+import { EXT_PAGE_SIZE, type ExtensionInfo, type KeyValueRow, type PanelInfo, type TableRow } from '../../../contract/extensions';
 import { extensionsPanel } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { EmptyPane } from '../../ui/EmptyPane';
+import { LoaderCaret, Orbit } from '../../ui/Loaders';
 import ExtSectionError from './ExtSectionError';
 import ExtTable from './ExtTable';
 import {
@@ -143,6 +145,8 @@ export default function PanelSection({
         <span className="ext-section__header-right">
           {refreshMs !== null && gate === 'ready' && (
             <span className="ext-section__refresh" title={`refreshes every ${Math.round(refreshMs / 1000)}s`}>
+              {/* This is François's own poll ticking, not work it's watching someone
+                  else do — Orbit read as a flash on every tick. Back to the pulsing dot. */}
               <StatusDot color="var(--text-muted)" size={5} pulsing={state.status === 'loading'} />
               <span>{Math.round(refreshMs / 1000)}s</span>
             </span>
@@ -198,10 +202,10 @@ function Body({
     return <ExtSectionError error={state.error} minVersionLabel={extension.minVersionLabel} onRetry={onRetry} />;
   }
 
-  // FR-18: a skeleton in the section's OWN shape — a column of spinners reads
-  // as a broken app.
+  // FR-18: several sections can load at once, so a pane-owning Slabs would be
+  // wrong here — an inline caret naming the section instead.
   if (state.status === 'idle' || (state.status === 'loading' && isBlank(state, panel))) {
-    return <Skeleton primitive={panel.primitive} />;
+    return <LoaderCaret label={`loading ${sanitizeForDisplay(panel.label)}`} />;
   }
 
   // FR-49: a validated zero-row payload is a SUCCESS with its own calm copy.
@@ -212,11 +216,7 @@ function Body({
     return (
       <div className="ext-kv">
         {state.keyValue.map((row, i) => (
-          <div className="ext-kv__row" key={`${row.key}:${i}`}>
-            <StatusDot color={toneColor(row.tone)} size={6} pulsing={row.tone === 'busy'} />
-            <span className="ext-kv__key">{row.key}</span>
-            <span className="ext-kv__value">{row.value}</span>
-          </div>
+          <KvRow key={`${row.key}:${i}`} row={row} />
         ))}
       </div>
     );
@@ -250,27 +250,30 @@ function Body({
   );
 }
 
+/**
+ * One `key-value` row. A `busy` tone means the PROVIDER (an out-of-process
+ * extension, not François's own poll) is still working on that value — Orbit
+ * fits, but only once the wait clears 300ms, so a value that resolves fast
+ * never flashes it.
+ */
+function KvRow({ row }: { row: KeyValueRow }) {
+  const busy = row.tone === 'busy';
+  const showOrbit = useDelayedFlag(busy, 300);
+  return (
+    <div className="ext-kv__row">
+      <span className="ext-kv__status-slot">
+        {/* Under 300ms a busy row still reads as busy — its own colour, just not
+            yet animated — rather than flashing a spinner or leaving the slot blank. */}
+        {showOrbit ? <Orbit size={14} label={null} /> : <StatusDot color={toneColor(row.tone)} size={busy ? 8 : 6} />}
+      </span>
+      <span className="ext-kv__key">{row.key}</span>
+      <span className="ext-kv__value">{row.value}</span>
+    </div>
+  );
+}
+
 function isBlank(state: PanelState, panel: PanelInfo): boolean {
   if (panel.primitive === 'table') return state.cursor.rows.length === 0;
   if (panel.primitive === 'key-value') return state.keyValue.length === 0;
   return state.tiles.length === 0;
-}
-
-function Skeleton({ primitive }: { primitive: PanelInfo['primitive'] }) {
-  if (primitive === 'stat-row') {
-    return (
-      <div className="ext-stats">
-        {[0, 1, 2].map((i) => (
-          <div className="ext-stat ext-skeleton" key={i} />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <div className="ext-skeleton-rows">
-      {[0, 1, 2, 3].map((i) => (
-        <div className="ext-skeleton ext-skeleton-row" key={i} />
-      ))}
-    </div>
-  );
 }

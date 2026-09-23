@@ -10,11 +10,12 @@
 // makes is a pure function from accounts.ts.
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import type { AppError } from '../../../contract/common';
 import { accountAddCodex } from '../../lib/api';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { Button } from '../../ui/Button';
+import { Caret } from '../../ui/Loaders';
 import './accounts.css';
 import { codexAddPayload, codexSaveDisabled, endpointErrorLine } from './accounts';
 
@@ -50,6 +51,8 @@ export function CodexForm({ onCancel, onSaved }: Props) {
   }
 
   const resultLine = saveError !== null ? endpointErrorLine(saveError) : null;
+  // Nothing under 300ms — a save that settles fast never gets a caret flash.
+  const showSaveCaret = useDelayedFlag(saving, 300);
 
   return (
     <div className="acc-endpoint-form">
@@ -84,8 +87,7 @@ export function CodexForm({ onCancel, onSaved }: Props) {
 
       <div className="acc-endpoint-actions">
         <Button variant="primary" onClick={save} disabled={codexSaveDisabled(label, saving)}>
-          {saving && <Loader2 size={13} strokeWidth={1.75} className="acc-endpoint-spin" />}
-          Save
+          {showSaveCaret ? <Caret>Save</Caret> : 'Save'}
         </Button>
         <Button variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel

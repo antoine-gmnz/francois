@@ -3,6 +3,7 @@ import { isBusyStatus } from '../../../contract/fleet-board';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { CohorteInlineGate } from '../cohorte/CohorteSessionBits';
+import { Stitch } from '../../ui/Loaders';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { hasPendingQuestionBlock } from '../questions/question-card';
 import { dismissWorktreeNotice, isWorktreeNoticeDismissed } from '../sessions/worktree';
@@ -171,7 +172,7 @@ export default function ConversationView({
           same suppression). Indeterminate: no aria-valuenow. */}
       {showSkeleton && (
         <div className="conv-hydrating-bar" role="progressbar" aria-label="restoring transcript">
-          <div className="conv-hydrating-bar__thumb" />
+          <Stitch />
         </div>
       )}
 
