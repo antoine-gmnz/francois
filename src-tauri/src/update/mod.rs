@@ -47,7 +47,12 @@ pub const REPO: &str = "antoine-gmnz/francois";
 /// because it is exactly what `npm i -g francois@latest` will install.
 pub const REGISTRY_LATEST_URL: &str = "https://registry.npmjs.org/francois/latest";
 /// The verbatim command a manual install runs, and what the helper runs (FR-11/FR-14).
-pub const UPDATE_COMMAND: &str = "npm i -g francois@latest";
+///
+/// `--allowed-scripts=francois`: npm no longer runs a global package's install
+/// scripts unless they are allowed by name, and the postinstall IS the install —
+/// without it npm swaps the package in, downloads nothing, and the relaunch
+/// finds the old payload (or none at all).
+pub const UPDATE_COMMAND: &str = "npm i -g francois@latest --allowed-scripts=francois";
 /// FR-6: both HTTP calls.
 pub const HTTP_TIMEOUT_SECS: u64 = 10;
 /// contract `UpdateMethod`.
@@ -57,6 +62,30 @@ pub const METHOD_MANUAL: &str = "manual";
 pub const EXIT_WAIT_SECS: u64 = 120;
 /// FR-16: how long after the ack reaches the webview the core waits before exiting.
 pub const SHUTDOWN_GRACE_MS: u64 = 400;
+
+/// Where the app should sit for the rest of its life: the home directory, which
+/// no install ever replaces. `None` when there is no usable home.
+pub fn neutral_working_dir() -> Option<std::path::PathBuf> {
+    dirs::home_dir().filter(|home| home.is_dir())
+}
+
+/// Step off whatever directory the app was launched from, before anything is
+/// spawned.
+///
+/// A process's working directory is an open handle on that directory, and every
+/// child inherits it — including the `conhost.exe` each ConPTY runs in, which
+/// Windows creates in THIS process's cwd, not the shell's. Launched from the
+/// install directory (an old Start Menu shortcut, `cd`-ing into the package),
+/// those conhosts pinned it, and any one that outlived the app turned the next
+/// `npm i -g francois` into `EBUSY: resource busy or locked, rename`. Nothing in
+/// the app reads a relative path, so the launch directory is never needed.
+pub fn leave_launch_dir() {
+    if let Some(home) = neutral_working_dir() {
+        if let Err(e) = std::env::set_current_dir(&home) {
+            eprintln!("could not move to {}: {e}", home.display());
+        }
+    }
+}
 
 // ---------- contract shapes (contract/self-update.ts, mirrored) ----------
 
@@ -165,7 +194,7 @@ mod tests {
                 "method": "npm",
                 "notes": "### Fixes\n- a thing",
                 "notesUrl": "https://github.com/antoine-gmnz/francois/releases/tag/v0.16.0",
-                "command": "npm i -g francois@latest",
+                "command": "npm i -g francois@latest --allowed-scripts=francois",
                 "checkedAt": 1_700_000_000_000u64,
             })
         );
@@ -208,6 +237,15 @@ mod tests {
         );
         let back: UpdateApplyAck = serde_json::from_value(v).unwrap();
         assert_eq!(back, ack);
+    }
+
+    // The directory the app moves to at startup must exist and be the home —
+    // anything inside the install would pin it against the next update.
+    #[test]
+    fn neutral_working_dir_is_the_home_directory() {
+        let dir = neutral_working_dir().expect("a home directory must resolve in CI");
+        assert!(dir.is_dir());
+        assert_eq!(Some(dir), dirs::home_dir());
     }
 
     // FR-19: the state holds ONE check and a new one replaces it wholesale.

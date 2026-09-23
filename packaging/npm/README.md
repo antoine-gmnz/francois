@@ -3,8 +3,11 @@
 **Mission control for your Claude Code fleet** — installed without an installer.
 
 ```sh
-npm i -g francois
+npm i -g francois --allowed-scripts=francois
 ```
+
+`--allowed-scripts=francois` lets npm run this package's postinstall, which is
+what installs the app — without it npm installs only the launcher.
 
 Then launch it **from the Start Menu, Launchpad or your applications menu** like
 any other app — or type `francois` in a terminal, whichever you prefer.
@@ -66,7 +69,7 @@ Environment: `FRANCOIS_SKIP_DOWNLOAD=1` skips the postinstall download,
 
 Node version managers keep global npm packages in separate directories. After
 switching Node versions, a shortcut or taskbar pin can still open the previous
-copy even though `npm i -g francois` updated the active one.
+copy even though `npm i -g francois@latest --allowed-scripts=francois` updated the active one.
 
 Finish your sessions and quit Francois, then run `francois` in the terminal where
 you installed the update. Run `francois shortcut` there to refresh the desktop

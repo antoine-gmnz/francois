@@ -12,6 +12,15 @@ baked in at publish time, and registers it with your desktop (Start Menu shortcu
 app bundle in `~/Applications` on macOS, `.desktop` launcher on Linux). If the install itself
 fails, check:
 
+- **The install scripts were skipped.** If `npm i -g francois` finishes but `francois` says the
+  app payload is missing, npm did not run the postinstall. Recent npm only runs a global
+  package's install scripts when they are allowed by name — reinstall with
+  `npm i -g francois@latest --allowed-scripts=francois`.
+- **Windows: `EBUSY: resource busy or locked, rename …\francois`.** Something still holds a
+  handle inside the old package directory — usually a copy of Francois (or a terminal it
+  started) that is still running. Quit Francois, close its terminals, and run the install again.
+  Versions from this one on install the app under `%LOCALAPPDATA%\francois` instead, so the
+  package directory stays free.
 - **Node version.** Francois requires **Node 18+**. An older Node is the most common cause of a
   postinstall failure — check with `node --version` and upgrade if needed.
 - **Network access to GitHub releases.** The postinstall downloads from

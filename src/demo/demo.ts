@@ -259,7 +259,7 @@ function route(cmd: string, a: Args): unknown {
         updateAvailable: false,
         method: 'npm',
         notesUrl: 'https://github.com/antoine-gmnz/francois/releases/tag/v0.17.8',
-        command: 'npm i -g francois@latest',
+        command: 'npm i -g francois@latest --allowed-scripts=francois',
         checkedAt: T0,
       });
 

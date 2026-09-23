@@ -3,7 +3,8 @@
 
 /**
  * postinstall — fetch this platform's Francois build from its GitHub release and
- * unpack it into vendor/.
+ * unpack it: into %LOCALAPPDATA%\francois on Windows (see payloadDir), vendor/
+ * elsewhere. vendor/ always holds the install record.
  *
  * Why this package exists at all: Windows SmartScreen and macOS Gatekeeper key
  * off the Mark-of-the-Web / com.apple.quarantine attribute that a *browser*
@@ -27,6 +28,8 @@ const desktop = require('./lib/desktop.js');
 const {
   VENDOR_DIR,
   assetKey,
+  payloadDir,
+  prunePayloads,
   readManifest,
   resolveExecutable,
   supportedList,
@@ -135,6 +138,26 @@ function extract(archive, dest) {
   }
 }
 
+/**
+ * An empty directory to unpack into. vendor/ is ours to wipe; a per-version
+ * payload that cannot be wiped (a leftover process from the same version still
+ * holds it) is sidestepped with a suffixed sibling instead of failing the install.
+ */
+function freshPayloadDir(dir) {
+  if (dir !== VENDOR_DIR) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      dir = `${dir}-${Date.now()}`;
+    }
+  } else {
+    // The install record is rewritten below; the old payload goes.
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 async function main() {
   if (process.env.FRANCOIS_SKIP_DOWNLOAD) {
     log('FRANCOIS_SKIP_DOWNLOAD set — skipping the app download.');
@@ -154,7 +177,7 @@ async function main() {
   if (!manifest || !manifest.assets || !manifest.assets[key]) {
     fail(
       'this package has no release manifest, so there is nothing to download.\n' +
-        'That means it was not built by CI — install the published package with `npm i -g francois`.',
+        'That means it was not built by CI — install the published package with `npm i -g francois --allowed-scripts=francois`.',
     );
   }
 
@@ -179,17 +202,17 @@ async function main() {
       );
     }
 
-    fs.rmSync(VENDOR_DIR, { recursive: true, force: true });
     fs.mkdirSync(VENDOR_DIR, { recursive: true });
-    extract(archive, VENDOR_DIR);
+    const target = freshPayloadDir(payloadDir({ version: manifest.appVersion, channel: manifest.channel }));
+    extract(archive, target);
 
     if (process.platform === 'darwin') {
       // Belt and braces: npm downloads never carry com.apple.quarantine, but a
       // user-supplied FRANCOIS_DOWNLOAD_BASE or a proxy could. Best-effort.
-      spawnSync('xattr', ['-dr', 'com.apple.quarantine', VENDOR_DIR], { stdio: 'ignore' });
+      spawnSync('xattr', ['-dr', 'com.apple.quarantine', target], { stdio: 'ignore' });
     }
 
-    const unpacked = resolveExecutable();
+    const unpacked = resolveExecutable(target);
     if (!unpacked) fail(`the ${asset.name} archive did not contain the app.`);
 
     // Register with the OS so Francois launches from the Start Menu / Launchpad /
@@ -213,6 +236,10 @@ async function main() {
       appVersion: manifest.appVersion,
       tag: manifest.tag,
     });
+
+    // Older versions' payloads, now that nothing points at them. Anything still
+    // pinned by a live process stays until the next install.
+    if (target !== VENDOR_DIR) prunePayloads(path.dirname(target), target);
 
     log('installed.');
     for (const note of integration.notes) log(`  ${note}`);

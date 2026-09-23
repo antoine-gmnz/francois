@@ -283,7 +283,7 @@ that owns the feature — never in a new top-level file.
   (postinstall) downloads + verifies + unpacks, `uninstall.js` (preuninstall) unregisters,
   `lib/platform.js` resolves the asset and the executable, `lib/desktop.js` owns the
   per-OS desktop integration, `bin/francois.js` is the launcher. `manifest.json` and
-  `vendor/` are produced at publish/install time and are gitignored.
+  `vendor/` are produced at publish/install time and are gitignored. `vendor/install.json` is always the install record; on Windows the payload itself unpacks to `%LOCALAPPDATA%\francois\app-<version>\` — outside the package, so nothing the app leaves running can make npm's rename of the package fail with EBUSY.
 - **scripts** (`scripts/`): helpers CI runs, **not a surface** either. Plain ESM `.mjs`
   with zero dependencies, so a workflow can `node` them straight after `checkout`
   with no build and no install. Split pure-from-I/O the same way everywhere:

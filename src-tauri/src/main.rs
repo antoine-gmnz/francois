@@ -18,6 +18,8 @@ use tauri::RunEvent;
 use tauri::Manager;
 
 fn main() {
+    // Before any child — PTY, `claude`, git — inherits the launch directory.
+    update::leave_launch_dir();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())

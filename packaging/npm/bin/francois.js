@@ -199,7 +199,7 @@ function main() {
   // run somewhere the desktop wasn't reachable (SSH, a container, a CI image).
   if (argv[0] === 'shortcut') {
     const record = readInstallRecord();
-    if (!record) die('nothing is installed yet — run `npm i -g francois` first.');
+    if (!record) die('nothing is installed yet — run `npm i -g francois --allowed-scripts=francois` first.');
 
     if (argv.includes('--remove')) {
       desktop.remove(record);
@@ -239,7 +239,7 @@ function main() {
           'Build from source: https://github.com/antoine-gmnz/francois#build-from-source',
       );
     }
-    die('the app payload is missing — reinstall with `npm i -g francois`.');
+    die('the app payload is missing — reinstall with `npm i -g francois@latest --allowed-scripts=francois`.');
   }
 
   warnIfWebView2Missing();

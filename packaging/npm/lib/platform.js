@@ -67,6 +67,62 @@ function writeInstallRecord(record, vendorDir = VENDOR_DIR) {
 }
 
 /**
+ * Where the app itself lives on Windows: `%LOCALAPPDATA%\francois` (or
+ * `francois-dev`), NOT vendor/.
+ *
+ * npm replaces this package by renaming its directory, and on Windows a rename
+ * fails with EBUSY while ANY process holds a handle inside it. A running app's
+ * image is such a handle, and so is the working directory of every process it
+ * leaves behind — orphaned ConPTY `conhost.exe`s sat in vendor/ and turned every
+ * `npm i -g francois` after them into EBUSY. Outside the package, nothing the
+ * app does can block npm. null when LOCALAPPDATA is unset.
+ */
+function windowsAppRoot(channel, localAppData = process.env.LOCALAPPDATA) {
+  if (!localAppData) return null;
+  return path.join(localAppData, channel === 'dev' ? 'francois-dev' : 'francois');
+}
+
+const PAYLOAD_PREFIX = 'app-';
+
+/**
+ * The directory a version unpacks into. One per version, so a payload some
+ * leftover process still pins never blocks installing the next one — it is
+ * merely left for a later prune (see prunePayloads). Everywhere but Windows the
+ * payload stays in vendor/: nothing there holds a directory against a rename.
+ */
+function payloadDir({ version, channel, platform = process.platform, localAppData = process.env.LOCALAPPDATA }) {
+  if (platform !== 'win32') return VENDOR_DIR;
+  const root = windowsAppRoot(channel, localAppData);
+  return root ? path.join(root, `${PAYLOAD_PREFIX}${version}`) : VENDOR_DIR;
+}
+
+/**
+ * Best-effort removal of every payload under `root` except `keep`. A payload
+ * still pinned by a live process fails to delete and is simply tried again on
+ * the next install. Returns the directories it removed.
+ */
+function prunePayloads(root, keep) {
+  let entries;
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return [];
+  }
+  const removed = [];
+  for (const entry of entries) {
+    const dir = path.join(root, entry);
+    if (!entry.startsWith(PAYLOAD_PREFIX) || path.resolve(dir) === path.resolve(keep)) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch {
+      // Still in use — next install.
+    }
+  }
+  return removed;
+}
+
+/**
  * Locate the runnable binary. Prefers what the postinstall recorded; falls back
  * to scanning vendor/ so a payload unpacked by hand still runs.
  *
@@ -113,9 +169,12 @@ module.exports = {
   SUPPORTED,
   VENDOR_DIR,
   assetKey,
+  payloadDir,
+  prunePayloads,
   readInstallRecord,
   readManifest,
   resolveExecutable,
   supportedList,
+  windowsAppRoot,
   writeInstallRecord,
 };

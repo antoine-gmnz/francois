@@ -32,7 +32,7 @@ export interface UpdateCheck {
   notes?: string;
   /** Release page for v<latest>. Always present, even when `notes` is not. */
   notesUrl: string;
-  /** Verbatim command a manual install should run: 'npm i -g francois@latest'. */
+  /** Verbatim command a manual install should run: 'npm i -g francois@latest --allowed-scripts=francois'. */
   command: string;
   /** epoch ms this check completed. */
   checkedAt: number;
