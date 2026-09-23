@@ -407,6 +407,9 @@
   gap: var(--space-8);
 }
 .acc-cli-install {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
   background: var(--bg-raised);
   border: 0;
   border-radius: var(--radius-base);

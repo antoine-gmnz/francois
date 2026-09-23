@@ -4,7 +4,7 @@ import type { AppError } from '../../../contract/common';
 import type { DiffFileSummary, DiffHunk, DiffLine, DiffSummary, FileDiff } from '../../../contract/diff-view';
 import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { Icon } from '../../ui/Icon';
-import { Slabs } from '../../ui/Loaders';
+import { LoaderPane, Slabs } from '../../ui/Loaders';
 import { DiffTree } from './DiffTree';
 import { computeIntralineSpans, type IntralineSpan } from './intraline';
 import { isReviewed } from './review-state';
@@ -107,7 +107,11 @@ export function DiffListBody({
             <EmptyState text="Not a git repository — initialize it with `git init` in the shell." />
           ) : summaryError ? (
             <EmptyState text={summaryError.message} error />
-          ) : summary && files.length === 0 ? (
+          ) : summary === null ? (
+            // loaders: the first hydrate — nothing to show yet, so the pane
+            // owns the area (Figma "33 · Loaders" LoaderPane).
+            <LoaderPane label="Reading changes…" />
+          ) : files.length === 0 ? (
             <EmptyState text="Working tree clean" />
           ) : (
             <DiffBody loading={fileDiffLoading} error={fileDiffError} diff={fileDiff} scrollRef={bodyScrollRef} />

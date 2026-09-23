@@ -17,6 +17,7 @@ import type { WorkflowAgentInfo, WorkflowPendingAsk } from '../../../contract/wo
 import { workflowsScript } from '../../lib/api';
 import { Chip } from '../../ui/Chip';
 import { Icon } from '../../ui/Icon';
+import { Orbit, LoaderPane } from '../../ui/Loaders';
 import { StateIcon } from '../../ui/StateIcon';
 import { AgentBlockRow } from '../agents/AgentView';
 import { isAtBottom } from '../agents/agent-trail';
@@ -244,7 +245,11 @@ function RunHeader({
   return (
     <div className="wfd-run">
       <div className="wfd-run__row">
-        <StateIcon kind={workflowStateKind(status)} size={13} />
+        {status === 'running' ? (
+          <Orbit size={14} label={run?.name ?? 'workflow'} />
+        ) : (
+          <StateIcon kind={workflowStateKind(status)} size={13} />
+        )}
         <span className="wfd-run__name truncate">{run?.name ?? 'workflow'}</span>
         <span className="wfd-run__status" style={{ color }}>
           {status}
@@ -295,7 +300,11 @@ function TranscriptHeader({ agent, now }: { agent: WorkflowAgentInfo; now: numbe
   return (
     <div className="wfd-col__head">
       <div className="wfd-col__head-row">
-        <StateIcon kind={workflowStateKind(agent.status)} size={13} />
+        {agent.status === 'running' ? (
+          <Orbit size={14} label={agent.agentType} />
+        ) : (
+          <StateIcon kind={workflowStateKind(agent.status)} size={13} />
+        )}
         <span className="wfd-col__type">{agent.agentType}</span>
         {agent.model && <span className="wfd-agent__model">{agent.model}</span>}
         <span className="wfd-col__status" style={{ color }}>
@@ -322,7 +331,7 @@ function AgentTranscript({
   state: WorkflowTranscriptState;
   sessionId: string;
 }) {
-  if (state.loading) return null; // the panel loading convention: render nothing
+  if (state.loading) return <LoaderPane size={16} label="Loading transcript…" />;
   if (state.error) return <div className="wfd-col__error">{state.error.message}</div>;
   const earlier = earlierBlocksNotice(state.dropped);
   return (
@@ -346,7 +355,7 @@ function AgentTranscript({
 /** §2d: the `.js` the harness wrote, read-only and unhighlighted. */
 function ScriptSource({ state }: { state: WorkflowScriptState }) {
   if (state.error) return <div className="wfd-col__error">{state.error.message}</div>;
-  if (state.script === null) return null; // in flight
+  if (state.script === null) return <LoaderPane size={16} label="Loading script…" />; // in flight
   return (
     <>
       <div className="wfd-script__path">{state.script.path}</div>

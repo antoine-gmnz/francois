@@ -32,7 +32,7 @@ import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
 import StepDetailPanel from './StepDetailPanel';
-import { Caret } from '../../ui/Loaders';
+import { Caret, LoaderCaret } from '../../ui/Loaders';
 import { toolResultChips } from './transcript-turns';
 import './conversation.css';
 
@@ -318,7 +318,11 @@ function ToolRowImpl({
       </div>
       {open && sessionId && b.hasDetail && (
         <div className="step-detail-wrap">
-          {loading && <div className="step-detail__loading">loading…</div>}
+          {loading && (
+            <div className="step-detail__loading">
+              <LoaderCaret label="loading" />
+            </div>
+          )}
           {fetchError && <div className="step-detail__error">{fetchError}</div>}
           {detail && <StepDetailPanel detail={detail} sessionId={sessionId} onOpenShell={onOpenShell} />}
         </div>

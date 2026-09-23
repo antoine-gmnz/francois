@@ -8,7 +8,7 @@ import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { HintBar } from '../../ui/HintBar';
-import { Orbit } from '../../ui/Loaders';
+import { LoaderCaret, Orbit } from '../../ui/Loaders';
 import { StatusDot } from '../../ui/StatusDot';
 import { approvalSummary, approveAllDecision, canReconnect, detailText, dotColor, hasApprovalWork, isApprovable, scopeColor, scopeText } from './mcp';
 import { useAttachFlow } from './useAttachFlow';
@@ -202,7 +202,8 @@ function ApprovalBanner({
           onClick={onApproveAll}
           className={busy ? 'mcp-action-link mcp-action-link--dim' : 'mcp-action-link'}
         >
-          {busy ? 'saving…' : 'approve all'}
+          {busy && <LoaderCaret />}
+          approve all
         </span>
       </div>
       <div className="mcp-approval-note">
@@ -319,7 +320,7 @@ function DetailPopover({
 
       <div className="mcp-popover-body">
         {loading ? (
-          <span className="mcp-popover-loading">loading…</span>
+          <LoaderCaret label="loading" />
         ) : error ? (
           <span className="mcp-popover-error">{error.message}</span>
         ) : data ? (

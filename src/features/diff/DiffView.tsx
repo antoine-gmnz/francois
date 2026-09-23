@@ -58,7 +58,12 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
   const navigator = useDiffNavigator({ files, deselected, selectedPath, setSelectedPath });
 
   const [commit, setCommit] = useState<CommitState>({ open: false, message: '', error: null, success: null });
-  const [busy, setBusy] = useState(false);
+  // loaders: WHICH mutation is in flight, not just whether one is — so the
+  // Stage-all/Commit buttons' `busy` caret only lights the one actually
+  // clicked (they cannot run concurrently either way; `stageAll`/`doCommit`
+  // both bail via `requestBusy`/`busy` below while the other is in flight).
+  const [busyAction, setBusyAction] = useState<'stage' | 'commit' | null>(null);
+  const busy = busyAction !== null;
 
   const commitInputRef = useRef<HTMLInputElement>(null);
   const bodyScrollRef = useRef<HTMLDivElement>(null);
@@ -79,11 +84,11 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
 
   const stageAll = useCallback(() => {
     if (requestBusy || notRepo || files.length === 0) return; // FR-22 inert
-    setBusy(true);
+    setBusyAction('stage');
     void diffStageAll(sessionId)
       .then(() => loadSummary(sessionId)) // fresh summary (FR-4 flow)
       .finally(() => {
-        if (mountedRef.current) setBusy(false);
+        if (mountedRef.current) setBusyAction(null);
       });
   }, [requestBusy, notRepo, files.length, sessionId, loadSummary, mountedRef]);
 
@@ -102,7 +107,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
     const msg = c.message.trim();
     const paths = selectedPathsRef.current;
     if (!c.open || !msg || busy || paths.length === 0) return; // FR-24 blank / no selection = no-op
-    setBusy(true);
+    setBusyAction('commit');
     void diffCommit(sessionId, msg, paths)
       .then((res) => {
         if (res.ok) {
@@ -116,7 +121,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
       })
       .catch(() => setCommit((cur) => ({ ...cur, error: 'commit failed unexpectedly' })))
       .finally(() => {
-        if (mountedRef.current) setBusy(false);
+        if (mountedRef.current) setBusyAction(null);
       });
   }, [busy, sessionId, loadSummary, mountedRef]);
 
@@ -162,6 +167,8 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
           inputRef={commitInputRef}
           stageInert={requestBusy || files.length === 0}
           commitInert={requestBusy || selectedCount === 0}
+          stageBusy={busyAction === 'stage'}
+          commitBusy={busyAction === 'commit'}
           selectedCount={selectedCount}
           totalFiles={files.length}
           hiddenChecked={navigator.hiddenChecked}
@@ -182,7 +189,7 @@ export default function DiffView({ sessionId }: { sessionId: string }) {
         selectedCount={selectedCount}
         notRepo={notRepo}
         summaryError={summaryError}
-        summary={summary}
+        summary={summary}
         fileDiff={fileDiff}
         fileDiffError={fileDiffError}
         fileDiffLoading={fileDiffLoading}
@@ -210,6 +217,8 @@ function ReviewBar({
   inputRef,
   stageInert,
   commitInert,
+  stageBusy,
+  commitBusy,
   selectedCount,
   totalFiles,
   hiddenChecked,
@@ -225,6 +234,8 @@ function ReviewBar({
   inputRef: React.RefObject<HTMLInputElement>;
   stageInert: boolean;
   commitInert: boolean;
+  stageBusy: boolean;
+  commitBusy: boolean;
   selectedCount: number;
   totalFiles: number;
   hiddenChecked: number;
@@ -269,10 +280,10 @@ function ReviewBar({
                 aria-label="Commit message"
                 onChange={(e) => setMessage(e.target.value)}
               />
-              <Button variant="ghost" onClick={onCancel} shortcut="esc">
+              <Button variant="ghost" onClick={onCancel} shortcut="esc" disabled={commitBusy}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={onCommit} disabled={commit.message.trim() === ''} shortcut="⏎">
+              <Button variant="primary" onClick={onCommit} disabled={commit.message.trim() === ''} busy={commitBusy} shortcut="⏎">
                 Commit
               </Button>
             </div>
@@ -281,7 +292,7 @@ function ReviewBar({
         )
       ) : (
         <>
-          <Button onClick={onStage} disabled={stageInert} title="Stage all  [s]">
+          <Button onClick={onStage} disabled={stageInert} busy={stageBusy} title="Stage all  [s]">
             Stage all
           </Button>
           <Button variant="primary" onClick={onOpenCommit} disabled={commitInert} title="Commit the files ticked in the tree  [c]">

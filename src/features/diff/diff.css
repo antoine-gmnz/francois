@@ -317,6 +317,9 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* loaders: anchors the refresh LoaderStitch (DiffListBody), pinned to this
+     pane's top edge rather than the whole DIFF tab. */
+  position: relative;
 }
 /* file header (135:5238) */
 .diff-file-header {

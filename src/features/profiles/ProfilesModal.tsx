@@ -324,8 +324,8 @@ if (p.kind === 'legacy') setDraft(draftFromProfile(p));
                 { (
                   <>
                     {!confirmingRemove && (
-                      <Button variant="primary" onClick={() => void save()} disabled={!canSave || saving}>
-                        {saving ? 'saving…' : 'Save profile'}
+                      <Button variant="primary" onClick={() => void save()} busy={saving} disabled={!canSave || saving}>
+                        Save profile
                       </Button>
                     )}
                     {selected && (

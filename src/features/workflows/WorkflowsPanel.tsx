@@ -14,7 +14,7 @@ import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { sessionCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
-import { Orbit } from '../../ui/Loaders';
+import { LoaderPane, Orbit } from '../../ui/Loaders';
 import { PanelHeader } from '../../ui/PanelHeader';
 import { StatusDot } from '../../ui/StatusDot';
 import { useWorkflowsFeed } from './useWorkflowsFeed';
@@ -102,7 +102,9 @@ export default function WorkflowsPanel({ sessionId }: { sessionId: string | null
           <CapabilityNotice reason={capability.reason ?? ''} />
         ) : listError ? (
           <div className="workflows-error-text">{listError.message}</div>
-        ) : loading ? null : list.length === 0 ? (
+        ) : loading ? (
+          <LoaderPane size={16} label="Loading workflows…" />
+        ) : list.length === 0 ? (
           <div className="workflows-empty">{EMPTY_LABEL}</div>
         ) : (
           list.map((run) => (

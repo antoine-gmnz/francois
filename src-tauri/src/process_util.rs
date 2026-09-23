@@ -682,10 +682,24 @@ mod bounded_run_tests {
         FakeScript { dir, path }
     }
 
+    /// Spawns the fixture. On unix it runs through `/bin/sh <path>` rather than
+    /// exec'ing the file: the file was opened for writing a moment ago, and a
+    /// test on another thread that forks in that window leaves a child holding
+    /// the write fd until its own exec — exec'ing the script then fails with
+    /// ETXTBSY (a known std::process race), which surfaced in CI as an empty
+    /// stdout. `sh` only READS the script, so the race cannot bite.
+    fn spawn_script(script: &FakeScript) -> CommandBuilder {
+        if cfg!(windows) {
+            spawn(&script.path)
+        } else {
+            spawn("/bin/sh").arg(&script.path)
+        }
+    }
+
     #[test]
     fn a_quick_child_reports_its_output_undecoded() {
         let script = fake_script("#!/bin/sh\necho 0.85.1\n", "@echo off\r\necho 0.85.1\r\n");
-        let run = spawn(&script.path).run_bounded(std::time::Duration::from_secs(5), 64 * 1024);
+        let run = spawn_script(&script).run_bounded(std::time::Duration::from_secs(5), 64 * 1024);
         assert!(!run.timed_out && !run.spawn_failed);
         assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0.85.1");
     }
@@ -697,7 +711,8 @@ mod bounded_run_tests {
             "@echo off\r\n:loop\r\ngoto loop\r\n",
         );
         let started = std::time::Instant::now();
-        let run = spawn(&script.path).run_bounded(std::time::Duration::from_millis(80), 64 * 1024);
+        let run =
+            spawn_script(&script).run_bounded(std::time::Duration::from_millis(80), 64 * 1024);
         assert!(run.timed_out);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
@@ -716,7 +731,7 @@ mod bounded_run_tests {
         // as timed out (the bug this helper exists to fix).
         let script = fake_script("#!/bin/sh\nhead -c 200000 /dev/zero | tr '\\0' 'a'\n", "");
         let started = std::time::Instant::now();
-        let run = spawn(&script.path).run_bounded(std::time::Duration::from_secs(5), 64 * 1024);
+        let run = spawn_script(&script).run_bounded(std::time::Duration::from_secs(5), 64 * 1024);
         assert_eq!(run.stdout.len(), 64 * 1024);
         assert!(!run.timed_out);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));

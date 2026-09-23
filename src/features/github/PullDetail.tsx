@@ -8,6 +8,7 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
+import { Orbit, LoaderPane } from '../../ui/Loaders';
 import { openOnGithub, openSession, startSessionOnBranch } from './actions';
 import { sessionForBranch } from './linkage';
 import { MergeModal } from './MergeModal';
@@ -73,7 +74,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
   if (loading && !detail) {
     return (
       <div className="pull-detail pull-detail--empty">
-        <span className="pull-detail__loading">Loading…</span>
+        <LoaderPane label="Loading pull request…" />
       </div>
     );
   }
@@ -147,7 +148,11 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
               <div className="pull-card__list">
                 {detail.checkRuns.map((run) => (
                   <div className="pull-check-row" key={run.name}>
-                    <Icon name={run.state === 'failed' ? 'x' : 'check'} size={13} />
+                    {run.state === 'pending' ? (
+                      <Orbit size={14} label={`${run.name} running`} />
+                    ) : (
+                      <Icon name={run.state === 'failed' ? 'x' : 'check'} size={13} />
+                    )}
                     <span className="pull-check-row__name">{run.name}</span>
                     <span className="pull-row__sp" />
                     {run.state === 'failed' ? (

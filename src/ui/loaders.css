@@ -177,3 +177,50 @@
     }
   }
 }
+
+/* LoaderPane — Slabs owning the area: centred, a line of text under it. */
+.fr-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-14);
+  min-height: 0;
+  height: 100%;
+  padding: var(--space-24);
+  color: var(--text-primary);
+  text-align: center;
+}
+.fr-pane__label {
+  font: var(--type-ui);
+  color: var(--text-muted);
+}
+.fr-pane__detail {
+  margin-top: calc(-1 * var(--space-8));
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+
+/* LoaderStitch — pins the hairline to an edge of the nearest positioned
+   ancestor, above the content it never blocks. */
+.fr-edge {
+  pointer-events: none;
+}
+.fr-edge--top,
+.fr-edge--bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 2;
+}
+.fr-edge--top {
+  top: 0;
+}
+.fr-edge--bottom {
+  bottom: 0;
+}
+.fr-edge--top .fr-stitch,
+.fr-edge--bottom .fr-stitch {
+  border-radius: 0;
+}

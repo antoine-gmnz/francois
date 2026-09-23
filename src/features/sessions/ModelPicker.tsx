@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { Star } from 'lucide-react';
 import type { ModelInfo } from '../../../contract/common';
 import { useDismiss } from '../../lib/hooks/useDismiss';
+import { LoaderCaret } from '../../ui/Loaders';
 import {
   activeFamily,
   activeModelId,
@@ -198,7 +199,15 @@ export default function ModelPicker({
         className={`model-picker__trigger${disabled ? ' model-picker__trigger--disabled' : ''}`}
       >
         <span className={`model-picker__trigger-label${selected ? ' model-picker__trigger-label--selected' : ''}`}>
-          {selected ? selected.label : loading ? 'Select a model' : models.length === 0 ? (emptyMessage ?? 'No models available') : 'Select a model'}
+          {selected ? (
+            selected.label
+          ) : loading ? (
+            <LoaderCaret label="loading models" />
+          ) : models.length === 0 ? (
+            (emptyMessage ?? 'No models available')
+          ) : (
+            'Select a model'
+          )}
         </span>
         <span className="model-picker__caret">▾</span>
       </button>
