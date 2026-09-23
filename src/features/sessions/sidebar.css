@@ -326,10 +326,9 @@
   cursor: pointer;
   color: var(--text-dim);
 }
-/* FR-18/FR-20: dirty, unpushed, or unknown — the checkbox is disabled and the
-   reason is shown rather than hidden behind a tooltip. */
-.context-menu__worktree-opt--blocked {
-  cursor: default;
+/* FR-18/FR-20: dirty, unpushed, or unknown — still removable (with force), but
+   the reason is shown rather than hidden behind a tooltip. */
+.context-menu__worktree-opt--warn {
   color: var(--warn);
 }
 .context-menu__worktree-opt input {
@@ -359,6 +358,11 @@
 }
 .context-menu__action--danger {
   color: var(--error);
+}
+.context-menu__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+  border-color: transparent;
 }
 .context-menu__action--danger:hover {
   color: var(--error-bright);

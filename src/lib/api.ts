@@ -226,8 +226,9 @@ export const sessionWorktreeProbe = (req: WorktreeProbeRequest) =>
 export const sessionWorktreeStatus = (sessionId: SessionId) =>
   ipc<Result<WorktreeStatusData>>('session_worktree_status', { sessionId });
 // session-worktree §5: `git worktree remove` + prune; never deletes the branch (FR-20).
-export const sessionWorktreeRemove = (sessionId: SessionId) =>
-  ipc<Result<null>>('session_worktree_remove', { sessionId });
+// `force` removes a dirty/unpushed worktree anyway (uncommitted files are lost).
+export const sessionWorktreeRemove = (sessionId: SessionId, force = false) =>
+  ipc<Result<null>>('session_worktree_remove', { sessionId, force });
 export const sessionPickDirectory = () => ipc<Result<PickDirectoryData>>('session_pick_directory');
 export const sessionSend = (sessionId: SessionId, blockId: string, text: string) =>
   ipc<Result<{ queued: boolean; queuePosition?: number }>>('session_send', { sessionId, blockId, text });

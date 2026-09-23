@@ -224,9 +224,10 @@ export default function Sidebar({ home }: { home: string }) {
   // Close the context menu on any outside interaction.
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
+    // A removal in flight keeps the menu open so its loader stays visible.
+    const close = () => setMenu((m) => (m?.removing ? m : null));
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null);
+      if (e.key === 'Escape') close();
     };
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
@@ -258,10 +259,13 @@ export default function Sidebar({ home }: { home: string }) {
   // metadata), but session_remove always follows regardless of its outcome — a
   // failed directory removal surfaces as a toast, never blocks removing the
   // session from Francois.
+  // The user already saw the dirty/unpushed warning and ticked the box, so the
+  // worktree goes with force; the branch (and any unpushed commits) is kept.
   const doRemove = async (sessionId: string, removeWorktree: boolean) => {
     if (sessionIsRetired(useStore.getState().sessions.find((s) => s.id === sessionId))) return;
+    setMenu((m) => (m ? { ...m, removing: true } : m));
     if (removeWorktree) {
-      const wtRes = await sessionWorktreeRemove(sessionId);
+      const wtRes = await sessionWorktreeRemove(sessionId, true);
       if (!wtRes.ok) showToast(wtRes.error.message, 'error');
     }
     const res = await sessionRemove(sessionId);
@@ -273,7 +277,7 @@ export default function Sidebar({ home }: { home: string }) {
       prunePaletteSession(sessionId);
       setMenu(null);
     } else {
-      setMenu((m) => (m ? { ...m, error: res.error } : m));
+      setMenu((m) => (m ? { ...m, removing: false, error: res.error } : m));
     }
   };
 
