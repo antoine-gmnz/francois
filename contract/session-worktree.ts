@@ -79,10 +79,13 @@ export interface WorktreeStatusData {
 // ---------- francois:session:worktreeRemove ----------
 export interface WorktreeRemoveRequest {
   sessionId: SessionId;
+  /** Skip the FR-18 re-check and run `git worktree remove --force --force` — uncommitted files are discarded. */
+  force?: boolean;
 }
 // invoke('session_worktree_remove', req): Promise<Result<null>>
-//   Runs `git worktree remove <path>` then `git worktree prune`. NEVER --force, NEVER deletes the
-//   branch. Re-checks FR-18 server-side and refuses with WORKTREE_DIRTY.
+//   Runs `git worktree remove <path>` then `git worktree prune`. NEVER deletes the branch, so
+//   unpushed commits survive on it. Without `force`, re-checks FR-18 server-side and refuses
+//   with WORKTREE_DIRTY.
 // errors: 'SESSION_NOT_FOUND' | 'WORKTREE_NOT_FOUND' | 'WORKTREE_DIRTY' | 'GIT_ERROR' | 'INTERNAL'
 
 // ---------- pure frontend helpers (owned here, unit-tested) ----------

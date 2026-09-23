@@ -806,12 +806,19 @@ fn removal_block_reason(status: &WorktreeStatusData) -> String {
     }
 }
 
-/// francois:session:worktreeRemove (FR-19/FR-20). NEVER `--force`, NEVER
-/// deletes the branch. Does not touch the session registry — that is
+/// francois:session:worktreeRemove (FR-19/FR-20). NEVER deletes the branch —
+/// so unpushed commits survive on it. Without `force`, a dirty/unpushed
+/// worktree is refused with WORKTREE_DIRTY; with it, the check is skipped and
+/// git runs `worktree remove --force --force` (discarding uncommitted files and
+/// overriding a lock). Does not touch the session registry — that is
 /// `session_remove`'s job; the frontend orchestrates both per its confirm step.
 /// Split from the `#[tauri::command]` wrapper for the same testability reason
 /// as `worktree_status_impl`.
-pub fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResult<Option<()>> {
+pub fn worktree_remove_impl(
+    engine: &Engine,
+    session_id: &str,
+    force: bool,
+) -> IpcResult<Option<()>> {
     if let Err(e) = engine.ensure_available(session_id) {
         return e.into();
     }
@@ -842,15 +849,23 @@ pub fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResult<Opti
             "the worktree directory no longer exists",
         );
     }
-    let base_ref = created_branch.then_some(base_ref);
-    match compute_status(&host, &path, base_ref.as_deref()) {
-        Ok(status) if status.dirty || status.unpushed => {
-            return err(ErrorCode::WorktreeDirty, removal_block_reason(&status));
+    if !force {
+        let base_ref = created_branch.then_some(base_ref);
+        match compute_status(&host, &path, base_ref.as_deref()) {
+            Ok(status) if status.dirty || status.unpushed => {
+                return err(ErrorCode::WorktreeDirty, removal_block_reason(&status));
+            }
+            Ok(_) => {}
+            Err(e) => return e.into(),
         }
-        Ok(_) => {}
-        Err(e) => return e.into(),
     }
-    match git_routed(&host, &source_repo_root, &["worktree", "remove", &path]) {
+    // Twice: once for uncommitted/untracked files, once more for a locked worktree.
+    let args: &[&str] = if force {
+        &["worktree", "remove", "--force", "--force", &path]
+    } else {
+        &["worktree", "remove", &path]
+    };
+    match git_routed(&host, &source_repo_root, args) {
         Ok(o) if o.code == 0 => {
             let _ = git_routed(&host, &source_repo_root, &["worktree", "prune"]);
             ok(None)
@@ -871,8 +886,9 @@ pub fn worktree_remove_impl(engine: &Engine, session_id: &str) -> IpcResult<Opti
 pub fn session_worktree_remove(
     engine: State<'_, Engine>,
     session_id: String,
+    force: Option<bool>,
 ) -> IpcResult<Option<()>> {
-    worktree_remove_impl(&engine, &session_id)
+    worktree_remove_impl(&engine, &session_id, force.unwrap_or(false))
 }
 
 #[cfg(test)]

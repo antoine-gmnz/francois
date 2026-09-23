@@ -1,5 +1,7 @@
 import { Check, CircleAlert, Columns2, Copy, ExternalLink, Settings, Trash2, TriangleAlert } from 'lucide-react';
 import type { RefObject } from 'react';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
+import { Caret } from '../../ui/Loaders';
 import type { AppError, SessionId, SessionWorktree } from '../../../contract/common';
 import type { EditorId, EditorInfo } from '../../../contract/open-in-vscode';
 import { editorMenuLabel } from '../../../contract/open-in-vscode';
@@ -27,6 +29,8 @@ export interface MenuState {
   // failure must never block removing the session itself.
   worktreeStatusFailed?: boolean;
   removeWorktree?: boolean;
+  /** Remove clicked and still in flight — the confirm step is locked and shows a loader. */
+  removing?: boolean;
   /** Flips to the "copied" glyph+label for a beat after Copy path succeeds. */
   copied?: boolean;
 }
@@ -88,15 +92,18 @@ export function SessionContextMenu({
   onRemove,
   onOpenInEditor,
 }: SessionContextMenuProps): JSX.Element {
-  // session-worktree FR-18/FR-20: a dirty/unpushed worktree — or a status check
-  // that failed outright — disables the removal checkbox without ever blocking
-  // removal of the session itself.
-  const blockReason = menu.worktreeStatusFailed
+  // A dirty/unpushed worktree — or a status check that failed outright — no
+  // longer blocks its removal: the reason is shown as a warning, and ticking the
+  // box removes it with force. The branch is always kept, so unpushed commits
+  // survive; only uncommitted files are lost.
+  const warnReason = menu.worktreeStatusFailed
     ? 'could not check worktree status'
     : menu.worktreeStatus
       ? worktreeRemovalBlockReason(menu.worktreeStatus)
       : null;
   const removeWorktree = menu.removeWorktree ?? false;
+  const removing = menu.removing ?? false;
+  const showRemovingCaret = useDelayedFlag(removing, 300);
   return (
     // stopPropagation keeps a click inside the menu (e.g. "Remove session" →
     // confirm) from also reaching the window-level outside-click listener that
@@ -188,22 +195,32 @@ export function SessionContextMenu({
               ) : menu.worktreeGone ? (
                 <span className="context-menu__worktree-hint">worktree already removed</span>
               ) : (
-                <label className={blockReason ? 'context-menu__worktree-opt context-menu__worktree-opt--blocked' : 'context-menu__worktree-opt'}>
-                  <input type="checkbox" checked={blockReason ? false : removeWorktree} disabled={!!blockReason} onChange={onToggleRemoveWorktree} />
+                <label className={warnReason ? 'context-menu__worktree-opt context-menu__worktree-opt--warn' : 'context-menu__worktree-opt'}>
+                  <input type="checkbox" checked={removeWorktree} disabled={removing} onChange={onToggleRemoveWorktree} />
                   <span>
                     Also remove the worktree at <code title={worktree.path}>{worktree.path}</code>
-                    {blockReason && <div className="context-menu__worktree-reason">{blockReason}</div>}
+                    {warnReason && (
+                      <div className="context-menu__worktree-reason">
+                        {warnReason} — {menu.worktreeStatus?.dirty ? 'uncommitted changes will be lost; ' : ''}the branch is kept
+                      </div>
+                    )}
                   </span>
                 </label>
               )}
             </div>
           )}
           <div className="context-menu__actions">
-            <button type="button" className="context-menu__action" onClick={onCancel}>
+            <button type="button" className="context-menu__action" disabled={removing} onClick={onCancel}>
               Cancel
             </button>
-            <button type="button" className="context-menu__action context-menu__action--danger" onClick={() => onRemove(!blockReason && removeWorktree)}>
-              Remove
+            <button
+              type="button"
+              className="context-menu__action context-menu__action--danger"
+              disabled={removing}
+              aria-busy={removing}
+              onClick={() => onRemove(removeWorktree)}
+            >
+              {showRemovingCaret ? <Caret>Removing</Caret> : 'Remove'}
             </button>
           </div>
         </div>

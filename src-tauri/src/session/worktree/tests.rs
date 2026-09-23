@@ -239,7 +239,7 @@ fn worktree_status_impl_reports_worktree_not_found_when_directory_is_gone() {
 #[test]
 fn worktree_remove_impl_reports_session_not_found() {
     let engine = test_engine_with(session_without_worktree());
-    match worktree_remove_impl(&engine, "no-such-session") {
+    match worktree_remove_impl(&engine, "no-such-session", false) {
         IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::SessionNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
@@ -248,7 +248,7 @@ fn worktree_remove_impl_reports_session_not_found() {
 #[test]
 fn worktree_remove_impl_reports_worktree_not_found_when_session_has_no_worktree() {
     let engine = test_engine_with(session_without_worktree());
-    match worktree_remove_impl(&engine, "s1") {
+    match worktree_remove_impl(&engine, "s1", false) {
         IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::WorktreeNotFound),
         IpcResult::Ok { .. } => panic!("expected an error"),
     }
@@ -1260,7 +1260,7 @@ fn worktree_remove_impl_refuses_a_dirty_worktree() {
     s.worktree = Some(sw);
     let engine = crate::session::testutil::test_engine_with(s);
 
-    match worktree_remove_impl(&engine, "s1") {
+    match worktree_remove_impl(&engine, "s1", false) {
         IpcResult::Err { error, .. } => assert_eq!(error.code, ErrorCode::WorktreeDirty),
         IpcResult::Ok { .. } => panic!("expected the dirty refusal"),
     }
@@ -1290,7 +1290,7 @@ fn worktree_remove_impl_says_unknown_rather_than_zero_commits_when_push_status_i
     s.worktree = Some(sw);
     let engine = crate::session::testutil::test_engine_with(s);
 
-    match worktree_remove_impl(&engine, "s1") {
+    match worktree_remove_impl(&engine, "s1", false) {
         IpcResult::Err { error, .. } => {
             assert_eq!(error.code, ErrorCode::WorktreeDirty);
             assert!(
@@ -1326,9 +1326,40 @@ fn worktree_remove_impl_removes_a_clean_worktree() {
     s.worktree = Some(sw);
     let engine = crate::session::testutil::test_engine_with(s);
 
-    match worktree_remove_impl(&engine, "s1") {
+    match worktree_remove_impl(&engine, "s1", false) {
         IpcResult::Ok { .. } => {}
         IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.code),
     }
     assert!(!std::path::Path::new(&worktree_path).exists());
+}
+
+#[test]
+fn worktree_remove_impl_force_removes_a_dirty_worktree_and_keeps_the_branch() {
+    let repo = tmp_dir("remove-dirty-force");
+    init_repo(&repo);
+    let cwd = repo.to_string_lossy().to_string();
+    let opts = WorktreeCreateInput {
+        branch: "feat/dirty-force".into(),
+        base_ref: "main".into(),
+        adopt: false,
+    };
+    let (worktree_path, sw, _) = resolve_worktree(&cwd, &opts).expect("create ok");
+    let wt = std::path::Path::new(&worktree_path);
+    std::fs::write(wt.join("dirty.txt"), "x").unwrap();
+    // An unpushed commit too — it must survive on the kept branch.
+    std::fs::write(wt.join("committed.txt"), "y").unwrap();
+    git(wt, &["add", "committed.txt"]);
+    git(wt, &["commit", "-q", "-m", "wip"]);
+
+    let mut s = crate::session::testutil::test_session();
+    s.id = "s1".into();
+    s.worktree = Some(sw);
+    let engine = crate::session::testutil::test_engine_with(s);
+
+    match worktree_remove_impl(&engine, "s1", true) {
+        IpcResult::Ok { .. } => {}
+        IpcResult::Err { error, .. } => panic!("unexpected error: {}", error.message),
+    }
+    assert!(!wt.exists());
+    git(&repo, &["rev-parse", "--verify", "-q", "feat/dirty-force"]); // the branch is kept
 }
