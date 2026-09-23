@@ -40,9 +40,9 @@ export function CohorteMark({ size = 16, className }: { size?: number; className
 /** 20px chip: an 11px state glyph + a Small Medium label, tinted by tone. */
 export function CohorteStateChip({ label, tone, glyph }: { label: string; tone: ChipTone; glyph: StateKind }): JSX.Element {
   return (
-    <span className={`cohorte-chip cohorte-chip--${tone}`}>
+    <span className={`cohorte-chip cohorte-chip--${tone}`} title={label}>
       <StateIcon kind={glyph} size={11} />
-      {label}
+      <span className="cohorte-chip__label">{label}</span>
     </span>
   );
 }

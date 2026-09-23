@@ -514,9 +514,12 @@ function route(cmd: string, a: Args): unknown {
     // extensions: the demo fleet ships no providers, so the registry reads
     // empty and no ext tab is offered. Explicit because the default below
     // resolves ok(null), which is not a list.
+    // profiles_list: the Sidebar reads `profiles.length`, so the default
+    // ok(null) crashed the whole roster in the demo build.
     case 'extensions_list':
     case 'extensions_set_enabled':
     case 'extensions_detect':
+    case 'profiles_list':
       return ok([]);
 
     // ---- cohorte-integration (FR-89): orbit is a Cohorte project, nothing else is ----

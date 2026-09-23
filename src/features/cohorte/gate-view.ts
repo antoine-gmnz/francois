@@ -103,3 +103,8 @@ export function gateHint(gate: CohorteGate, hovered: CohorteGateActionId | null)
   if (action) return action.cli;
   return gate.request.allowedDecisions.includes('allow-once') ? [`cohorte approve ${gate.runId} ${gate.request.approvalId}`] : [];
 }
+
+/** FR-85: the roster card's one-word labels (four sm buttons share ~236px); the title carries the argv. */
+export function rosterActionLabel(action: CohorteGateAction): string {
+  return action.id === 'approve' ? 'Approve' : action.id === 'fix' ? 'Fix' : 'Deny';
+}

@@ -156,7 +156,7 @@ function Detected({
               ) : (
                 segments.map((seg, i) => (
                   <span key={seg}>
-                    {i > 0 && <span className="cohorte-detect__sep">  ·  </span>}
+                    {i > 0 && <span className="cohorte-detect__sep"> · </span>}
                     <span className={i === 0 ? 'cohorte-detect__seg cohorte-detect__seg--first' : 'cohorte-detect__seg'}>{seg}</span>
                   </span>
                 ))

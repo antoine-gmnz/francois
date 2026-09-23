@@ -60,14 +60,20 @@
   align-items: center;
   gap: var(--space-10);
   min-width: 0;
+  overflow: hidden;
 }
 .cohorte-run__name {
+  flex-shrink: 0;
+  max-width: 40%;
   min-width: 0;
   font: var(--type-title);
   letter-spacing: var(--tracking-title);
   color: var(--text-primary);
 }
 .cohorte-run__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font: var(--type-mono-small);
   color: var(--text-faint);
   white-space: nowrap;

@@ -9,6 +9,7 @@ import {
   gateQuestion,
   gateHint,
   gateSummary,
+  rosterActionLabel,
 } from './gate-view';
 
 const withKind = (kind: string) => gate({ request: request({ kind, reason: 'Needs a look.' }) });
@@ -70,5 +71,11 @@ describe('gateHint (FR-61, R-16)', () => {
     const none = gate({ actions: [] });
     expect(gateHint(none, null)).toEqual([`cohorte approve ${none.runId} apr_1`]);
     expect(gateHint(gate({ actions: [], request: request({ allowedDecisions: ['deny'] }) }), null)).toEqual([]);
+  });
+});
+
+describe('rosterActionLabel (FR-85)', () => {
+  it('reads one word per action', () => {
+    expect(gate().actions.map(rosterActionLabel)).toEqual(['Approve', 'Fix', 'Deny']);
   });
 });

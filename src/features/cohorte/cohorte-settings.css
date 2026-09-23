@@ -95,6 +95,7 @@
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  flex: 0 1 auto;
 }
 .cohorte-detect__title {
   font: var(--type-ui-strong);
@@ -103,7 +104,9 @@
 .cohorte-detect__sub {
   font: var(--type-mono-small);
   color: var(--text-muted);
-  white-space: pre-wrap;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cohorte-detect__seg--first {
   color: var(--text-secondary);
@@ -308,4 +311,14 @@
   border-top: 1px solid var(--line-subtle);
   font: var(--type-small);
   color: var(--state-attention-text);
+}
+
+/* The policy note is one line across the block (frame 27). */
+.cohorte-toggle--policy .cohorte-toggle__description {
+  max-width: none;
+}
+
+/* The doctor chip reads in full; the sub-line is what gives way (frame 27). */
+.cohorte-detect__head .cohorte-chip {
+  flex-shrink: 0;
 }

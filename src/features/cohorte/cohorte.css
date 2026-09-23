@@ -34,6 +34,9 @@
   text-align: left;
   cursor: copy;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cohorte-cli:hover {
   color: var(--text-muted);
@@ -65,7 +68,15 @@
   border-radius: var(--radius-4);
   font: var(--type-small-medium);
   white-space: nowrap;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  /* never narrower than its glyph */
+  min-width: 25px;
+  overflow: hidden;
+}
+.cohorte-chip__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cohorte-chip--attention {
   background: var(--tint-attention-strong);
@@ -252,6 +263,7 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  max-width: 100%;
 }
 .cohorte-gate__confirm {
   display: flex;
@@ -531,6 +543,12 @@
 }
 
 /* ---------- roster (FR-85/FR-86) ---------- */
+
+/* Three answers share the width; Open keeps its own. */
+.cohorte-roster__decide {
+  flex: 1 1 0;
+  min-width: 0;
+}
 
 .cohorte-roster__id {
   flex-shrink: 0;

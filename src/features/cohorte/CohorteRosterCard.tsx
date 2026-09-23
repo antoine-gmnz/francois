@@ -12,7 +12,7 @@ import { StateIcon } from '../../ui/StateIcon';
 import { answerGate, openCohorteRun } from './actions';
 import './cohorte.css';
 import { CohorteMark } from './CohorteParts';
-import { ACTION_VARIANT, compactActionLabel, gateKindLabel, gateQuestion, runSpecName } from './gate-view';
+import { ACTION_VARIANT, gateKindLabel, gateQuestion, rosterActionLabel, runSpecName } from './gate-view';
 import { shortRunId } from './run-view';
 
 export interface CohorteRosterCardProps {
@@ -59,12 +59,12 @@ export function CohorteRosterCard({ run, session, tags, now }: CohorteRosterCard
             key={a.id}
             size="sm"
             variant={a.id === 'deny' && confirming ? 'danger' : ACTION_VARIANT[a.id]}
-            className="roster-row__decide"
+            className="cohorte-roster__decide"
             title={a.cli.join('\n')}
             disabled={busy !== null}
             onClick={() => act(a.id, a.stopsRun)}
           >
-            {a.id === 'deny' && confirming ? 'Confirm' : compactActionLabel(a)}
+            {a.id === 'deny' && confirming ? 'Confirm' : rosterActionLabel(a)}
           </Button>
         ))}
         <Button size="sm" variant="ghost" title="open the run" onClick={() => openCohorteRun(run.runId)}>
