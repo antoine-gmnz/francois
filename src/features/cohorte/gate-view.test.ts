@@ -7,6 +7,7 @@ import {
   gateKindLabel,
   gateNotificationBody,
   gateQuestion,
+  gateHint,
   gateSummary,
 } from './gate-view';
 
@@ -56,5 +57,18 @@ describe('gate summary, notification and location', () => {
     expect(findingLocation({ file: 'a.ts', line: 3 })).toBe('a.ts:3');
     expect(findingLocation({ file: 'a.ts' })).toBe('a.ts');
     expect(findingLocation({})).toBeNull();
+  });
+});
+
+describe('gateHint (FR-61, R-16)', () => {
+  it("shows the hovered action's argv, else approve's", () => {
+    const g = gate();
+    expect(gateHint(g, 'deny')).toEqual(g.actions[2].cli);
+    expect(gateHint(g, null)).toEqual(g.actions[0].cli);
+  });
+  it('never falls back to request.cli: builds the approve argv, or shows nothing', () => {
+    const none = gate({ actions: [] });
+    expect(gateHint(none, null)).toEqual([`cohorte approve ${none.runId} apr_1`]);
+    expect(gateHint(gate({ actions: [], request: request({ allowedDecisions: ['deny'] }) }), null)).toEqual([]);
   });
 });

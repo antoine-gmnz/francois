@@ -10,6 +10,7 @@ import { useStore } from '../../lib/store';
 import { cohorteDetect } from '../../lib/api';
 import { computeLinks, detectionFor, linkForSession, originSessionId } from './linkage';
 import { headerStateChip, type RunChip } from './run-view';
+import { watchedRunList } from './watch';
 
 /** Windows and macOS filesystems ignore case (FR-30 rule 2). */
 export const CASE_INSENSITIVE_FS = IS_WINDOWS || (typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent));
@@ -19,9 +20,17 @@ export function useCohorteLinks(): CohorteSessionLink[] {
   const runs = useCohorteStore((s) => s.runs);
   const detections = useCohorteStore((s) => s.detections);
   const explicitLinks = useCohorteStore((s) => s.explicitLinks);
+  const roots = useCohorteStore((s) => s.watchedRoots);
   return useMemo(
-    () => computeLinks({ sessions, runs: Object.values(runs), detections, explicitLinks, caseInsensitive: CASE_INSENSITIVE_FS }),
-    [sessions, runs, detections, explicitLinks],
+    () =>
+      computeLinks({
+        sessions,
+        runs: watchedRunList(runs, roots, CASE_INSENSITIVE_FS),
+        detections,
+        explicitLinks,
+        caseInsensitive: CASE_INSENSITIVE_FS,
+      }),
+    [sessions, runs, roots, detections, explicitLinks],
   );
 }
 

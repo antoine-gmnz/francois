@@ -61,3 +61,8 @@ export const COHORTE_DOCS_URL = 'https://github.com/TheBidouilleAgency/cohorte#r
 export function navDotOn(d: CohorteDetection | null): boolean {
   return d?.state === 'detected';
 }
+
+/** R-16: a doctor run started for `ranFor` is stale once the page shows another root. */
+export function doctorResultApplies(ranFor: string, shownRoot: string | null): boolean {
+  return ranFor === shownRoot;
+}

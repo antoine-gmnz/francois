@@ -11,6 +11,7 @@ import { registerPaletteCommand, showToast } from '../palette/palette';
 import { answerGate, controlRun, openCohorteRun } from './actions';
 import { computeLinks, detectionFor, linkForSession } from './linkage';
 import { runControls, shortRunId } from './run-view';
+import { watchedRunList } from './watch';
 import { requestCohorteSettings } from './settings-request';
 import { CASE_INSENSITIVE_FS, detectProject } from './useCohorte';
 
@@ -19,7 +20,7 @@ function activeRun(sessionId: string | null): CohorteRun | null {
   const c = useCohorteStore.getState();
   const links = computeLinks({
     sessions: useStore.getState().sessions,
-    runs: Object.values(c.runs),
+    runs: watchedRunList(c.runs, c.watchedRoots, CASE_INSENSITIVE_FS),
     detections: c.detections,
     explicitLinks: c.explicitLinks,
     caseInsensitive: CASE_INSENSITIVE_FS,
@@ -151,7 +152,7 @@ export function registerCohortePaletteCommands(): void {
     run: (ctx) => {
       const run = activeRun(ctx.activeSessionId);
       if (!run) return;
-      useCohorteStore.getState().setPanelLogRunId(run.runId);
+      if (ctx.activeSessionId) useCohorteStore.getState().setPanelLog(ctx.activeSessionId, run.runId);
       useStore.getState().setSessionPanelTab('cohorte');
     },
   });

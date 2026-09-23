@@ -10,6 +10,71 @@ use super::{CohorteRun, CommandOutcome, CommandStep};
 use crate::ipc::{AppError, ErrorCode};
 use serde_json::json;
 
+/// R-4: the window within which a `command.rejected` is ours.
+const ISSUED_WINDOW_MS: u64 = 60_000;
+
+struct Issued {
+    command_id: Option<String>,
+    command_type: String,
+    run_id: String,
+    at: u64,
+}
+
+/// R-4: the commands this app issued in the last 60 s — by `commandId` when
+/// the CLI's CommandResultDocument gave one, else by (commandType, runId).
+#[derive(Default)]
+pub(crate) struct IssuedCommands {
+    entries: Vec<Issued>,
+}
+
+impl IssuedCommands {
+    /// The Cohorte command type a CLI verb sends (`fix` is a `retry`).
+    pub(crate) fn command_type(verb: &str) -> Option<&'static str> {
+        Some(match verb {
+            "approve" => "approve",
+            "deny" => "deny",
+            "fix" => "retry",
+            "pause" => "pause",
+            "resume" => "resume",
+            "cancel" => "cancel",
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        command_id: Option<String>,
+        command_type: &str,
+        run_id: &str,
+        now: u64,
+    ) {
+        self.entries
+            .retain(|e| now.saturating_sub(e.at) <= ISSUED_WINDOW_MS);
+        self.entries.push(Issued {
+            command_id,
+            command_type: command_type.to_string(),
+            run_id: run_id.to_string(),
+            at: now,
+        });
+    }
+
+    pub(crate) fn issued(
+        &self,
+        command_id: &str,
+        command_type: &str,
+        run_id: &str,
+        now: u64,
+    ) -> bool {
+        self.entries
+            .iter()
+            .filter(|e| now.saturating_sub(e.at) <= ISSUED_WINDOW_MS)
+            .any(|e| match &e.command_id {
+                Some(id) => id == command_id,
+                None => e.command_type == command_type && e.run_id == run_id,
+            })
+    }
+}
+
 /// What the pre-checks need from the current projection (no spawn).
 pub(crate) struct RunFacts {
     pub(crate) state: String,
@@ -206,6 +271,26 @@ mod tests {
     use super::*;
     use crate::cohorte::testutil::{out, sample_run, FakeRunner};
 
+    /// R-4.
+    #[test]
+    fn issued_commands_match_by_id_else_by_type_and_run_within_60s() {
+        let mut c = IssuedCommands::default();
+        c.record(Some("cmd_1".into()), "approve", "run_a", 0);
+        c.record(None, "retry", "run_b", 0);
+        assert!(c.issued("cmd_1", "approve", "run_x", 1_000));
+        assert!(
+            !c.issued("cmd_2", "approve", "run_a", 1_000),
+            "an id entry only matches its id"
+        );
+        assert!(c.issued("cmd_9", "retry", "run_b", 59_000));
+        assert!(
+            !c.issued("cmd_9", "retry", "run_b", 61_000),
+            "outside the window"
+        );
+        assert_eq!(IssuedCommands::command_type("fix"), Some("retry"));
+        assert_eq!(IssuedCommands::command_type("status"), None);
+    }
+
     const REJECTED: &str = r#"{"documentVersion":1,"status":"rejected","error":{"code":"conflict/run-active","message":"run is active"}}"#;
     const NOT_PENDING: &str = r#"{"status":"rejected","error":{"code":"conflict/unexpected","message":"approval apr_1 is not pending"}}"#;
 
@@ -248,7 +333,7 @@ mod tests {
         assert_eq!(
             outcomes(&o),
             vec![(
-                "cohorte approve run_a apr_1 send to fix".into(),
+                "cohorte approve run_a apr_1 'send to fix'".into(),
                 "completed".into()
             )]
         );

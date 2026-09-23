@@ -34,3 +34,16 @@ describe('classifyCohorteTool (FR-66, AC-25)', () => {
     expect(classifyCohorteTool('Bash', '/usr/local/bin/cohorte fix run_abcdef12', 'queued run_abcdef1234')?.launchedRef).toBe('run_abcdef1234');
   });
 });
+
+describe('R-7: the core writes `started run_<id>` into a Claude Code Bash meta', () => {
+  const id = 'run_7fa3c1d2e3f4a5b6c7d8e9f0a1b2c3d4';
+  it('reads the launched run from that exact meta (Block passes meta + output as the result)', () => {
+    const result = `started ${id}\n`;
+    expect(classifyCohorteTool('Bash', 'cohorte run auth-retry --detach', result)).toEqual({
+      target: 'run auth-retry --detach',
+      meta: 'run_7fa3c1',
+      launchedRef: id,
+    });
+    expect(classifyCohorteTool('Bash', 'npx cohorte loop auth-retry', `started ${id}`)?.launchedRef).toBe(id);
+  });
+});

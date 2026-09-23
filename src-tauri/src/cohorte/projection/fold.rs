@@ -6,8 +6,12 @@ use crate::cohorte::catalogue::CohorteEvent;
 use crate::cohorte::payloads::ApprovalResolved;
 
 impl RunProjection {
-    pub(crate) fn apply(&mut self, ev: &CohorteEvent) -> Option<Resolution> {
-        let h = ev.header()?;
+    /// Fold one member; returns the approvals it closed (resolved, or
+    /// dropped because the run ended — R-1).
+    pub(crate) fn apply(&mut self, ev: &CohorteEvent) -> Vec<Resolution> {
+        let Some(h) = ev.header() else {
+            return Vec::new();
+        };
         let (at, seq) = (h.at, h.sequence);
         let hphase = h.phase.as_ref().map(|p| p.state.clone());
         if h.sub == 0 && seq > self.last_sequence {
@@ -42,12 +46,18 @@ impl RunProjection {
                 });
             }
             CohorteEvent::PipelineFailed(w) => {
-                self.state = w.payload.state.clone();
+                if seq > self.state_seq {
+                    self.state = w.payload.state.clone();
+                    self.state_seq = seq;
+                }
                 self.last_error = Some(w.payload.error.clone());
                 self.stop = Some(w.payload.stop.clone());
             }
             CohorteEvent::RunStateChanged(w) => {
-                self.state = w.payload.to.clone();
+                if seq > self.state_seq {
+                    self.state = w.payload.to.clone();
+                    self.state_seq = seq;
+                }
                 self.since = Some(at);
                 self.resume_to = w.payload.resume_to.clone();
                 if w.payload.stop.is_some() {
@@ -290,7 +300,7 @@ impl RunProjection {
                 entry.requested_at = entry.requested_at.min(at);
                 entry.request = Some(req);
             }
-            CohorteEvent::ApprovalResolved(w) => return self.resolve(&w.payload, seq),
+            CohorteEvent::ApprovalResolved(w) => return vec![self.resolve(&w.payload, seq)],
             CohorteEvent::GitWorktreeCreated(w) => {
                 let p = w.payload.clone();
                 self.add_worktree(&p.slot, &p.path, &p.branch, None);
@@ -313,18 +323,35 @@ impl RunProjection {
             }
             _ => {}
         }
-        None
+        let ended = matches!(
+            ev,
+            CohorteEvent::RunCancelled(_)
+                | CohorteEvent::PipelineCompleted(_)
+                | CohorteEvent::PipelineFailed(_)
+        );
+        if ended || closes_gates(&self.state) {
+            return self
+                .clear_pending()
+                .into_iter()
+                .map(|approval_id| Resolution {
+                    approval_id,
+                    decision: "unknown".into(),
+                    actor: None,
+                })
+                .collect();
+        }
+        Vec::new()
     }
 
-    fn resolve(&mut self, p: &ApprovalResolved, seq: u64) -> Option<Resolution> {
+    fn resolve(&mut self, p: &ApprovalResolved, seq: u64) -> Resolution {
         self.last_resolved_seq = self.last_resolved_seq.max(seq);
         self.clear_step_approval(&p.approval_id);
         self.pending.remove(&p.approval_id);
-        Some(Resolution {
+        Resolution {
             approval_id: p.approval_id.clone(),
             decision: p.decision.clone(),
             actor: Some(format!("{}:{}", p.actor.kind, p.actor.id)),
-        })
+        }
     }
 
     fn add_worktree(&mut self, slot: &str, path: &str, branch: &str, agent: Option<&str>) {
@@ -414,7 +441,7 @@ mod tests {
         let ev = crate::cohorte::wire::normalise("/r", &res, 0)
             .unwrap()
             .event;
-        let r = p.apply(&ev).unwrap();
+        let r = p.apply(&ev).pop().unwrap();
         assert_eq!(r.decision, "allow-once");
         assert_eq!(r.actor.as_deref(), Some("human:me"));
         assert!(p.to_run(0).gate.is_none());
@@ -461,5 +488,80 @@ mod tests {
         assert!(run.ended_at.is_some());
         let review = run.phases.iter().find(|p| p.state == "REVIEW").unwrap();
         assert_eq!(review.steps[0].status, "cancelled");
+    }
+
+    /// R-1: approval.requested then run.cancelled → no gate, the approval
+    /// is reported closed.
+    #[test]
+    fn a_cancelled_run_never_carries_a_gate() {
+        let mut lines = feature_run_lines();
+        lines.push(approval_envelope(21, "apr_1", "ship", &[]));
+        let mut p = fold(&lines);
+        assert!(p.to_run(0).gate.is_some());
+        let cancel = envelope(
+            22,
+            0,
+            "run.cancelled",
+            json!({ "reason": "r", "cancelledAgents": [], "worktreesKept": false }),
+        );
+        let closed = p.apply(
+            &crate::cohorte::wire::normalise("/r", &cancel, 0)
+                .unwrap()
+                .event,
+        );
+        assert_eq!(closed.len(), 1);
+        assert_eq!(
+            (closed[0].approval_id.as_str(), closed[0].decision.as_str()),
+            ("apr_1", "unknown")
+        );
+        let run = p.to_run(0);
+        assert!(run.gate.is_none());
+        assert!(!p.is_pending("apr_1"));
+    }
+
+    /// R-1: a FAILED run carries no gate even with a pending approval.
+    #[test]
+    fn a_failed_run_carries_no_gate() {
+        let mut lines = feature_run_lines();
+        lines.push(approval_envelope(21, "apr_1", "ship", &[]));
+        let mut failed = crate::cohorte::testutil::raw_payload("pipeline.failed");
+        failed["state"] = json!("FAILED");
+        lines.push(envelope(22, 0, "pipeline.failed", failed));
+        let run = fold(&lines).to_run(0);
+        assert_eq!(run.state, "FAILED");
+        assert!(run.gate.is_none());
+    }
+
+    /// R-9: an event older than the status the state was read from does
+    /// not overwrite it; a newer one does.
+    #[test]
+    fn events_never_overwrite_a_newer_status_state() {
+        use crate::cohorte::documents::{parse_status, StatusDoc};
+        let mut p = RunProjection::new("/r", "run_a");
+        let mut rec = crate::cohorte::testutil::fixture_record("run_a", "PAUSED");
+        rec["lastSequence"] = json!(12);
+        let Some(StatusDoc::Run(s)) = parse_status(rec.to_string().as_bytes()) else {
+            panic!()
+        };
+        p.apply_status(&s, 0);
+        let mut old = crate::cohorte::testutil::raw_payload("run.state.changed");
+        old["to"] = json!("BUILD");
+        p.apply(
+            &crate::cohorte::wire::normalise(
+                "/r",
+                &envelope(5, 0, "run.state.changed", old.clone()),
+                0,
+            )
+            .unwrap()
+            .event,
+        );
+        assert_eq!(p.state(), "PAUSED");
+        p.apply(
+            &crate::cohorte::wire::normalise("/r", &envelope(13, 0, "run.state.changed", old), 0)
+                .unwrap()
+                .event,
+        );
+        assert_eq!(p.state(), "BUILD");
+        assert_eq!(p.status_last_seq, Some(12));
     }
 }

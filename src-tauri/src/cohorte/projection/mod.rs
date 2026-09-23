@@ -40,6 +40,11 @@ pub(crate) fn is_terminal(state: &str) -> bool {
     matches!(state, "COMPLETED" | "CANCELLED")
 }
 
+/// R-1: a run in one of these states never carries a gate.
+pub(crate) fn closes_gates(state: &str) -> bool {
+    matches!(state, "COMPLETED" | "CANCELLED" | "FAILED")
+}
+
 fn is_active(state: &str) -> bool {
     ACTIVE_STATES.contains(&state)
 }
@@ -122,6 +127,11 @@ pub(crate) struct RunProjection {
     spec_kind: Option<String>,
     profile: Option<String>,
     state: String,
+    /// R-9: the sequence the current `state` was read at — an event only
+    /// overwrites it when it is newer.
+    state_seq: u64,
+    /// R-9: the latest status document's `lastSequence`.
+    pub(crate) status_last_seq: Option<u64>,
     since: Option<u64>,
     resume_to: Option<String>,
     started_at: Option<u64>,
@@ -165,6 +175,8 @@ impl RunProjection {
             spec_kind: None,
             profile: None,
             state: "IDLE".into(),
+            state_seq: 0,
+            status_last_seq: None,
             since: None,
             resume_to: None,
             started_at: None,
@@ -326,7 +338,13 @@ impl RunProjection {
         set!(spec_id, s.spec_id);
         set!(spec_kind, s.spec_kind);
         set!(profile, s.profile);
-        self.state = s.state.clone();
+        if s.last_sequence.is_none_or(|ls| ls >= self.state_seq) {
+            self.state = s.state.clone();
+            self.state_seq = s.last_sequence.unwrap_or(self.last_sequence);
+        }
+        if s.last_sequence.is_some() {
+            self.status_last_seq = s.last_sequence;
+        }
         set!(since, s.since);
         self.resume_to = s.resume_to.clone();
         set!(stop, s.stop);
@@ -403,7 +421,20 @@ impl RunProjection {
                     });
             }
         }
+        if closes_gates(&self.state) {
+            vanished.extend(self.clear_pending());
+        }
         vanished
+    }
+
+    /// R-1: drop every pending approval (the run ended); returns their ids.
+    pub(crate) fn clear_pending(&mut self) -> Vec<String> {
+        let ids: Vec<String> = self.pending.keys().cloned().collect();
+        for id in &ids {
+            self.clear_step_approval(id);
+        }
+        self.pending.clear();
+        ids
     }
 
     /// Drop every pending approval absent from an authoritative list.
@@ -557,7 +588,11 @@ impl RunProjection {
             .values()
             .filter_map(|p| p.request.as_ref().map(|r| (r, p.requested_at)))
             .collect();
-        let gate = gate::build(&self.run_id, known, &phases, review_findings);
+        let gate = if closes_gates(&self.state) {
+            None
+        } else {
+            gate::build(&self.run_id, known, &phases, review_findings)
+        };
         let current_phase = if is_active(&self.state) {
             Some(self.state.clone())
         } else if SUSPENDED_OR_HALTED.contains(&self.state.as_str()) {

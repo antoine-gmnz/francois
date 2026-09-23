@@ -116,6 +116,8 @@ export function closeCohorteRun(): void {
 
 /** FR-69: fetch the ring once; live wire events append from then on. */
 export async function loadRunLog(run: Pick<CohorteRun, 'projectRoot' | 'runId'>): Promise<void> {
+  // R-16: rows that arrive during the fetch are buffered, then merged.
+  useCohorteStore.getState().beginLog(run.runId);
   const res = await cohorteRunLog({ root: run.projectRoot, runId: run.runId, limit: 200 });
   useCohorteStore.getState().setLog(run.runId, res.ok ? res.data : []);
 }

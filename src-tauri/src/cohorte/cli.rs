@@ -1,13 +1,19 @@
 //! FR-1a / FR-45 / FR-47 — the ONE way Francois spawns `cohorte` (and the two
-//! `git` probes detection needs): a `Runner` over `github::gh::run_routed_bounded`
-//! (login-shell PATH via `process_util::spawn`, `CREATE_NO_WINDOW`, bounded,
-//! WSL-routed), the pure argv builders of the `positional-3.0` dialect, and
-//! the exit-code mapping. No other code path spawns `cohorte`.
+//! `git` probes detection needs): a `Runner` over `github::gh::run_argv_bounded`
+//! (login-shell PATH via `process_util::spawn`, `CREATE_NO_WINDOW`, bounded),
+//! the pure argv builders of the `positional-3.0` dialect, and the exit-code
+//! mapping. No other code path spawns `cohorte`.
+//!
+//! Routing (`spawn_plan`): a native root resolves `cohorte` through
+//! `process_util::resolve_cli_program` (FR-6b — on Windows it is an npm `.cmd`
+//! shim); a WSL root runs `wsl.exe … --exec bash -lc 'exec cohorte "$@"' _ <args…>`
+//! (R-2/R-3) — a login shell so nvm-installed node resolves, and the args as
+//! separate values so no shell ever parses them.
 
 use super::sanitize;
 use super::CommandStep;
-use crate::diff::GitHost;
-use crate::github::gh::{run_routed_bounded, RoutedRun};
+use crate::diff::{wsl_cd_target, GitHost};
+use crate::github::gh::{program_argv, run_argv_bounded, RoutedRun};
 use crate::ipc::{AppError, ErrorCode};
 use serde_json::{json, Value};
 use std::sync::{Condvar, Mutex};
@@ -36,7 +42,40 @@ pub(crate) trait Runner: Send + Sync {
     ) -> RoutedRun;
 }
 
-/// Production: routed by the dialect of `dir` (FR-6), `cwd = dir` (FR-1a).
+/// Pure: the exact (bin, argv) a spawn of `program args` in `dir` runs.
+pub(crate) fn spawn_plan(program: &str, dir: &str, args: &[String]) -> (String, Vec<String>) {
+    match (GitHost::of(dir), program) {
+        (GitHost::Wsl(distro), "cohorte") => {
+            let cd = wsl_cd_target(dir);
+            let mut argv: Vec<String> = [
+                "-d",
+                distro.as_str(),
+                "--cd",
+                cd.as_str(),
+                "--exec",
+                "bash",
+                "-lc",
+                "exec cohorte \"$@\"",
+                "_",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            argv.extend(args.iter().cloned());
+            ("wsl.exe".into(), argv)
+        }
+        (GitHost::Native, "cohorte") => (
+            crate::process_util::resolve_cli_program("cohorte"),
+            args.to_vec(),
+        ),
+        (host, _) => {
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            program_argv(program, &host, dir, &refs)
+        }
+    }
+}
+
+/// Production: routed by the dialect of `dir` (FR-6/FR-6b), `cwd = dir` (FR-1a).
 pub(crate) struct SystemRunner;
 
 impl Runner for SystemRunner {
@@ -48,8 +87,18 @@ impl Runner for SystemRunner {
         timeout: Duration,
         cap: usize,
     ) -> RoutedRun {
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        run_routed_bounded(program, &GitHost::of(dir), dir, &refs, timeout, cap)
+        let (bin, argv) = spawn_plan(program, dir, args);
+        let tree = program == "cohorte";
+        run_argv_bounded(
+            program,
+            &bin,
+            &argv,
+            &GitHost::of(dir),
+            dir,
+            timeout,
+            cap,
+            tree,
+        )
     }
 }
 
@@ -64,6 +113,30 @@ static READ_SLOTS: ReadSlots = ReadSlots {
     freed: Condvar::new(),
 };
 const MAX_READS: usize = 4;
+
+/// RAII read slot (R-10): released even if the spawn panics.
+struct ReadSlot;
+
+impl ReadSlot {
+    fn acquire() -> Self {
+        let mut used = READ_SLOTS.used.lock().unwrap_or_else(|e| e.into_inner());
+        while *used >= MAX_READS {
+            used = READ_SLOTS
+                .freed
+                .wait(used)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        *used += 1;
+        ReadSlot
+    }
+}
+
+impl Drop for ReadSlot {
+    fn drop(&mut self) {
+        *READ_SLOTS.used.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+        READ_SLOTS.freed.notify_one();
+    }
+}
 
 pub(crate) enum Kind {
     Read,
@@ -82,17 +155,8 @@ pub(crate) fn run(
     if let Kind::Mutate = kind {
         return runner.run("cohorte", root, args, timeout, cap);
     }
-    {
-        let mut used = READ_SLOTS.used.lock().unwrap();
-        while *used >= MAX_READS {
-            used = READ_SLOTS.freed.wait(used).unwrap();
-        }
-        *used += 1;
-    }
-    let out = runner.run("cohorte", root, args, timeout, cap);
-    *READ_SLOTS.used.lock().unwrap() -= 1;
-    READ_SLOTS.freed.notify_one();
-    out
+    let _slot = ReadSlot::acquire();
+    runner.run("cohorte", root, args, timeout, cap)
 }
 
 // ---------- argv (FR-45, dialect positional-3.0) ----------
@@ -112,6 +176,24 @@ pub(crate) mod argv {
         }
     }
 
+    /// R-2 defence in depth: free text (an approve answer, a pause reason)
+    /// must match `^[A-Za-z0-9 ._,:/'-]+$` and never start with `-` (R-10: it
+    /// cannot be read as a flag). Anything else is INVALID_INPUT.
+    pub(crate) fn free_text(kind: &str, v: &str) -> Result<String, AppError> {
+        let ok = !v.trim().is_empty()
+            && !v.starts_with('-')
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || " ._,:/'-".contains(c));
+        if ok {
+            Ok(v.to_string())
+        } else {
+            Err(AppError::new(
+                ErrorCode::InvalidInput,
+                format!("{kind} may only contain letters, digits, spaces and ._,:/'-"),
+            ))
+        }
+    }
+
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
     }
@@ -123,7 +205,7 @@ pub(crate) mod argv {
     ) -> Result<Vec<String>, AppError> {
         let mut a = vec!["approve".into(), id("runId", run)?, id("approvalId", apr)?];
         if let Some(ans) = answer {
-            a.push(ans.to_string());
+            a.push(free_text("answer", ans)?);
         }
         Ok(a)
     }
@@ -137,15 +219,19 @@ pub(crate) mod argv {
     pub(crate) fn fix(run: &str) -> Result<Vec<String>, AppError> {
         Ok(vec!["fix".into(), id("runId", run)?])
     }
-    /// `pause <run> [reason words…]` — the reason's words, positionally.
+    /// `pause <run> [reason words…]` — the reason's words, positionally;
+    /// a word starting with `-` is dropped (R-10: never read as a flag).
     pub(crate) fn pause(run: &str, reason: Option<&str>) -> Result<Vec<String>, AppError> {
         let mut a = vec!["pause".into(), id("runId", run)?];
         if let Some(r) = reason {
-            a.extend(
-                super::sanitize::line(r, 512)
-                    .split_whitespace()
-                    .map(str::to_string),
-            );
+            let words: Vec<&str> = r
+                .split_whitespace()
+                .filter(|w| !w.starts_with('-'))
+                .collect();
+            if !words.is_empty() {
+                free_text("reason", &words.join(" "))?;
+                a.extend(words.into_iter().map(str::to_string));
+            }
         }
         Ok(a)
     }
@@ -189,9 +275,36 @@ pub(crate) mod argv {
     }
 }
 
-/// The display form of an argv: `cohorte <args joined by space>` (FR-41).
+/// The display form of an argv: `cohorte <args joined by space>` (FR-41);
+/// an arg with whitespace is single-quoted so the hint pastes as one value (R-10).
 pub(crate) fn display(args: &[String]) -> String {
-    format!("cohorte {}", args.join(" "))
+    let quoted: Vec<String> = args
+        .iter()
+        .map(|a| {
+            if a.is_empty() || a.chars().any(char::is_whitespace) {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    format!("cohorte {}", quoted.join(" "))
+}
+
+/// A CommandResultDocument's `commandId` / `type` (R-4), when stdout holds one.
+pub(crate) fn command_doc(stdout: &[u8]) -> (Option<String>, Option<String>) {
+    let doc = String::from_utf8_lossy(stdout)
+        .lines()
+        .rev()
+        .find_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+        .filter(Value::is_object);
+    let Some(doc) = doc else {
+        return (None, None);
+    };
+    (
+        doc["commandId"].as_str().map(|s| sanitize::line(s, 128)),
+        doc["type"].as_str().map(|s| sanitize::line(s, 64)),
+    )
 }
 
 fn stderr_tail(stderr: &str) -> String {
@@ -321,6 +434,7 @@ pub(crate) fn is_not_pending(step: &CommandStep) -> bool {
 mod tests {
     use super::*;
     use crate::cohorte::testutil::{out, StubCli};
+    use std::time::Duration;
 
     fn v(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
@@ -473,5 +587,167 @@ mod tests {
         );
         assert_eq!(o.code, 0);
         assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "3.0.0-dev.8");
+    }
+
+    /// R-2/R-3: a WSL root runs cohorte through a login bash with the args as
+    /// separate values — no shell parses them.
+    #[test]
+    fn a_wsl_root_spawns_through_a_login_shell_exec() {
+        let (bin, a) = spawn_plan(
+            "cohorte",
+            r"\\wsl$\Ubuntu\home\u\api",
+            &v(&["approve", "run_a", "apr_b", "send to fix"]),
+        );
+        assert_eq!(bin, "wsl.exe");
+        assert_eq!(
+            a,
+            v(&[
+                "-d",
+                "Ubuntu",
+                "--cd",
+                "/home/u/api",
+                "--exec",
+                "bash",
+                "-lc",
+                "exec cohorte \"$@\"",
+                "_",
+                "approve",
+                "run_a",
+                "apr_b",
+                "send to fix"
+            ])
+        );
+        // git keeps the github-page form
+        let (bin, a) = spawn_plan("git", r"\\wsl$\Ubuntu\home\u\api", &v(&["status"]));
+        assert_eq!((bin.as_str(), a[4].as_str()), ("wsl.exe", "--"));
+    }
+
+    /// FR-6b: a native root resolves the CLI (the `.cmd` shim on Windows).
+    #[test]
+    fn a_native_root_resolves_the_cli_program() {
+        let (bin, a) = spawn_plan("cohorte", "/tmp/p", &v(&["--version"]));
+        assert_eq!(bin, crate::process_util::resolve_cli_program("cohorte"));
+        assert_eq!(a, v(&["--version"]));
+        assert_eq!(spawn_plan("git", "/tmp/p", &v(&["x"])).0, "git");
+    }
+
+    /// R-2 defence in depth + R-10: free text is allow-listed, flags dropped.
+    #[test]
+    fn free_text_is_allow_listed() {
+        for bad in ["a&b", "x|y", "%PATH%", "a\"b", "$(id)", "-rf", "a\nb", "é"] {
+            assert_eq!(
+                argv::approve("run_a", "apr_b", Some(bad)).unwrap_err().code,
+                ErrorCode::InvalidInput,
+                "{bad:?}"
+            );
+        }
+        assert!(argv::approve("run_a", "apr_b", Some("ship it: v1.2/x, don't")).is_ok());
+        assert_eq!(
+            argv::pause("run_a", Some("--force stop --now please")).unwrap(),
+            v(&["pause", "run_a", "stop", "please"])
+        );
+        assert_eq!(
+            argv::pause("run_a", Some("a;b")).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    /// R-10: a display hint with whitespace is quoted as one value.
+    #[test]
+    fn display_quotes_args_with_whitespace() {
+        assert_eq!(
+            display(&v(&["approve", "run_a", "apr_b", "send to fix"])),
+            "cohorte approve run_a apr_b 'send to fix'"
+        );
+        assert_eq!(
+            display(&v(&["approve", "run_a", "apr_b", "don't stop"])),
+            r"cohorte approve run_a apr_b 'don'\''t stop'"
+        );
+    }
+
+    #[test]
+    fn a_command_document_yields_its_id_and_type() {
+        let (id, ty) = command_doc(
+            br#"{"documentVersion":1,"commandId":"cmd_1","type":"approve","status":"completed"}"#,
+        );
+        assert_eq!(
+            (id.as_deref(), ty.as_deref()),
+            (Some("cmd_1"), Some("approve"))
+        );
+        assert_eq!(command_doc(b"nope"), (None, None));
+    }
+
+    /// FR-6b: a stub whose grandchild holds the pipe (the `.cmd` → node
+    /// shape) still returns at the deadline, with what it printed first.
+    #[test]
+    fn a_timed_out_tree_is_killed_and_keeps_its_early_stdout() {
+        let stub = StubCli::printing_then_hanging("partial");
+        let started = std::time::Instant::now();
+        let o = run(
+            &stub,
+            Kind::Read,
+            &stub.dir(),
+            &argv::doctor(),
+            Duration::from_millis(1500),
+            READ_CAP,
+        );
+        assert!(o.timed_out);
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(String::from_utf8_lossy(&o.stdout).contains("partial"));
+    }
+
+    /// FR-6b, against the REAL installed CLI (run with `--ignored`): the
+    /// spawn path resolves `cohorte` (on Windows the npm `.cmd` shim) and
+    /// both `--version` and `doctor --json` answer.
+    #[test]
+    #[ignore = "needs a real cohorte on PATH"]
+    fn the_real_cli_resolves_through_the_spawn_path() {
+        // A scratch dir of its own: `doctor` creates `.cohorte/state` in its cwd.
+        let scratch =
+            std::env::temp_dir().join(format!("francois-cohorte-real-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let dir = scratch.to_string_lossy().into_owned();
+        let o = run(
+            &SystemRunner,
+            Kind::Read,
+            &dir,
+            &argv::version(),
+            VERSION_TIMEOUT,
+            READ_CAP,
+        );
+        assert!(!o.spawn_failed, "cohorte did not resolve: {}", o.stderr);
+        let version = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        assert!(
+            crate::cohorte::detect::parse_version(&version).is_some(),
+            "{version:?} code={} timed_out={} stderr={}",
+            o.code,
+            o.timed_out,
+            o.stderr
+        );
+        // `doctor --json` resolves through the same path. dev.1 on Windows
+        // never exits when stdout is a pipe and only flushes on a graceful
+        // exit, so the check here is that the tree kill returns at the
+        // deadline instead of hanging (a document is read when one arrives).
+        let started = std::time::Instant::now();
+        let o = run(
+            &SystemRunner,
+            Kind::Read,
+            &dir,
+            &argv::doctor(),
+            DOCTOR_TIMEOUT,
+            READ_CAP,
+        );
+        assert!(!o.spawn_failed, "{}", o.stderr);
+        assert!(started.elapsed() < DOCTOR_TIMEOUT + Duration::from_secs(10));
+        assert!(
+            o.timed_out || crate::cohorte::documents::parse_doctor(&o.stdout).is_some(),
+            "doctor --json unreadable: {:?}",
+            String::from_utf8_lossy(&o.stdout)
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }

@@ -256,7 +256,7 @@ mod tests {
             Some(vec!["ship", "send to fix"]),
         );
         let a = actions("run_a", &req, true, true);
-        assert_eq!(a[1].cli, vec!["cohorte approve run_a apr_1 send to fix"]);
+        assert_eq!(a[1].cli, vec!["cohorte approve run_a apr_1 'send to fix'"]);
     }
 
     #[test]

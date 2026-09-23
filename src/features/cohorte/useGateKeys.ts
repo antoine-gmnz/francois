@@ -7,7 +7,7 @@ import type { CohorteGateActionId } from '../../../contract/cohorte-integration'
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
 import { isPaletteOpen } from '../palette/palette';
-import { gateKeyAction, isEditableTarget } from './gate-keys';
+import { gateKeyAction, isControlTarget, isEditableTarget } from './gate-keys';
 
 function keyboardBlocked(): boolean {
   const s = useStore.getState();
@@ -53,6 +53,8 @@ export function useGateKeys(opts: GateKeysOptions): void {
         offered: o.offered,
         denyStopsRun: o.denyStopsRun,
         confirmArmed: o.armed,
+        repeat: e.repeat,
+        onControl: isControlTarget(document.activeElement as HTMLElement | null),
       });
       if (result.kind === 'pass') return;
       e.preventDefault();

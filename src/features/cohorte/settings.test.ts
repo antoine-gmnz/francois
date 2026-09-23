@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CohorteDoctorReport } from '../../../contract/cohorte-integration';
 import { detection } from '../../lib/cohorte.testutil';
-import { checkGlyph, detectionHead, detectionSegments, doctorChip, navDotOn, pageMode } from './settings';
+import { checkGlyph, detectionHead, detectionSegments, doctorChip, doctorResultApplies, navDotOn, pageMode } from './settings';
 
 const report = (statuses: string[], ok = true): CohorteDoctorReport => ({
   root: '/r',
@@ -52,5 +52,13 @@ describe('Settings · Cohorte (FR-80..FR-82)', () => {
     expect(navDotOn(detection())).toBe(true);
     expect(navDotOn(detection({ state: 'cli-missing' }))).toBe(false);
     expect(navDotOn(null)).toBe(false);
+  });
+});
+
+describe('doctor race guard (R-16)', () => {
+  it('drops a result for a root the page no longer shows', () => {
+    expect(doctorResultApplies('/a', '/a')).toBe(true);
+    expect(doctorResultApplies('/a', '/b')).toBe(false);
+    expect(doctorResultApplies('/a', null)).toBe(false);
   });
 });

@@ -21,7 +21,7 @@ import { CohorteMark } from '../../features/cohorte/CohorteParts';
 import CohorteSettingsPage, { CohorteNavDot } from '../../features/cohorte/CohorteSettingsPage';
 import { useProjectDetection } from '../../features/cohorte/useCohorte';
 import { navDotOn } from '../../features/cohorte/settings';
-import { takeCohorteSettingsRequest } from '../../features/cohorte/settings-request';
+import { onCohorteSettingsRequest, takeCohorteSettingsRequest } from '../../features/cohorte/settings-request';
 import McpServersPage from '../../features/mcp/McpServersPage';
 import { mcpReferenceSessionId } from '../../features/mcp/mcp-settings';
 import { useMcpServers } from '../../features/mcp/useMcpServers';
@@ -63,6 +63,8 @@ export default function SettingsView({ home, paneSessionId }: SettingsViewProps)
   useEffect(() => {
     if (projectsOpen && takeCohorteSettingsRequest()) go('cohorte');
   }, [projectsOpen]);
+  // R-16: a request while Settings is already open navigates in place.
+  useEffect(() => onCohorteSettingsRequest(() => go('cohorte')));
 
   const go = (next: SettingsPage) => {
     const st = useStore.getState();

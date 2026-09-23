@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import type { CohorteRun } from '../../../contract/cohorte-integration';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
+import { focusedSessionId } from '../../lib/layoutStore';
 import { basename } from '../../lib/path';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
@@ -17,7 +18,8 @@ import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
 import { answerGate, closeCohorteRun, controlRun, copyCli, ensurePolicy } from './actions';
 import './cohorte.css';
-import { CohorteStateChip, FindingRow } from './CohorteParts';
+import './cohorte-run.css';
+import { AnsweredBy, CohorteStateChip, FindingRow } from './CohorteParts';
 import { ACTION_KEYS, actionLabel, gateAction } from './gate-view';
 import { sessionAtPath } from './linkage';
 import { stepLine } from './outcome';
@@ -166,6 +168,7 @@ function RunBody({ run }: { run: CohorteRun }) {
           Deny and cancel <code>{shortRunId(run.runId)}</code>? · 3/Enter confirm · Esc back
         </div>
       )}
+      <AnsweredBy runId={run.runId} className="cohorte-run__strip" />
       {hostDead(run) && <div className="cohorte-run__strip cohorte-run__strip--warning">Run host is not running — Cohorte restarts it on the next command.</div>}
       {run.lastError && (run.view === 'failed' || run.view === 'blocked') && (
         <div className="cohorte-run__strip cohorte-run__strip--danger">
@@ -342,8 +345,10 @@ function ReviewCard({ run }: { run: CohorteRun }) {
 
 function ArtifactsCard({ run }: { run: CohorteRun }) {
   const openLog = () => {
-    useCohorteStore.getState().setPanelLogRunId(run.runId);
     const st = useStore.getState();
+    // R-16: the log opens in the panel of the session the panel is showing.
+    const sessionId = focusedSessionId(st);
+    if (sessionId) useCohorteStore.getState().setPanelLog(sessionId, run.runId);
     st.setSessionPanelTab('cohorte');
   };
   const logLabel = `cohorte tail ${shortRunId(run.runId)}`;

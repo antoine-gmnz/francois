@@ -18,7 +18,7 @@ import { Tag } from '../../ui/Tag';
 import { answerGate, copyCli } from './actions';
 import { FindingRow } from './CohorteParts';
 import './cohorte.css';
-import { ACTION_KEYS, ACTION_VARIANT, actionLabel, compactActionLabel, gateKindLabel, gateQuestion, gateSummary, runSpecName } from './gate-view';
+import { ACTION_KEYS, ACTION_VARIANT, actionLabel, compactActionLabel, gateHint, gateKindLabel, gateQuestion, gateSummary, runSpecName } from './gate-view';
 import { stepLine } from './outcome';
 import { shortRunId } from './run-view';
 import { useGateKeys } from './useGateKeys';
@@ -63,8 +63,7 @@ export function GateCard({ run, gate, variant, sessionId, keysActive = false }: 
     onRun: (id) => void answerGate(run, id, sessionId),
   });
 
-  const hintAction = gate.actions.find((a) => a.id === hover) ?? gate.actions.find((a) => a.id === 'approve') ?? gate.actions[0];
-  const hint = hintAction?.cli ?? [gate.request.cli];
+  const hint = gateHint(gate, hover);
   const waiting = formatRelativeTime(gate.requestedAt, now);
   const buttons = gate.actions.map((a) => (
     <Button

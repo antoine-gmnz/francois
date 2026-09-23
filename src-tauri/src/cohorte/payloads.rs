@@ -592,6 +592,10 @@ pub struct CommandRejected {
     pub command_id: String,
     pub command_type: String,
     pub error: ErrorInfo,
+    /// R-4, Francois-derived: this app issued the command in the last 60 s.
+    /// Absent on the wire (Cohorte never sends it) → false until the core marks it.
+    #[serde(default)]
+    pub issued_by_francois: bool,
 }
 
 // ---------- git family ----------

@@ -576,4 +576,26 @@ mod tests {
         );
         assert!(parse_config(b"[1]").is_none());
     }
+
+    /// R-11: the real `cohorte doctor --json` output of 3.0.0-dev.1 (captured
+    /// on Windows, `.cohorte/design/real-doctor-dev1.json`) parses into rows.
+    #[test]
+    fn the_real_dev1_doctor_report_parses() {
+        let doc = parse_doctor(include_bytes!("fixtures/real-doctor-dev1.json")).unwrap();
+        assert!(!doc.ok);
+        assert_eq!(doc.checks.len(), 9);
+        assert_eq!(doc.generated_at, Some(1_790_120_151_755));
+        let rows = doctor_rows(&doc.checks, validate_row(0, b"valid\n", ""));
+        assert_eq!(rows[0].summary, "6 checks passed · 2 warnings · 1 errors");
+        let ids: Vec<_> = rows[2..].iter().map(|r| r.command.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "cohorte doctor · sqlite",
+                "cohorte doctor · sandbox",
+                "cohorte doctor · config"
+            ]
+        );
+        assert!(doc.checks.iter().any(|c| c.summary.contains(r"C:\Users")));
+    }
 }

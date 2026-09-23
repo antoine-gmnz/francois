@@ -149,6 +149,13 @@ impl StubCli {
             &format!("@echo off\r\necho {text}\r\n"),
         )
     }
+    /// Prints `text`, then leaves a grandchild holding stdout for 30 s.
+    pub(crate) fn printing_then_hanging(text: &str) -> Self {
+        Self::new(
+            &format!("#!/bin/sh\necho {text}\nsleep 30\n"),
+            &format!("@echo off\r\necho {text}\r\nping -n 30 127.0.0.1\r\n"),
+        )
+    }
     pub(crate) fn sleeping() -> Self {
         Self::new(
             "#!/bin/sh\nsleep 5\n",
@@ -169,12 +176,21 @@ impl Runner for StubCli {
         timeout: Duration,
         cap: usize,
     ) -> RoutedRun {
-        let program = if program == "cohorte" {
-            self.script.to_string_lossy().into_owned()
-        } else {
-            program.to_string()
-        };
-        SystemRunner.run(&program, dir, args, timeout, cap)
+        if program != "cohorte" {
+            return SystemRunner.run(program, dir, args, timeout, cap);
+        }
+        // The production spawn half (tree kill included), with the stub as bin.
+        let bin = self.script.to_string_lossy().into_owned();
+        crate::github::gh::run_argv_bounded(
+            program,
+            &bin,
+            args,
+            &crate::diff::GitHost::Native,
+            dir,
+            timeout,
+            cap,
+            true,
+        )
     }
 }
 

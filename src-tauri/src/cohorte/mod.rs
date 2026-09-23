@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 /// francois:cohorte:event → `francois://cohorte/event` (§5).
@@ -739,6 +739,12 @@ pub struct CommandOutcome {
 // 6. Core state (spec §6) — in memory, nothing persisted
 // =====================================================================
 
+/// R-5: lock without inheriting a poison — a panicked poller must not take
+/// every later command (and the watcher) down with it.
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// The emitter every derived/wire event goes out through; set from the
 /// `AppHandle` on the first command so the watcher threads can reach it.
 pub(crate) type Emitter = Arc<dyn Fn(&CohorteEvent) + Send + Sync>;
@@ -759,6 +765,8 @@ pub(crate) struct Inner {
     /// FR-16: mutating commands are serialised per run.
     pub(crate) run_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub(crate) emitter: Mutex<Option<Emitter>>,
+    /// R-4: commands this app issued in the last 60 s.
+    pub(crate) issued: Mutex<actions::IssuedCommands>,
 }
 
 impl Inner {
@@ -774,14 +782,28 @@ impl Inner {
             foreground: AtomicBool::new(true),
             run_locks: Mutex::new(HashMap::new()),
             emitter: Mutex::new(None),
+            issued: Mutex::new(actions::IssuedCommands::default()),
         }
     }
 
+    /// Emit, marking `command.rejected` members this app issued (R-4).
     pub(crate) fn emit(&self, events: &[CohorteEvent]) {
-        let emitter = self.emitter.lock().unwrap().clone();
+        let emitter = lock(&self.emitter).clone();
         if let Some(emit) = emitter {
             for ev in events {
-                emit(ev);
+                match ev {
+                    CohorteEvent::CommandRejected(w) => {
+                        let mut w = w.clone();
+                        w.payload.issued_by_francois = lock(&self.issued).issued(
+                            &w.payload.command_id,
+                            &w.payload.command_type,
+                            &w.header.run_id,
+                            crate::ids::now_ms(),
+                        );
+                        emit(&CohorteEvent::CommandRejected(w));
+                    }
+                    _ => emit(ev),
+                }
             }
         }
     }

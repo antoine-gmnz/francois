@@ -11,7 +11,10 @@ import { isWindowFocused, notifyDesktop } from '../notifications/notifications';
 import { gateNotificationBody } from './gate-view';
 import { computeLinks, originSessionId } from './linkage';
 import { shouldNotifyGate } from './notify';
+import { rejectionToast } from './outcome';
+import { showToast } from '../palette/palette';
 import { CASE_INSENSITIVE_FS } from './useCohorte';
+import { watchedRunList } from './watch';
 
 const firstSeen = new Map<string, number>();
 const notified = new Set<string>();
@@ -26,7 +29,7 @@ function originOf(runId: string): string | null {
   const c = useCohorteStore.getState();
   const links = computeLinks({
     sessions: useStore.getState().sessions,
-    runs: Object.values(c.runs),
+    runs: watchedRunList(c.runs, c.watchedRoots, CASE_INSENSITIVE_FS),
     detections: c.detections,
     explicitLinks: c.explicitLinks,
     caseInsensitive: CASE_INSENSITIVE_FS,
@@ -61,5 +64,9 @@ export function initCohorteFeed(): void {
     if (e.type === 'francois.run.updated') noteRunsSeen([e.run]);
     useCohorteStore.getState().apply(e);
     if (e.type === 'francois.gate.opened') onGateOpened(e.gate);
+    if (e.type === 'command.rejected') {
+      const message = rejectionToast(e);
+      if (message) showToast(message, 'error');
+    }
   });
 }

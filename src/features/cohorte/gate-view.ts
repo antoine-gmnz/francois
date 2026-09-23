@@ -91,3 +91,15 @@ export function findingLocation(f: { file?: string; line?: number }): string | n
   if (!f.file) return null;
   return f.line !== undefined ? `${f.file}:${f.line}` : f.file;
 }
+
+/**
+ * FR-61 / R-16: the CLI hint lines — the hovered/focused action's, else
+ * approve's, else the first offered. Never Cohorte's own `request.cli` (it
+ * lacks the runId the real CLI needs): with no action, the approve argv is
+ * built from the ids, and a gate that offers nothing shows nothing.
+ */
+export function gateHint(gate: CohorteGate, hovered: CohorteGateActionId | null): string[] {
+  const action = gate.actions.find((a) => a.id === hovered) ?? gate.actions.find((a) => a.id === 'approve') ?? gate.actions[0];
+  if (action) return action.cli;
+  return gate.request.allowedDecisions.includes('allow-once') ? [`cohorte approve ${gate.runId} ${gate.request.approvalId}`] : [];
+}

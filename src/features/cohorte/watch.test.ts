@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { detection } from '../../lib/cohorte.testutil';
 import { cohorteRunIdFromTab, cohorteTabId } from './tab';
-import { watchedRoots } from './watch';
+import { rootIsWatched, watchedRoots, watchedRunList } from './watch';
 
 describe('watchedRoots (FR-52)', () => {
   const dets = {
@@ -23,5 +23,14 @@ describe('cohorte tab ids (FR-70)', () => {
     expect(cohorteTabId('run_x')).toBe('cohorte:run_x');
     expect(cohorteRunIdFromTab('cohorte:run_x')).toBe('run_x');
     expect(cohorteRunIdFromTab('ext:run_x')).toBeNull();
+  });
+});
+
+describe('watched-root filters (R-13)', () => {
+  it('keeps only runs under a watched root, tolerant of path spelling', () => {
+    const runs = { a: { projectRoot: 'C:\\Code\\Orbit' }, b: { projectRoot: '/code/other' } };
+    expect(watchedRunList(runs, ['c:/code/orbit/'], true)).toEqual([runs.a]);
+    expect(watchedRunList(runs, [], true)).toEqual([]);
+    expect(rootIsWatched(['/code/other'], false)('/code/other')).toBe(true);
   });
 });

@@ -10,7 +10,7 @@ import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
 import { noteRunsSeen } from './cohorteFeed';
 import { CASE_INSENSITIVE_FS } from './useCohorte';
-import { watchedRoots } from './watch';
+import { ROOT_LINGER_MS, rootIsWatched, watchedRoots } from './watch';
 
 const DEBOUNCE_MS = 500;
 
@@ -57,10 +57,23 @@ export function useCohorteWatch(): void {
   );
   const key = roots.join('\n');
 
+  // R-13: the store knows the watch set at once (links, roster and palette read
+  // it); runs under a root that left it are pruned after the core's linger.
+  useEffect(() => {
+    useCohorteStore.getState().setWatchedRoots(roots);
+    const timer = setTimeout(() => {
+      useCohorteStore.getState().pruneRuns(rootIsWatched(useCohorteStore.getState().watchedRoots, CASE_INSENSITIVE_FS));
+    }, ROOT_LINGER_MS);
+    return () => clearTimeout(timer);
+    // `key` stands for `roots`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
   const hydrated = useRef(new Set<string>());
   useEffect(() => {
     const send = () => {
       void cohorteWatch({ roots, foreground: foreground() });
+      for (const root of [...hydrated.current]) if (!roots.includes(root)) hydrated.current.delete(root);
       for (const root of roots) {
         if (hydrated.current.has(root)) continue;
         hydrated.current.add(root);

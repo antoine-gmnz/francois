@@ -3,10 +3,13 @@
 // the SVG and is never recoloured (design brief §0).
 
 import type { CohorteFinding } from '../../../contract/cohorte-events';
+import { useCohorteStore } from '../../lib/cohorteStore';
+import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { StateIcon } from '../../ui/StateIcon';
 import type { StateKind } from '../../ui/state-kind';
 import './cohorte.css';
 import { findingLocation } from './gate-view';
+import { ANSWERED_BY_MS, answeredByLine } from './outcome';
 import type { ChipTone } from './run-view';
 import { shortRunId } from './run-view';
 
@@ -63,6 +66,20 @@ export function FindingRow({ finding, variant }: { finding: CohorteFinding; vari
       <span className="cohorte-finding__title truncate">{finding.title}</span>
       {where && <span className="cohorte-finding__where truncate">{where}</span>}
       <span className="cohorte-finding__label">{finding.label}</span>
+    </div>
+  );
+}
+
+/** R-15: "Answered by <actor> · <decision>" when someone else answered the gate. */
+export function AnsweredBy({ runId, className }: { runId: string; className?: string }): JSX.Element | null {
+  const resolution = useCohorteStore((s) => s.resolutions[runId]);
+  const fresh = resolution !== undefined && !resolution.byThisWindow && Date.now() - resolution.at <= ANSWERED_BY_MS;
+  const now = useElapsedClock(fresh);
+  const line = answeredByLine(resolution, fresh ? Math.max(now, resolution.at) : Date.now());
+  if (!line) return null;
+  return (
+    <div className={className ? `cohorte-answered ${className}` : 'cohorte-answered'} role="status">
+      {line}
     </div>
   );
 }

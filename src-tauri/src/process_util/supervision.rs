@@ -99,6 +99,84 @@ pub(crate) struct OwnedChild {
     job: windows::Job,
 }
 impl CommandBuilder {
+    /// [`CommandBuilder::run_bounded`], but at the deadline the whole process
+    /// TREE dies (a Windows job object / a unix process group) and whatever
+    /// stdout arrived before it is kept. cohorte-integration FR-6b: `cohorte`
+    /// on Windows is an npm `.cmd` shim — killing `cmd.exe` alone leaves its
+    /// `node` holding the pipes, so the pumps (and the caller) would block
+    /// until node exits on its own; and dev.1's `doctor --json` prints its
+    /// whole document, then lingers.
+    pub(crate) fn run_bounded_tree(
+        mut self,
+        timeout: Duration,
+        output_cap: usize,
+    ) -> super::BoundedRun {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            self.cmd.process_group(0);
+        }
+        if !self.stdout_set {
+            self.cmd.stdout(Stdio::piped());
+        }
+        if !self.stderr_set {
+            self.cmd.stderr(Stdio::piped());
+        }
+        let mut child = match self.cmd.spawn() {
+            Ok(c) => c,
+            Err(_) => {
+                return super::BoundedRun {
+                    status: None,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                    spawn_failed: true,
+                    timed_out: false,
+                }
+            }
+        };
+        #[cfg(windows)]
+        let job = windows::Job::attach(&child).ok();
+        let stdout_pump = child
+            .stdout
+            .take()
+            .map(|s| std::thread::spawn(move || super::pump_capped(s, output_cap)));
+        let stderr_pump = child
+            .stderr
+            .take()
+            .map(|s| std::thread::spawn(move || super::pump_capped(s, output_cap)));
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                _ => break None,
+            }
+        };
+        if status.is_none() {
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                let _ = job.terminate();
+            }
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let stdout = stdout_pump.and_then(|p| p.join().ok()).unwrap_or_default();
+        let stderr = stderr_pump.and_then(|p| p.join().ok()).unwrap_or_default();
+        super::BoundedRun {
+            timed_out: status.is_none(),
+            status,
+            stdout,
+            stderr,
+            spawn_failed: false,
+        }
+    }
+
     pub(crate) fn start_owned(mut self) -> io::Result<OwnedChild> {
         #[cfg(unix)]
         {

@@ -13,7 +13,7 @@ import { Tag } from '../../ui/Tag';
 import type { SessionPanelSectionProps } from '../../app/session-panel/sections';
 import { controlRun, openCohorteRun } from './actions';
 import './cohorte.css';
-import { CohorteMark } from './CohorteParts';
+import { AnsweredBy, CohorteMark } from './CohorteParts';
 import { GateCard } from './GateCard';
 import { detectionFor } from './linkage';
 import { PhasesList } from './PhasesList';
@@ -27,8 +27,10 @@ export function CohorteTabIcon(): JSX.Element {
 
 export default function CohortePanelSection({ session }: SessionPanelSectionProps): JSX.Element {
   const { run } = useSessionRun(session.id);
-  const logRunId = useCohorteStore((s) => s.panelLogRunId);
-  const setLog = useCohorteStore((s) => s.setPanelLogRunId);
+  // R-16: the log view is per session — another session's tab keeps its own.
+  const logRunId = useCohorteStore((s) => s.panelLog[session.id] ?? null);
+  const setPanelLog = useCohorteStore((s) => s.setPanelLog);
+  const setLog = (runId: string | null) => setPanelLog(session.id, runId);
   const logRun = useCohorteStore((s) => (logRunId ? (s.runs[logRunId] ?? null) : null));
   if (logRun) return <RunLog run={logRun} onBack={() => setLog(null)} />;
   if (!run) return <NoRun cwd={session.cwd} />;
@@ -39,6 +41,7 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
   const summary = panelSummary(run);
   const busy = useCohorteStore((s) => s.busy[run.runId] ?? null);
   const health = useCohorteStore((s) => s.watchHealth[run.projectRoot]);
+  const authCli = useCohorteStore((s) => s.authCli[run.runId]);
   const controls = runControls(run.view);
   const runtime = runtimeLine(run);
   const digest = shortDigest(run.snapshotDigest);
@@ -58,6 +61,7 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
               {shortRunId(run.runId)}
             </span>
           </div>
+          <AnsweredBy runId={run.runId} className="cohorte-panel__note" />
           {hostDead(run) && <div className="cohorte-panel__note cohorte-panel__note--warning">Run host is not running — Cohorte restarts it on the next command.</div>}
           {health && !health.healthy && (
             <div className="cohorte-panel__note">Cohorte not responding — retrying in {Math.ceil(health.nextPollInMs / 1000)}s</div>
@@ -68,9 +72,9 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
               {run.lastError.remediation && ` — ${run.lastError.remediation}`}
             </div>
           )}
-          {run.view === 'auth' && (
+          {run.view === 'auth' && authCli && (
             <div className="cohorte-panel__note">
-              Log in with <code>cohorte auth login</code>
+              Log in with <code>{authCli}</code>
             </div>
           )}
         </div>

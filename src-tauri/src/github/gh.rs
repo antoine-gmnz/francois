@@ -72,15 +72,41 @@ pub(crate) fn run_routed_bounded(
     cap: usize,
 ) -> RoutedRun {
     let (bin, argv) = program_argv(program, host, dir, args);
-    let mut builder = crate::process_util::spawn(&bin).args(&argv);
+    run_argv_bounded(program, &bin, &argv, host, dir, timeout, cap, false)
+}
+
+/// The spawn half of [`run_routed_bounded`], for a caller that builds its own
+/// (bin, argv) — cohorte-integration R-2 wraps WSL spawns in `--exec bash -lc`
+/// instead of `program_argv`'s form. `label` names the program in errors;
+/// `kill_tree` kills the whole process tree at the deadline and keeps the
+/// stdout that arrived before it (`process_util`'s `run_bounded_tree`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_argv_bounded(
+    label: &str,
+    bin: &str,
+    argv: &[String],
+    host: &GitHost,
+    dir: &str,
+    timeout: Duration,
+    cap: usize,
+    kill_tree: bool,
+) -> RoutedRun {
+    let program = label;
+    let mut builder = crate::process_util::spawn(bin).args(argv);
     if matches!(host, GitHost::Native) {
         builder = builder.current_dir(dir);
     }
-    let run = builder.run_bounded(timeout, cap.saturating_add(1));
+    let run = if kill_tree {
+        builder.run_bounded_tree(timeout, cap.saturating_add(1))
+    } else {
+        builder.run_bounded(timeout, cap.saturating_add(1))
+    };
     if run.spawn_failed || run.timed_out {
+        let mut stdout = run.stdout;
+        stdout.truncate(cap);
         return RoutedRun {
             code: -1,
-            stdout: Vec::new(),
+            stdout,
             stderr: if run.spawn_failed {
                 format!("{program}: failed to start")
             } else {

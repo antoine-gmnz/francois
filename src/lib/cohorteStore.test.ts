@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { COHORTE_PREF_DEFAULTS, COHORTE_PREF_KEYS, type CohorteDerivedEvent, type CohorteEventType } from '../../contract/cohorte-integration';
 import { COHORTE_WIRE_EVENT_TYPES } from '../../contract/cohorte-events';
-import { applyCohorteEvent, initialCohorteData, loadCohortePrefs, persistCohortePref, useCohorteStore, type CohorteData } from './cohorteStore';
+import { applyCohorteEvent, initialCohorteData, loadCohortePrefs, mergeFetchedLog, persistCohortePref, pruneRunsTo, useCohorteStore, type CohorteData } from './cohorteStore';
 import { detection, gate, run, RUN_ID, wire } from './cohorte.testutil';
 
 const DERIVED: CohorteDerivedEvent[] = [
@@ -67,7 +67,7 @@ describe('applyCohorteEvent — every CohorteEvent member (AC-20)', () => {
     const s = applyCohorteEvent(data({ runs: { [RUN_ID]: run({ gate: gate(), view: 'gate' }) }, busy: { [RUN_ID]: 'approve' } }), DERIVED[4]);
     expect(s.runs?.[RUN_ID].gate).toBeNull();
     expect(s.busy).toEqual({});
-    expect(s.resolutions?.[RUN_ID]).toEqual({ approvalId: 'apr_1', decision: 'allow-once', actor: 'human:me' });
+    expect(s.resolutions?.[RUN_ID]).toMatchObject({ approvalId: 'apr_1', decision: 'allow-once', actor: 'human:me' });
   });
 
   it('gate.resolved for another approval keeps the current gate', () => {
@@ -140,5 +140,62 @@ describe('useCohorteStore actions', () => {
   it('apply routes through the reducer', () => {
     useCohorteStore.getState().apply({ type: 'francois.run.updated', run: run({ title: 'x' }) });
     expect(useCohorteStore.getState().runs[RUN_ID].title).toBe('x');
+  });
+});
+
+describe('Remediation round 1 — store', () => {
+  const resolved = DERIVED[4];
+
+  it('R-15: a resolution records whether this window issued the answer', () => {
+    const mine = applyCohorteEvent(data({ runs: { [RUN_ID]: run({ gate: gate() }) }, busy: { [RUN_ID]: 'approve' } }), resolved, 42);
+    expect(mine.resolutions?.[RUN_ID]).toMatchObject({ at: 42, byThisWindow: true });
+    const theirs = applyCohorteEvent(data({ runs: { [RUN_ID]: run({ gate: gate() }) } }), resolved, 42);
+    expect(theirs.resolutions?.[RUN_ID].byThisWindow).toBe(false);
+  });
+
+  it('R-16: a resolved gate clears the last outcome', () => {
+    const s = applyCohorteEvent(data({ lastOutcome: { [RUN_ID]: { runId: RUN_ID, steps: [], run: null } } }), resolved);
+    expect(s.lastOutcome).toEqual({});
+    expect(s.resolutions?.[RUN_ID].byThisWindow).toBe(true);
+  });
+
+  it("R-16: auth.required keeps the event's own cli hint, log loaded or not", () => {
+    const s = applyCohorteEvent(data(), wire('auth.required', { provider: 'pi', cause: 'expired', cli: 'cohorte auth login pi' }));
+    expect(s.authCli?.[RUN_ID]).toBe('cohorte auth login pi');
+  });
+
+  it('R-16: rows arriving during a log fetch are buffered, then merged after the fetched ring', () => {
+    let s = data({ logBuffers: { [RUN_ID]: [] } });
+    s = { ...s, ...applyCohorteEvent(s, wire('pipeline.started', {}, { sequence: 7 })) };
+    s = { ...s, ...applyCohorteEvent(s, wire('pipeline.started', {}, { sequence: 3 })) };
+    expect(s.logs[RUN_ID]).toBeUndefined();
+    const fetched = [1, 2, 3].map((n) => ({ runId: RUN_ID, sequence: n, sub: 0, at: n, type: 'x', severity: 'info', summary: '' }));
+    const merged = mergeFetchedLog(s, RUN_ID, fetched);
+    expect(merged.logs?.[RUN_ID].map((r) => r.sequence)).toEqual([1, 2, 3, 7]);
+    expect(merged.logBuffers).toEqual({});
+  });
+
+  it('R-13: pruning drops runs (and their state) whose root left the watch set', () => {
+    const other = run({ runId: 'run_bbbbbbbbbbbb', projectRoot: '/code/other' });
+    const s = data({
+      runs: { [RUN_ID]: run(), [other.runId]: other },
+      logs: { [other.runId]: [] },
+      busy: { [other.runId]: 'pause' },
+      lastOutcome: { [other.runId]: { runId: other.runId, steps: [], run: null } },
+    });
+    const p = pruneRunsTo(s, (root) => root === '/code/orbit');
+    expect(Object.keys(p.runs ?? {})).toEqual([RUN_ID]);
+    expect(p.logs).toEqual({});
+    expect(p.busy).toEqual({});
+    expect(p.lastOutcome).toEqual({});
+    expect(pruneRunsTo(s, () => true)).toEqual({});
+  });
+
+  it('R-16: the panel log is keyed by session', () => {
+    useCohorteStore.setState(initialCohorteData());
+    useCohorteStore.getState().setPanelLog('s1', RUN_ID);
+    expect(useCohorteStore.getState().panelLog).toEqual({ s1: RUN_ID });
+    useCohorteStore.getState().setPanelLog('s1', null);
+    expect(useCohorteStore.getState().panelLog).toEqual({});
   });
 });

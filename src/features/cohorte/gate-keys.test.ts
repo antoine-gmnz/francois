@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gateKeyAction, isEditableTarget, type GateKeyState } from './gate-keys';
+import { gateKeyAction, isControlTarget, isEditableTarget, type GateKeyState } from './gate-keys';
 
 const base: GateKeyState = {
   editable: false,
@@ -8,6 +8,8 @@ const base: GateKeyState = {
   offered: ['approve', 'fix', 'deny'],
   denyStopsRun: true,
   confirmArmed: false,
+  repeat: false,
+  onControl: false,
 };
 
 describe('gateKeyAction (FR-63, AC-33)', () => {
@@ -46,5 +48,26 @@ describe('isEditableTarget', () => {
     expect(isEditableTarget({ tagName: 'DIV', closest: (s) => (s === '.xterm' ? {} : null) })).toBe(true);
     expect(isEditableTarget({ tagName: 'BUTTON', closest: () => null })).toBe(false);
     expect(isEditableTarget(null)).toBe(false);
+  });
+});
+
+describe('Remediation R-12', () => {
+  it('ignores auto-repeat: a held digit never runs or arms twice', () => {
+    expect(gateKeyAction('1', { ...base, repeat: true })).toEqual({ kind: 'swallow' });
+    expect(gateKeyAction('3', { ...base, repeat: true })).toEqual({ kind: 'swallow' });
+    expect(gateKeyAction('3', { ...base, repeat: true, confirmArmed: true })).toEqual({ kind: 'swallow' });
+    expect(gateKeyAction('Enter', { ...base, repeat: true, confirmArmed: true })).toEqual({ kind: 'swallow' });
+    expect(gateKeyAction('x', { ...base, repeat: true })).toEqual({ kind: 'pass' });
+  });
+  it('while armed, Enter on a focused button/link/[role=button] goes to that control', () => {
+    expect(gateKeyAction('Enter', { ...base, confirmArmed: true, onControl: true })).toEqual({ kind: 'pass' });
+    expect(gateKeyAction('3', { ...base, confirmArmed: true, onControl: true })).toEqual({ kind: 'run', action: 'deny' });
+  });
+  it('recognises controls', () => {
+    expect(isControlTarget({ tagName: 'BUTTON' })).toBe(true);
+    expect(isControlTarget({ tagName: 'a' })).toBe(true);
+    expect(isControlTarget({ tagName: 'DIV', getAttribute: (n) => (n === 'role' ? 'button' : null) })).toBe(true);
+    expect(isControlTarget({ tagName: 'DIV', getAttribute: () => null })).toBe(false);
+    expect(isControlTarget(null)).toBe(false);
   });
 });

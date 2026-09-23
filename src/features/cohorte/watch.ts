@@ -21,3 +21,18 @@ export function watchedRoots(
   }
   return [...byKey.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, root]) => root);
 }
+
+/** R-13: the root-membership test the prune and the run filters share. */
+export function rootIsWatched(roots: readonly string[], caseInsensitive: boolean): (projectRoot: string) => boolean {
+  const set = new Set(roots.map((r) => normalisePath(r, caseInsensitive)));
+  return (projectRoot) => set.has(normalisePath(projectRoot, caseInsensitive));
+}
+
+/** R-13: only runs under a watched root reach the roster, Needs-you, the links and the palette. */
+export function watchedRunList<R extends { projectRoot: string }>(runs: Readonly<Record<string, R>>, roots: readonly string[], caseInsensitive: boolean): R[] {
+  const keep = rootIsWatched(roots, caseInsensitive);
+  return Object.values(runs).filter((r) => keep(r.projectRoot));
+}
+
+/** R-13: how long a root that left the watch set keeps its runs (the core's own linger, FR-15). */
+export const ROOT_LINGER_MS = 30_000;

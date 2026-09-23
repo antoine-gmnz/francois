@@ -31,6 +31,10 @@ export interface CohorteResolution {
   approvalId: string;
   decision: CohorteApprovalDecision | 'unknown';
   actor?: string;
+  /** when this window saw it (epoch ms) */
+  at: number;
+  /** R-15: the resolution answers a command this window issued (busy or outcome pending) */
+  byThisWindow: boolean;
 }
 
 /** Everything the reducer reads and writes — the store minus its actions. */
@@ -50,8 +54,14 @@ export interface CohorteData {
   policies: Record<string, CohortePolicySummary>;
   /** the last gate resolution per run — who answered it (§5.1 approval.resolved). */
   resolutions: Record<string, CohorteResolution>;
-  /** FR-69: the run whose activity log the panel's Cohorte tab is showing, if any. */
-  panelLogRunId: string | null;
+  /** FR-69 / R-16: per session, the run whose activity log its Cohorte tab shows. */
+  panelLog: Record<SessionId, string>;
+  /** R-16: wire rows that arrived while a run's log fetch was in flight. */
+  logBuffers: Record<string, CohorteLogEntry[]>;
+  /** R-16: the `cli` hint of a run's latest `auth.required` (`cohorte auth login …`). */
+  authCli: Record<string, string>;
+  /** R-13: the Cohorte roots this window currently asks the core to watch. */
+  watchedRoots: string[];
 }
 
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -66,7 +76,7 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
  * row (and only to a log that was fetched); the run projection itself comes
  * from the derived `francois.run.updated`, which replaces the whole run.
  */
-export function applyCohorteEvent(s: CohorteData, e: CohorteEvent): Partial<CohorteData> {
+export function applyCohorteEvent(s: CohorteData, e: CohorteEvent, now: number = Date.now()): Partial<CohorteData> {
   switch (e.type) {
     case 'francois.detection.changed':
       return { detections: { ...s.detections, [e.detection.startDir]: e.detection } };
@@ -78,6 +88,8 @@ export function applyCohorteEvent(s: CohorteData, e: CohorteEvent): Partial<Coho
         logs: without(s.logs, e.runId),
         busy: without(s.busy, e.runId),
         lastOutcome: without(s.lastOutcome, e.runId),
+        logBuffers: without(s.logBuffers, e.runId),
+        authCli: without(s.authCli, e.runId),
       };
     case 'francois.gate.opened': {
       const current = s.runs[e.gate.runId];
@@ -86,10 +98,13 @@ export function applyCohorteEvent(s: CohorteData, e: CohorteEvent): Partial<Coho
     }
     case 'francois.gate.resolved': {
       const current = s.runs[e.runId];
-      const resolution: CohorteResolution = { approvalId: e.approvalId, decision: e.decision, actor: e.actor };
+      const byThisWindow = s.busy[e.runId] != null || s.lastOutcome[e.runId] !== undefined;
+      const resolution: CohorteResolution = { approvalId: e.approvalId, decision: e.decision, actor: e.actor, at: now, byThisWindow };
       const patch: Partial<CohorteData> = {
         resolutions: { ...s.resolutions, [e.runId]: resolution },
         busy: without(s.busy, e.runId),
+        // R-16: the step lines stay "for 8 s or until the gate resolves" (FR-65).
+        lastOutcome: without(s.lastOutcome, e.runId),
       };
       if (current?.gate?.request.approvalId === e.approvalId) {
         patch.runs = { ...s.runs, [e.runId]: { ...current, gate: null } };
@@ -173,11 +188,20 @@ export function applyCohorteEvent(s: CohorteData, e: CohorteEvent): Partial<Coho
     case 'heartbeat':
     case 'unknown': {
       // §5.1: every wire member is one log row — appended only to a log the
-      // user opened (the ring is fetched lazily, FR-69).
+      // user opened (the ring is fetched lazily, FR-69), or buffered while
+      // that fetch is in flight (R-16).
+      const patch: Partial<CohorteData> = {};
+      if (e.type === 'auth.required') patch.authCli = { ...s.authCli, [e.runId]: e.payload.cli };
+      const buffer = s.logBuffers[e.runId];
+      if (buffer) {
+        patch.logBuffers = { ...s.logBuffers, [e.runId]: [...buffer, logEntryFromEvent(e)] };
+        return patch;
+      }
       const log = s.logs[e.runId];
-      if (!log) return {};
+      if (!log) return patch;
       const next = appendLog(log, logEntryFromEvent(e));
-      return next === log ? {} : { logs: { ...s.logs, [e.runId]: next } };
+      if (next !== log) patch.logs = { ...s.logs, [e.runId]: next };
+      return patch;
     }
     default: {
       // Exhaustive: a member added to the contract fails to compile here. At
@@ -187,6 +211,36 @@ export function applyCohorteEvent(s: CohorteData, e: CohorteEvent): Partial<Coho
       return {};
     }
   }
+}
+
+/**
+ * R-16 — the fetched ring, then every row that arrived while the fetch was in
+ * flight (deduped by `(sequence, sub)` in `appendLog`). Clears the buffer.
+ */
+export function mergeFetchedLog(s: CohorteData, runId: string, entries: CohorteLogEntry[]): Partial<CohorteData> {
+  let log = entries;
+  for (const row of s.logBuffers[runId] ?? []) log = appendLog(log, row);
+  return { logs: { ...s.logs, [runId]: log }, logBuffers: without(s.logBuffers, runId) };
+}
+
+/** R-13 — keep only the runs whose root is still watched (after the linger). */
+export function pruneRunsTo(s: CohorteData, keep: (projectRoot: string) => boolean): Partial<CohorteData> {
+  const gone = Object.values(s.runs).filter((r) => !keep(r.projectRoot)).map((r) => r.runId);
+  if (gone.length === 0) return {};
+  const drop = <T>(rec: Record<string, T>): Record<string, T> => {
+    let next = rec;
+    for (const id of gone) next = without(next, id);
+    return next;
+  };
+  return {
+    runs: drop(s.runs),
+    logs: drop(s.logs),
+    busy: drop(s.busy),
+    lastOutcome: drop(s.lastOutcome),
+    logBuffers: drop(s.logBuffers),
+    authCli: drop(s.authCli),
+    resolutions: drop(s.resolutions),
+  };
 }
 
 // ---------- prefs (FR-53) ----------
@@ -242,7 +296,14 @@ export interface CohorteState extends CohorteData {
   setPref: (key: keyof CohortePrefs, on: boolean) => void;
   setReturnTab: (tab: MainTab) => void;
   setPolicy: (root: string, policy: CohortePolicySummary) => void;
-  setPanelLogRunId: (runId: string | null) => void;
+  /** R-16: which run's log a session's Cohorte tab shows (null = the run view). */
+  setPanelLog: (sessionId: SessionId, runId: string | null) => void;
+  /** R-16: a log fetch started — wire rows buffer until `setLog`. */
+  beginLog: (runId: string) => void;
+  /** R-13: the declared watch set (set as soon as it is computed). */
+  setWatchedRoots: (roots: string[]) => void;
+  /** R-13: drop every run (and its log, busy, outcome) whose root `keep` rejects. */
+  pruneRuns: (keep: (projectRoot: string) => boolean) => void;
 }
 
 export function initialCohorteData(): CohorteData {
@@ -258,7 +319,10 @@ export function initialCohorteData(): CohorteData {
     watchHealth: {},
     policies: {},
     resolutions: {},
-    panelLogRunId: null,
+    panelLog: {},
+    logBuffers: {},
+    authCli: {},
+    watchedRoots: [],
   };
 }
 
@@ -274,7 +338,7 @@ export const useCohorteStore = create<CohorteState>((set) => ({
       return { runs: next };
     }),
   upsertRun: (run) => set((s) => ({ runs: { ...s.runs, [run.runId]: run } })),
-  setLog: (runId, entries) => set((s) => ({ logs: { ...s.logs, [runId]: entries } })),
+  setLog: (runId, entries) => set((s) => mergeFetchedLog(s, runId, entries)),
   setBusy: (runId, busy) => set((s) => ({ busy: busy === null ? without(s.busy, runId) : { ...s.busy, [runId]: busy } })),
   setOutcome: (runId, outcome) =>
     set((s) => ({ lastOutcome: outcome === null ? without(s.lastOutcome, runId) : { ...s.lastOutcome, [runId]: outcome } })),
@@ -290,5 +354,9 @@ export const useCohorteStore = create<CohorteState>((set) => ({
   },
   setReturnTab: (returnTab) => set({ returnTab }),
   setPolicy: (root, policy) => set((s) => ({ policies: { ...s.policies, [root]: policy } })),
-  setPanelLogRunId: (panelLogRunId) => set({ panelLogRunId }),
+  setPanelLog: (sessionId, runId) =>
+    set((s) => ({ panelLog: runId === null ? without(s.panelLog, sessionId) : { ...s.panelLog, [sessionId]: runId } })),
+  beginLog: (runId) => set((s) => (s.logBuffers[runId] ? {} : { logBuffers: { ...s.logBuffers, [runId]: [] } })),
+  setWatchedRoots: (watchedRoots) => set({ watchedRoots }),
+  pruneRuns: (keep) => set((s) => pruneRunsTo(s, keep)),
 }));

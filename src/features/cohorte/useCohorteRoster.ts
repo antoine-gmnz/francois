@@ -5,7 +5,8 @@ import { useMemo } from 'react';
 import type { SessionId } from '../../../contract/common';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { EMPTY_PLAN, nestNodes, planRoster, type RosterCohortePlan } from './roster';
-import { useCohorteLinks } from './useCohorte';
+import { CASE_INSENSITIVE_FS, useCohorteLinks } from './useCohorte';
+import { watchedRunList } from './watch';
 
 export interface CohorteRoster {
   plan: RosterCohortePlan;
@@ -18,10 +19,12 @@ export interface CohorteRoster {
 export function useCohorteRoster(inScope: readonly { id: SessionId }[]): CohorteRoster {
   const links = useCohorteLinks();
   const runs = useCohorteStore((s) => s.runs);
+  const roots = useCohorteStore((s) => s.watchedRoots);
   const gatesInNeedsYou = useCohorteStore((s) => s.prefs.gatesInNeedsYou);
   const groupSessionsUnderRun = useCohorteStore((s) => s.prefs.groupSessionsUnderRun);
   return useMemo(() => {
-    const list = Object.values(runs);
+    // R-13: only watched roots reach the roster.
+    const list = watchedRunList(runs, roots, CASE_INSENSITIVE_FS);
     const plan = list.length === 0 ? EMPTY_PLAN : planRoster(inScope, list, links, { gatesInNeedsYou, groupSessionsUnderRun });
     const runOfOrigin = new Map<SessionId, string>();
     for (const l of links) if (l.role === 'origin' || !runOfOrigin.has(l.sessionId)) runOfOrigin.set(l.sessionId, l.runId);
@@ -30,5 +33,5 @@ export function useCohorteRoster(inScope: readonly { id: SessionId }[]): Cohorte
       forced: new Set(plan.gated.keys()),
       nest: (nodes) => nestNodes(nodes, plan, (origin) => runOfOrigin.get(origin) ?? null),
     };
-  }, [inScope, runs, links, gatesInNeedsYou, groupSessionsUnderRun]);
+  }, [inScope, runs, roots, links, gatesInNeedsYou, groupSessionsUnderRun]);
 }

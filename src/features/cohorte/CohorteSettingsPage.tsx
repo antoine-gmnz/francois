@@ -5,7 +5,7 @@
 // ever triggers, through the CLI. Francois never writes to .cohorte/ itself.
 
 import { Check, Lock, TriangleAlert, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CohorteDetection, CohorteDoctorReport, CohortePrefs } from '../../../contract/cohorte-integration';
 import { formatRelativeTime } from '../../../contract/fleet-board';
 import type { ProjectMeta } from '../../../contract/projects';
@@ -20,8 +20,9 @@ import { Tag } from '../../ui/Tag';
 import { showToast } from '../palette/palette';
 import { ensurePolicy } from './actions';
 import './cohorte.css';
+import './cohorte-settings.css';
 import { CohorteMark, CohorteStateChip } from './CohorteParts';
-import { checkGlyph, COHORTE_DOCS_URL, detectionHead, detectionSegments, doctorChip, pageMode } from './settings';
+import { checkGlyph, COHORTE_DOCS_URL, detectionHead, detectionSegments, doctorChip, doctorResultApplies, pageMode } from './settings';
 import { detectProject, useProjectDetection } from './useCohorte';
 
 const SWITCHES: { key: keyof CohortePrefs; title: string; description: string }[] = [
@@ -62,10 +63,15 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
     if (root) void detectProject(root);
   }, [root]);
 
+  // R-16: a doctor result only lands on the page of the root it ran for.
+  const currentRoot = useRef(cohorteRoot);
+  currentRoot.current = cohorteRoot;
   const runDoctor = () => {
     if (!cohorteRoot) return;
+    const ranFor = cohorteRoot;
     setDoctorRunning(true);
-    void cohorteDoctor({ root: cohorteRoot }).then((res) => {
+    void cohorteDoctor({ root: ranFor }).then((res) => {
+      if (!doctorResultApplies(ranFor, currentRoot.current)) return;
       setDoctorRunning(false);
       if (res.ok) setDoctor(res.data);
       else showToast(res.error.message, 'error');
@@ -75,6 +81,7 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
   // FR-80: doctor once per page open, policy once per root.
   useEffect(() => {
     setDoctor(null);
+    setDoctorRunning(false);
     if (!detected || !cohorteRoot) return;
     runDoctor();
     ensurePolicy(cohorteRoot);

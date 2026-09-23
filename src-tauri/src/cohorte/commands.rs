@@ -3,8 +3,8 @@
 //! tested with a fake runner) and resolves an `IpcResult`: domain failures
 //! never reject across the bridge.
 
-use super::actions::{self, Control, RunFacts};
-use super::cli::{self, argv, Kind};
+use super::actions::{self, Control, IssuedCommands, RunFacts};
+use super::cli::{self, argv, Kind, Runner};
 use super::detect::{normalise_dir, require_detected};
 use super::documents::{
     doctor_rows, gated_steps, parse_config, parse_doctor, unattended, validate_row,
@@ -16,10 +16,12 @@ use super::{
     CohorteRunRequest, CohorteSendToFixRequest, CohorteState, CohorteWatchRequest, CommandOutcome,
     Inner, LogEntry, EVENT_CHANNEL,
 };
+use crate::github::gh::RoutedRun;
 use crate::ids::now_ms;
 use crate::ipc::{ok, AppError, ErrorCode, IpcResult};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 const DEFAULT_LOG_LIMIT: u64 = 200;
@@ -37,6 +39,40 @@ fn run_not_found(run_id: &str) -> AppError {
     )
 }
 
+/// R-4: the runner the run controls use — it records every mutating
+/// command this app issues (id from the CLI's CommandResultDocument when it
+/// prints one, else its type + run) so a later `command.rejected` can be
+/// attributed.
+struct Recording<'a>(&'a Inner);
+
+impl Runner for Recording<'_> {
+    fn run(
+        &self,
+        program: &str,
+        dir: &str,
+        args: &[String],
+        timeout: Duration,
+        cap: usize,
+    ) -> RoutedRun {
+        let out = self.0.runner.run(program, dir, args, timeout, cap);
+        let verb = args.first().map(String::as_str).unwrap_or("");
+        if let (Some(ty), Some(run_id), false) = (
+            IssuedCommands::command_type(verb),
+            args.get(1),
+            out.spawn_failed || program != "cohorte",
+        ) {
+            let (id, doc_ty) = cli::command_doc(&out.stdout);
+            super::lock(&self.0.issued).record(
+                id,
+                doc_ty.as_deref().unwrap_or(ty),
+                run_id,
+                now_ms(),
+            );
+        }
+        out
+    }
+}
+
 impl Inner {
     /// The detected Cohorte root for `root`, or the detection's error code.
     fn require(&self, root: &str) -> Result<String, AppError> {
@@ -49,7 +85,7 @@ impl Inner {
     fn run_lock(&self, run_id: &str) -> Arc<Mutex<()>> {
         self.run_locks
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .entry(run_id.to_string())
             .or_default()
             .clone()
@@ -63,14 +99,17 @@ impl Inner {
         approval: Option<&str>,
     ) -> Result<RunFacts, AppError> {
         argv::status(Some(run_id))?;
-        let known = self
-            .existing_root(root)
-            .is_some_and(|h| h.lock().unwrap().runs.contains_key(run_id));
+        let known = self.existing_root(root).is_some_and(|h| {
+            h.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .runs
+                .contains_key(run_id)
+        });
         if !known {
             self.refresh_run(root, run_id)?;
         }
         let h = self.root_handle(root);
-        let w = h.lock().unwrap();
+        let w = h.lock().unwrap_or_else(|e| e.into_inner());
         let slot = w.runs.get(run_id).ok_or_else(|| run_not_found(run_id))?;
         Ok(RunFacts {
             state: slot.proj.state().to_string(),
@@ -103,11 +142,16 @@ impl Inner {
             cli::DOCTOR_TIMEOUT,
             cli::READ_CAP,
         );
-        if let Some(e) = cli::read_failure(&a, &out, cli::DOCTOR_TIMEOUT, cli::READ_CAP) {
-            return Err(e);
+        // dev.1's doctor prints its whole report and then lingers past the
+        // deadline: a complete document printed in time is still the answer.
+        let early = out.timed_out.then(|| parse_doctor(&out.stdout)).flatten();
+        if early.is_none() {
+            if let Some(e) = cli::read_failure(&a, &out, cli::DOCTOR_TIMEOUT, cli::READ_CAP) {
+                return Err(e);
+            }
         }
-        let doc = match parse_doctor(&out.stdout) {
-            Some(d) if out.code == 0 || out.code == 1 => d,
+        let doc = match early.or_else(|| parse_doctor(&out.stdout)) {
+            Some(d) if out.timed_out || out.code == 0 || out.code == 1 => d,
             _ if out.code != 0 => return Err(cli::command_failed(&a, &out)),
             _ => return Err(cli::output_invalid(&a)),
         };
@@ -210,18 +254,25 @@ impl Inner {
         let root = self.require(root)?;
         let polled = self
             .existing_root(&root)
-            .is_some_and(|h| h.lock().unwrap().polled);
+            .is_some_and(|h| h.lock().unwrap_or_else(|e| e.into_inner()).polled);
         if !polled {
-            self.poll_root_once(&root)?;
+            // R-6: status alone — the run's tails come from the watcher thread
+            // (terminal runs last), never inline on this call.
             let h = self.root_handle(&root);
-            let mut w = h.lock().unwrap();
+            if let Some(e) = self.run_status(&root, &h) {
+                return Err(e);
+            }
+            let mut w = h.lock().unwrap_or_else(|e| e.into_inner());
             if !w.thread_running && w.stopped_at.is_none() {
                 // Not watched: dropped with the other unwatched roots (FR-26).
                 w.stopped_at = Some(now_ms());
             }
         }
         let h = self.root_handle(&root);
-        let runs = h.lock().unwrap().runs_sorted(now_ms());
+        let runs = h
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runs_sorted(now_ms());
         Ok(runs)
     }
 
@@ -239,7 +290,11 @@ impl Inner {
         let limit = limit.unwrap_or(DEFAULT_LOG_LIMIT).clamp(1, MAX_LOG_LIMIT) as usize;
         let key = normalise_dir(root);
         self.existing_root(&key)
-            .and_then(|h| h.lock().unwrap().log(run_id, limit))
+            .and_then(|h| {
+                h.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .log(run_id, limit)
+            })
             .ok_or_else(|| run_not_found(run_id))
     }
 
@@ -252,7 +307,7 @@ impl Inner {
     ) -> Result<CommandOutcome, AppError> {
         let root = self.require(root)?;
         let lock = self.run_lock(run_id);
-        let _serialised = lock.lock().unwrap();
+        let _serialised = lock.lock().unwrap_or_else(|e| e.into_inner());
         let facts = self.facts(&root, run_id, approval)?;
         f(self, &root, &facts)
     }
@@ -264,7 +319,7 @@ impl Inner {
             Some(&r.approval_id),
             |me, root, facts| {
                 actions::approve(
-                    me.runner.as_ref(),
+                    &Recording(me),
                     root,
                     &r.run_id,
                     &r.approval_id,
@@ -286,7 +341,7 @@ impl Inner {
             Some(&r.approval_id),
             |me, root, facts| {
                 actions::send_to_fix(
-                    me.runner.as_ref(),
+                    &Recording(me),
                     root,
                     &r.run_id,
                     &r.approval_id,
@@ -304,7 +359,7 @@ impl Inner {
             Some(&r.approval_id),
             |me, root, facts| {
                 actions::deny(
-                    me.runner.as_ref(),
+                    &Recording(me),
                     root,
                     &r.run_id,
                     &r.approval_id,
@@ -323,7 +378,7 @@ impl Inner {
     ) -> Result<CommandOutcome, AppError> {
         self.mutate(&r.root, &r.run_id, None, |me, root, facts| {
             actions::control(
-                me.runner.as_ref(),
+                &Recording(me),
                 root,
                 verb,
                 &r.run_id,
@@ -337,7 +392,11 @@ impl Inner {
 
 /// Bind the emitter to the window on first use (the watcher threads need it).
 fn bind(app: &AppHandle, state: &CohorteState) -> Arc<Inner> {
-    let mut slot = state.inner.emitter.lock().unwrap();
+    let mut slot = state
+        .inner
+        .emitter
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if slot.is_none() {
         let app = app.clone();
         *slot = Some(Arc::new(move |ev: &CohorteEvent| {
@@ -545,7 +604,10 @@ mod tests {
         let e = env();
         let runs = e.inner.op_list_runs(&e.root()).unwrap();
         assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].view, "gate");
+        assert_eq!(
+            runs[0].view, "waiting",
+            "status alone: the request is not seen yet"
+        );
         assert_eq!(e.runner.count("cohorte status --json"), 1);
         e.inner.op_list_runs(&e.root()).unwrap();
         assert_eq!(
@@ -553,6 +615,7 @@ mod tests {
             1,
             "second call served from memory"
         );
+        assert_eq!(e.inner.op_get_run(&e.root(), "run_a").unwrap().view, "gate");
         let log = e.inner.op_run_log(&e.root(), "run_a", None).unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(
@@ -729,7 +792,9 @@ mod tests {
             ("projection/mod.rs", include_str!("projection/mod.rs")),
             ("projection/fold.rs", include_str!("projection/fold.rs")),
             ("sanitize.rs", include_str!("sanitize.rs")),
-            ("watcher.rs", include_str!("watcher.rs")),
+            ("watcher/mod.rs", include_str!("watcher/mod.rs")),
+            ("watcher/root.rs", include_str!("watcher/root.rs")),
+            ("watcher/driver.rs", include_str!("watcher/driver.rs")),
             ("wire.rs", include_str!("wire.rs")),
         ];
         let writes = [
@@ -774,5 +839,50 @@ mod tests {
                 "detect.rs stats an unlisted path: {line}"
             );
         }
+    }
+
+    /// R-4: a `command.rejected` for a command this app issued is marked.
+    #[test]
+    fn command_rejected_is_marked_when_francois_issued_it() {
+        use crate::cohorte::testutil::envelope;
+        let e = env();
+        e.runner.on(
+            "cohorte approve",
+            out(
+                4,
+                r#"{"documentVersion":1,"commandId":"cmd_7","type":"approve","status":"pending"}"#,
+            ),
+        );
+        let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+        let s2 = seen.clone();
+        *crate::cohorte::lock(&e.inner.emitter) = Some(Arc::new(move |ev: &CohorteEvent| {
+            if let CohorteEvent::CommandRejected(w) = ev {
+                s2.lock().unwrap().push(w.payload.issued_by_francois);
+            }
+        }));
+        e.inner
+            .op_approve(&CohorteApproveRequest {
+                root: e.root(),
+                run_id: "run_a".into(),
+                approval_id: "apr_1".into(),
+                answer: None,
+            })
+            .unwrap();
+        let rejected = |id: &str| {
+            let raw = json!({ "commandId": id, "type": "approve", "error": { "code": "conflict/x", "message": "m" } });
+            crate::cohorte::wire::normalise("/r", &envelope(40, 0, "command.rejected", raw), 0)
+                .unwrap()
+                .event
+        };
+        e.inner.emit(&[rejected("cmd_7"), rejected("cmd_other")]);
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+    }
+
+    /// R-6: listing an unwatched root runs status only — no inline tail.
+    #[test]
+    fn list_runs_on_an_unwatched_root_runs_status_only() {
+        let e = env();
+        e.inner.op_list_runs(&e.root()).unwrap();
+        assert_eq!(e.runner.count("cohorte tail"), 0);
     }
 }

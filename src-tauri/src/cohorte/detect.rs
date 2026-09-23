@@ -197,7 +197,14 @@ pub(crate) fn detect_uncached(
 }
 
 /// FR-4: `cohorte --version` in `dir`.
+#[cfg(test)]
 pub(crate) fn probe_cli(runner: &dyn cli::Runner, dir: &str) -> CliInfo {
+    probe_cli_timed(runner, dir).0
+}
+
+/// The probe plus whether it timed out — a timed-out probe is never cached
+/// (R-10: a slow first `node` start must not read "not installed" for 5 min).
+pub(crate) fn probe_cli_timed(runner: &dyn cli::Runner, dir: &str) -> (CliInfo, bool) {
     let out = cli::run(
         runner,
         Kind::Read,
@@ -209,12 +216,13 @@ pub(crate) fn probe_cli(runner: &dyn cli::Runner, dir: &str) -> CliInfo {
     let version = (!out.spawn_failed && !out.timed_out && out.code == 0)
         .then(|| parse_version(&String::from_utf8_lossy(&out.stdout)))
         .flatten();
-    CliInfo {
+    let info = CliInfo {
         installed: version.is_some(),
         compatible: version.as_deref().is_some_and(compatible),
         version,
         supported_range: SUPPORTED_RANGE.into(),
-    }
+    };
+    (info, out.timed_out)
 }
 
 /// FR-7's changed-edge: state, root, cli.version, hasProjectFile.
@@ -260,17 +268,24 @@ impl Inner {
     pub(crate) fn cli_info(&self, dir: &str, force: bool) -> CliInfo {
         let key = host_key(dir);
         if !force {
-            if let Some((at, info)) = self.cli_probes.lock().unwrap().get(&key) {
+            if let Some((at, info)) = self
+                .cli_probes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key)
+            {
                 if at.elapsed() < PROBE_TTL {
                     return info.clone();
                 }
             }
         }
-        let info = probe_cli(self.runner.as_ref(), dir);
-        self.cli_probes
-            .lock()
-            .unwrap()
-            .insert(key, (Instant::now(), info.clone()));
+        let (info, timed_out) = probe_cli_timed(self.runner.as_ref(), dir);
+        if !timed_out {
+            self.cli_probes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key, (Instant::now(), info.clone()));
+        }
         info
     }
 
@@ -278,7 +293,12 @@ impl Inner {
     pub(crate) fn detect(&self, start_dir: &str, force: bool) -> CohorteDetection {
         let key = normalise_dir(start_dir);
         if !force {
-            if let Some((at, det)) = self.detections.lock().unwrap().get(&key) {
+            if let Some((at, det)) = self
+                .detections
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key)
+            {
                 if at.elapsed() < DETECT_TTL {
                     return det.clone();
                 }
@@ -290,10 +310,13 @@ impl Inner {
         });
         self.detections
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(key.clone(), (Instant::now(), det.clone()));
         let changed = {
-            let mut last = self.emitted_detections.lock().unwrap();
+            let mut last = self
+                .emitted_detections
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let changed = last.get(&key).is_none_or(|prev| differs(prev, &det));
             if changed {
                 last.insert(key, det.clone());
@@ -314,6 +337,7 @@ mod tests {
     use super::*;
     use crate::cohorte::testutil::{missing, out, FakeRunner};
     use std::fs;
+    use std::sync::Arc;
 
     struct Tmp(PathBuf);
     impl Drop for Tmp {
@@ -475,7 +499,7 @@ mod tests {
 
     #[test]
     fn detection_is_cached_and_emits_only_on_change() {
-        use std::sync::{Arc, Mutex};
+        use std::sync::Mutex;
         let t = tmp();
         fs::create_dir_all(t.0.join(".cohorte")).unwrap();
         let runner = Arc::new(cli("3.0.0-dev.8"));
@@ -490,5 +514,18 @@ mod tests {
         assert_eq!(runner.count("cohorte --version"), probes, "cached");
         inner.detect(&dir, true);
         assert_eq!(*seen.lock().unwrap(), 1, "unchanged result emits once");
+    }
+
+    /// R-10: a timed-out `--version` probe is not cached.
+    #[test]
+    fn a_timed_out_probe_is_not_cached() {
+        let runner = Arc::new(FakeRunner::default());
+        let mut slow = out(-1, "");
+        slow.timed_out = true;
+        runner.on("cohorte --version", slow);
+        let inner = Inner::with_runner(runner.clone(), dirs::home_dir());
+        assert!(!inner.cli_info("/tmp/x", false).installed);
+        inner.cli_info("/tmp/x", false);
+        assert_eq!(runner.count("cohorte --version"), 2, "probed again");
     }
 }
