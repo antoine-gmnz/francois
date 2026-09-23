@@ -1,0 +1,148 @@
+/* The view switcher — Figma "View switcher" (193:26406). A 30px segmented
+   pill: an indicator slides under the active segment, which is the only one
+   carrying a label (+ the Changes badge). See ViewSwitcher.tsx / view-switcher.ts
+   for why the indicator's rect is computed, not measured off the animating
+   segments. Every transition is gated by `.view-switcher--ready` (added a
+   frame after the first paint) so mount never animates in. */
+.view-switcher {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: var(--space-2);
+  background: var(--bg-input);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-7);
+  flex-shrink: 0;
+}
+.view-switcher__indicator {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  height: 24px;
+  background: var(--bg-selected);
+  border-radius: var(--radius-5);
+  pointer-events: none;
+  opacity: 1;
+}
+.view-switcher__indicator--hidden {
+  opacity: 0;
+}
+.view-switcher--ready .view-switcher__indicator {
+  transition:
+    transform 260ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    width 260ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    opacity 160ms ease;
+}
+.view-switcher__segment {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--radius-5);
+  background: transparent;
+  color: var(--text-faint);
+  overflow: clip;
+  cursor: pointer;
+}
+.view-switcher--ready .view-switcher__segment {
+  transition: padding 260ms cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+.view-switcher__segment:hover {
+  color: var(--text-muted);
+}
+.view-switcher__segment--selected {
+  padding: 0 var(--space-8);
+  color: var(--text-primary);
+}
+.view-switcher__segment--selected:hover {
+  color: var(--text-primary);
+}
+.view-switcher__segment:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+.view-switcher__icon {
+  flex-shrink: 0;
+}
+/* The reveal: clips its inner span to 0 width when the segment is inactive,
+   to `--reveal-w` (the inner's measured natural width) when active — the
+   ONLY thing that ever changes is this width/margin, never the inner's own
+   box, which is why `indicatorGeometry` can read a stable number off it. */
+.view-switcher__reveal {
+  display: inline-block;
+  width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+.view-switcher--ready .view-switcher__reveal {
+  transition:
+    width 260ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    margin-left 260ms cubic-bezier(0.34, 1.36, 0.64, 1),
+    opacity 160ms ease;
+}
+.view-switcher__segment--selected .view-switcher__reveal {
+  width: var(--reveal-w);
+  margin-left: var(--space-6);
+  opacity: 1;
+}
+.view-switcher__reveal-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: max-content;
+}
+.view-switcher__label {
+  white-space: nowrap;
+  font: var(--type-small-medium);
+  letter-spacing: -0.06px;
+}
+.view-switcher__dot {
+  position: absolute;
+  top: 3px;
+  left: 16.5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--state-info);
+  animation: view-switcher-pop 160ms ease-out;
+}
+.view-switcher__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: var(--radius-3);
+  background: var(--bg-strong);
+  color: var(--text-primary);
+  font: var(--type-mono-medium);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+@keyframes view-switcher-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-switcher--ready .view-switcher__indicator,
+  .view-switcher--ready .view-switcher__segment,
+  .view-switcher--ready .view-switcher__reveal {
+    transition: none;
+  }
+  .view-switcher__dot {
+    animation: none;
+  }
+}

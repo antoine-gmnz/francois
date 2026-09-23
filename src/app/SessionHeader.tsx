@@ -39,17 +39,10 @@ import { IconButton } from '../ui/IconButton';
 import { StateIcon } from '../ui/StateIcon';
 import { WatchedStateIcon } from '../ui/WatchedStateIcon';
 import { sessionStateLabel, stateKindForStatus } from '../ui/state-kind';
-import { Tab, TabGroup } from '../ui/Tab';
 import { sessionMetaLine } from './session-header';
 import './session-header.css';
 import { extTabDisplay, topbarTier } from './topbar';
-
-/** The three views one session has, as the design names them. */
-const VIEWS = [
-  { tab: 'session', label: 'Conversation', key: '2' },
-  { tab: 'diff', label: 'Changes', key: 'd' },
-  { tab: 'shell', label: 'Terminal', key: 't' },
-] as const;
+import ViewSwitcher from './ViewSwitcher';
 
 export interface SessionHeaderProps {
   /** The FOCUSED pane's session — null when nothing is selected. */
@@ -141,19 +134,7 @@ export default function SessionHeader({
 
       {!split && (
         <div className="session-header__tabs">
-          <TabGroup label="session views">
-            {VIEWS.map((v) => (
-              <Tab
-                key={v.tab}
-                selected={mainTab === v.tab}
-                onSelect={() => openView(v.tab)}
-                count={v.tab === 'diff' && diffCount > 0 ? diffCount : undefined}
-                title={`${v.label} · ${v.key}`}
-              >
-                {v.label}
-              </Tab>
-            ))}
-          </TabGroup>
+          <ViewSwitcher active={mainTab} diffCount={diffCount} onSelect={openView} />
 
           <ExtensionsBarMenu display={extTabDisplay(tier)} mainTab={mainTab} root={active.cwd} openExtTab={openExtTab} />
 
