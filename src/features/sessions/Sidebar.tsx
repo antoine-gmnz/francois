@@ -16,7 +16,7 @@ import { visibleSessions } from '../projects/projects';
 import { getEditorList } from './editors';
 import { FilterInput } from './FilterInput';
 import { loadCollapsedTiers, persistCollapsedTiers, withGroupTiers } from './group-tier';
-import { groupKeyFor } from './roster-groups';
+import { groupKeyFor, sortSessionsByProject } from './roster-groups';
 import { paneBadgeLabel } from './roster-row';
 import { RosterGate } from './RosterGate';
 import { SessionContextMenu, type MenuState } from './SessionContextMenu';
@@ -102,10 +102,12 @@ export default function Sidebar({ home }: { home: string }) {
     [sessions, activeProjectId],
   );
 
-  const inScope = useMemo(
-    () => visibleSessions(sessions, activeProjectId, sidebarFilter),
-    [sessions, activeProjectId, sidebarFilter],
-  );
+  // On "All projects" the rows cluster by project inside each state band, so
+  // one repo's sessions sit together instead of interleaving with the others.
+  const inScope = useMemo(() => {
+    const visible = visibleSessions(sessions, activeProjectId, sidebarFilter);
+    return activeProjectId === null ? sortSessionsByProject(visible, projects) : visible;
+  }, [sessions, activeProjectId, sidebarFilter, projects]);
 
   // design 12b: the roster groups by STATE and nothing else, so a blocked
   // session can never be the fourth row down behind two repos you are not

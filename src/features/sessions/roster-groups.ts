@@ -50,3 +50,21 @@ export function groupKeyFor(
   const leaf = pathLeaf(session.cwd);
   return leaf === '' ? { key: 'path:', label: UNGROUPED_LABEL, projectId: null } : { key: `path:${leaf}`, label: leaf, projectId: null };
 }
+
+/**
+ * The "All projects" roster order: sessions clustered by project name
+ * (case-insensitive), ties broken by key so two same-named repos never
+ * interleave. Stable, so each project's sessions keep the fleet store's order —
+ * and because the state bands and group tiers bucket without re-sorting, the
+ * clustering survives inside every band.
+ */
+export function sortSessionsByProject(sessions: readonly SessionMeta[], projects: readonly ProjectMeta[]): SessionMeta[] {
+  const keyed = sessions.map((session) => ({ session, ...groupKeyFor(session, projects) }));
+  keyed.sort((a, b) => {
+    const an = a.label.toLowerCase();
+    const bn = b.label.toLowerCase();
+    if (an !== bn) return an < bn ? -1 : 1;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  return keyed.map((k) => k.session);
+}
