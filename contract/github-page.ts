@@ -102,9 +102,14 @@ export interface PullSummary {
   url: string;
 }
 
+export type PullListState = 'open' | 'all';
+
 export interface GithubListPullsRequest extends GithubScope {
-  /** default 30; the core clamps to 1..100. Open + recently merged/closed, newest first. */
+  /** default 30; the core clamps to 1..100. Newest first. */
   limit?: number;
+  /** default 'all' (open + recently merged/closed). 'open' = open + draft only —
+   *  far cheaper, since `gh` skips the closed history. */
+  state?: PullListState;
 }
 export type GithubListPullsResponse = Result<PullSummary[]>;
 
