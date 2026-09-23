@@ -1,0 +1,54 @@
+/* The Changes panel's pull-request card (SessionPullCard.tsx). */
+.session-pull {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8) var(--space-14) var(--space-10);
+  border-top: 1px solid var(--line-subtle);
+}
+.session-pull .side-panel__label {
+  padding: 0;
+}
+.session-pull__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+  color: var(--text-primary);
+  font: var(--type-small-medium);
+}
+.session-pull__number {
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  flex-shrink: 0;
+}
+.session-pull__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+.session-pull__note {
+  font: var(--type-small);
+  white-space: nowrap;
+}
+.session-pull__note--success {
+  color: var(--state-success-text);
+}
+.session-pull__note--danger {
+  color: var(--state-danger-text);
+}
+.session-pull__note--attention {
+  color: var(--state-attention);
+}
+.session-pull__note--info {
+  color: var(--state-info);
+}
+.session-pull__note--faint {
+  color: var(--text-faint);
+}
+.session-pull__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
