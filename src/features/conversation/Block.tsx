@@ -29,12 +29,14 @@ import { toneVar } from '../../lib/tone';
 import { stepDetail as fetchStepDetail } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useMounted } from '../../lib/hooks/useMounted';
+import { usePresence } from '../../lib/hooks/usePresence';
+import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { runtimeToolElapsedMs, runtimeToolStatusLabel } from './runtime-tool-blocks';
 import Markdown from './MarkdownView';
 import PermissionCard from '../permissions/PermissionCard';
 import QuestionCard from '../questions/QuestionCard';
 import StepDetailPanel from './StepDetailPanel';
-import { Caret, LoaderCaret } from '../../ui/Loaders';
+import { Caret, LOADER_DELAY_MS, LoaderCaret } from '../../ui/Loaders';
 import { toolResultChips } from './transcript-turns';
 import './conversation.css';
 
@@ -248,6 +250,12 @@ ${b.execution?.outputText ?? ''}`),
   const [fetchError, setFetchError] = useState<string | null>(null);
   const mountedRef = useMounted();
   const expandable = b.hasDetail === true || b.execution !== undefined;
+  const { present, exiting } = usePresence(open, STEP_DETAIL_EXIT_MS);
+  // Gated here (LoaderCaret gets delay={0}) so the record's height-open plays
+  // against real content: nothing mounts while a fast fetch is in flight, and
+  // each phase — loader, error, record — is keyed so it grows in on its own.
+  const showLoader = useDelayedFlag(loading, LOADER_DELAY_MS);
+  const phase = detail ? 'detail' : fetchError ? 'error' : showLoader ? 'loading' : null;
 
   function handleClick() {
     if (!expandable) return;
@@ -329,22 +337,32 @@ ${b.execution?.outputText ?? ''}`),
           )}
         </span>
       </div>
-      {open && sessionId && b.hasDetail && (
-        <div className="step-detail-wrap">
-          {loading && (
-            <div className="step-detail__loading">
-              <LoaderCaret label="loading" />
-            </div>
-          )}
-          {fetchError && <div className="step-detail__error">{fetchError}</div>}
-          {detail && <StepDetailPanel detail={detail} sessionId={sessionId} onOpenShell={onOpenShell} />}
+      {present && sessionId && b.hasDetail && phase && (
+        <div key={phase} className={stepDetailWrapClass(exiting)}>
+          <div className="step-detail-wrap__inner">
+            {phase === 'loading' && (
+              <div className="step-detail__loading">
+                <LoaderCaret label="loading" delay={0} />
+              </div>
+            )}
+            {phase === 'error' && <div className="step-detail__error">{fetchError}</div>}
+            {detail && <StepDetailPanel detail={detail} sessionId={sessionId} onOpenShell={onOpenShell} />}
+          </div>
         </div>
       )}
-      {open && b.execution && !b.hasDetail && <RuntimeToolDetail tool={b.execution} />}
+      {present && b.execution && !b.hasDetail && <RuntimeToolDetail tool={b.execution} exiting={exiting} />}
     </>
   );
 }
 export const ToolRow = memo(ToolRowImpl);
+
+/** How long a closed record stays mounted to play its exit — keep in step with
+ *  `step-detail-close` in conversation.css. */
+const STEP_DETAIL_EXIT_MS = 160;
+
+function stepDetailWrapClass(exiting: boolean): string {
+  return exiting ? 'step-detail-wrap step-detail-wrap--closing' : 'step-detail-wrap';
+}
 
 /**
  * pi-transcript-events FR-3/FR-4/design brief: the sanitized input/output
@@ -358,40 +376,45 @@ export const ToolRow = memo(ToolRowImpl);
  * call is genuinely in flight and unsettled — a completed/failed/cancelled
  * call's duration is fixed, so no interval is scheduled for it.
  */
-function RuntimeToolDetailImpl({ tool }: { tool: RuntimeToolCall }) {
+function RuntimeToolDetailImpl({ tool, exiting = false }: { tool: RuntimeToolCall; exiting?: boolean }) {
   const unsettled = tool.completedAt === undefined;
   const now = useElapsedClock(unsettled);
   const elapsedMs = runtimeToolElapsedMs(tool, now);
   const statusLabel = runtimeToolStatusLabel(tool.status);
   return (
-    <div className="step-detail-wrap">
-      <div className="step-detail">
-        <div className="step-detail__header">
-          <span className="step-detail__header-seg step-detail__header-seg--tool">{tool.name}</span>
-          <span className="step-detail__header-right">
-            {elapsedMs !== null && (
-              <span className="step-detail__header-seg">{formatElapsed(elapsedMs)}</span>
-            )}
-            {statusLabel && (
-              <>
-                {elapsedMs !== null && <span className="step-detail__header-sep"> · </span>}
-                <span className="step-detail__header-seg">{statusLabel}</span>
-              </>
-            )}
-          </span>
+    <div className={stepDetailWrapClass(exiting)}>
+      <div className="step-detail-wrap__inner">
+        <div className="step-detail">
+          <div className="step-detail__header">
+            <span className="step-detail__header-seg step-detail__header-seg--tool">{tool.name}</span>
+            <span className="step-detail__header-right">
+              {elapsedMs !== null && (
+                <span className="step-detail__header-seg">{formatElapsed(elapsedMs)}</span>
+              )}
+              {statusLabel && (
+                <>
+                  {elapsedMs !== null && <span className="step-detail__header-sep"> · </span>}
+                  <span className="step-detail__header-seg">{statusLabel}</span>
+                </>
+              )}
+            </span>
+          </div>
+          {tool.inputText && (
+            <div className="step-detail__json">
+              {tool.inputText}
+              {tool.inputTruncated && ' …'}
+            </div>
+          )}
+          {tool.outputText && (
+            <div className="step-detail__output">
+              <div className="step-detail__output-strip">
+                <span className="step-detail__label">output</span>
+                {tool.outputTruncated && <span>truncated</span>}
+              </div>
+              <pre className="step-detail__output-body">{tool.outputText}</pre>
+            </div>
+          )}
         </div>
-        {tool.inputText && (
-          <div className="step-detail__json">
-            {tool.inputText}
-            {tool.inputTruncated && ' …'}
-          </div>
-        )}
-        {tool.outputText && (
-          <div className="step-detail__output">
-            <div className="step-detail__output-strip">output{tool.outputTruncated ? ' (truncated)' : ''}</div>
-            <pre className="step-detail__output-body">{tool.outputText}</pre>
-          </div>
-        )}
       </div>
     </div>
   );

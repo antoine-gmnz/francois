@@ -104,10 +104,12 @@ export function stepHeaderGroups(detail: StepDetail): StepHeaderGroups {
   return { left, right };
 }
 
-/** FR-17: `output · {totalLines} lines · {totalBytes}`, plus `{n} on stderr`
- *  only when the runtime separated the streams and the count is non-zero. */
+/** FR-17: `{totalLines} lines · {totalBytes}`, plus `{n} on stderr` only when
+ *  the runtime separated the streams and the count is non-zero. The `output`
+ *  word is the strip's own label (StepDetailPanel), not part of the figure. */
 export function stepOutputTotals(output: StepOutput): string {
-  const base = `output · ${output.totalLines} lines · ${formatFileSize(output.totalBytes)}`;
+  const lines = `${output.totalLines} ${output.totalLines === 1 ? 'line' : 'lines'}`;
+  const base = `${lines} · ${formatFileSize(output.totalBytes)}`;
   return output.stderrLines !== undefined && output.stderrLines > 0 ? `${base} · ${output.stderrLines} on stderr` : base;
 }
 

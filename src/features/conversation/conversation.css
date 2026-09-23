@@ -1209,167 +1209,316 @@
 
 /* ── command-inspect (design 16a "Unfolds in place") ─────────────────────────
    The unfolded step record — a sibling of its row inside .toolrail's flex
-   column, so the rail's ::before line (sized off .toolrail's own box) runs
-   unbroken past it. Never a modal/overlay/portal (FR-14). Four bands: header,
-   the `$` line (or generic input JSON), output strip, output body + fold
-   footer. No accent — a record is not "the live thing"; the only accent-toned
-   element is `show all` on hover. */
+   column, never a modal/overlay/portal (FR-14). It hangs under its row on the
+   row's own open fill (--bg-card) with no rule between them, so row + record
+   read as one unit, and sits inset as a terminal-dark card: header, the `$`
+   line (or generic input JSON), output strip, output body + fold footer.
+   No accent — a record is not "the live thing". Colour inside it is syntax
+   (the .syn--* tones below) and ANSI (the .ansi-* palette), never state. */
+.toolrail > .step-detail-wrap {
+  border-top: 0;
+}
+/* Open and close are one motion, played both ways: the record's height grows
+   out of its row (`0fr` → `1fr` on a one-row grid, so nothing is measured —
+   the inner box's `min-height: 0` is what lets the row shrink below its
+   content) while the card fades in on top of it. ToolRow mounts the wrap only
+   once it has content (Block.tsx), so the grow always plays against the real
+   record rather than an empty box. Reduced motion is handled globally
+   (styles.css). */
 .step-detail-wrap {
-  margin-left: calc(-1 * var(--space-8));
+  display: grid;
+  grid-template-rows: 1fr;
+  background: var(--bg-card);
+  padding: var(--space-2) var(--space-12) var(--space-12);
+  animation: step-detail-expand 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.step-detail-wrap__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.step-detail-wrap .step-detail {
+  animation: step-detail-fade 160ms var(--ease-out) 40ms both;
+}
+/* ToolRow keeps a closed record mounted for STEP_DETAIL_EXIT_MS (Block.tsx) —
+   keep these durations at or under it. */
+.step-detail-wrap--closing {
+  pointer-events: none;
+  animation: step-detail-collapse 160ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+.step-detail-wrap--closing .step-detail {
+  animation: step-detail-fade 120ms cubic-bezier(0.4, 0, 1, 1) reverse forwards;
+}
+@keyframes step-detail-expand {
+  from {
+    grid-template-rows: 0fr;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+@keyframes step-detail-collapse {
+  to {
+    grid-template-rows: 0fr;
+    padding-top: 0;
+    padding-bottom: 0;
+    background: transparent;
+  }
+}
+@keyframes step-detail-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .step-detail {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   font-family: var(--font-mono);
+  background: var(--bg-terminal);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
 }
+/* Metadata strip: tool tag · description · cwd · runtime … clock · duration ·
+   outcome. Wraps onto a second line rather than cropping a long cwd. */
 .step-detail__header {
   display: flex;
-  align-items: baseline;
-  background: var(--bg-deep);
-  font-size: var(--font-size-9-5);
-  padding: var(--space-7) var(--space-11);
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: var(--space-3);
+  padding: var(--space-7) var(--space-12);
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--line-subtle);
+  font: var(--type-mono-small);
   overflow-wrap: anywhere;
 }
-/* command-inspect round-2 fix: the header used to be one flat `join(' · ')`
-   string. The tool segment is tinted (mock's dusty purple has no existing
-   token close enough — the row's own per-tool hue lives on `glyphColor`,
-   which StepDetail does not carry — so this reuses --hue-purple, the family
-   ToolRow's Bash tone already sits in), everything else stays the header's
-   plain muted tone, and the right group (clock · duration · outcome) is
-   pushed to the far edge. Outcome only ever renders on a non-clean result
-   (stepHeaderGroups), so its tint (mock's #d48b84 ≈ --error-bright, already
-   the established substitute for that hex — see the provider-tile comment
-   above) always reads as attention, never a plain color at rest. */
 .step-detail__header-seg {
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
+/* The tool is a tag, tinted in --hue-purple — the family ToolRow's Bash tone
+   already sits in (StepDetail carries no per-tool glyphColor of its own). */
 .step-detail__header-seg--tool {
+  display: inline-block;
+  padding: 1px var(--space-5);
+  border-radius: var(--radius-4);
+  background: color-mix(in srgb, var(--hue-purple) 16%, transparent);
   color: var(--hue-purple);
+  font-size: var(--font-size-10);
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
 }
-/* The tool input's own `description` — prose in a row of metadata, so it reads
-   a shade brighter than the cwd and runtime it sits between, and keeps its own
-   capitalisation (it is a sentence the model wrote, not a field name). */
+/* The tool input's own `description` — prose in a row of metadata, so it is
+   set in the UI face, reads brighter than the cwd and runtime around it, and
+   keeps its capitalisation (a sentence the model wrote, not a field name). */
 .step-detail__header-seg--description {
-  color: var(--text-dim);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12);
 }
+/* Only ever rendered on a non-clean result (stepHeaderGroups), so the tint
+   always reads as attention. */
 .step-detail__header-seg--outcome {
-  color: var(--error-bright);
+  display: inline-block;
+  padding: 1px var(--space-5);
+  border-radius: var(--radius-4);
+  background: var(--tint-danger);
+  color: var(--state-danger-text);
 }
 .step-detail__header-sep {
-  color: var(--text-muted);
+  padding: 0 var(--space-2);
+  color: var(--text-disabled);
 }
 .step-detail__header-right {
+  display: inline-flex;
+  align-items: center;
   margin-left: auto;
   flex-shrink: 0;
-  padding-left: var(--space-11);
+  padding-left: var(--space-12);
 }
+/* The command: prompt · code · actions. The code WRAPS (pre-wrap) and keeps
+   every character the model wrote — heredocs, `\` continuations, alignment. */
 .step-detail__cmd {
-  background: var(--bg-canvas);
-  padding: var(--space-10) var(--space-11);
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-12);
-  font-size: var(--font-size-12-5);
-}
-.step-detail__cmd-line {
-  color: var(--text-bright);
-  line-height: var(--terminal-line-height);
-  overflow-wrap: anywhere;
-  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-10);
+  padding: var(--space-12) var(--space-14);
+  font: var(--type-mono-code);
 }
 .step-detail__prompt {
-  color: var(--logo-slab-dim);
+  color: var(--text-disabled);
+  user-select: none;
 }
-/* Pretty-printed input reads as a terminal too. `pre-wrap` keeps the leading
-   indentation that carries the nesting; a value too wide for the band wraps
-   onto the next line rather than hiding behind a horizontal scrollbar. */
-.step-detail__json {
-  background: var(--bg-canvas);
-  color: var(--text-bright);
-  padding: var(--space-10) var(--space-11);
-  font-size: var(--font-size-12-5);
-  line-height: var(--terminal-line-height);
+.step-detail__cmd-line {
+  margin: 0;
+  font: inherit;
+  color: var(--text-primary);
   tab-size: 8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.step-detail__cmd > .step-detail__error {
+  grid-column: 1 / -1;
+  padding: var(--space-6) 0 0;
+  color: var(--state-danger-text);
+}
+/* Quiet until the command is hovered or focused, so the code is the first read. */
 .step-detail__actions {
   display: flex;
-  gap: var(--space-11);
-  flex-shrink: 0;
+  gap: var(--space-2);
+  margin: -3px -6px 0 0;
+  opacity: 0.5;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.step-detail__cmd:hover .step-detail__actions,
+.step-detail__actions:focus-within {
+  opacity: 1;
 }
 .step-detail__action {
-  background: none;
-  border: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: none;
   color: var(--text-faint);
   cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .step-detail__action:hover {
-  color: var(--text-2);
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.step-detail__action:focus-visible,
+.step-detail__show-all:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 0;
+}
+.step-detail__action--done,
+.step-detail__action--done:hover {
+  color: var(--state-success-text);
+}
+/* A generic tool's pretty-printed input, set like the command band. */
+.step-detail__json {
+  margin: 0;
+  padding: var(--space-12) var(--space-14);
+  font: var(--type-mono);
+  color: var(--text-primary);
+  tab-size: 8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.step-detail__label {
+  font: var(--type-label);
+  font-size: var(--font-size-10);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .step-detail__output-strip {
-  background: var(--bg-canvas);
-  color: var(--text-muted);
-  font-size: var(--font-size-9-5);
-  padding: var(--space-5) var(--space-11);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-10);
+  padding: var(--space-6) var(--space-14);
+  background: var(--bg-rail);
+  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
+  font: var(--type-mono-small);
+  color: var(--text-faint);
 }
-/* Captured output is terminal output, so it is set as terminal output: the
-   SHELL tab's own font, size, line height and foreground (ShellTerminal.tsx),
-   and `tab-size: 8` so an indented log keeps the columns it was written with.
-   Colour comes from the bytes themselves (./ansi.ts + the .ansi-* palette
-   below); this is only the ground it lands on.
+/* Captured output is terminal output, so it is set as terminal output on the
+   SHELL tab's ground, with `tab-size: 8` so an indented log keeps its columns.
+   Colour comes from the bytes themselves (./ansi.ts + the .ansi-* palette).
 
-   A line too wide for the band WRAPS — it does not scroll. The record is read
-   in the flow of the transcript, and a horizontal scrollbar there asks you to
-   drag a band sideways to find out why a command failed, with no hint that
-   there was anything to the right in the first place. `pre-wrap` keeps the
-   leading whitespace that carries the log's structure; `anywhere` is what
-   breaks the one case wrapping alone cannot, an unbroken path or hash wider
-   than the whole band. */
+   A line too wide for the band WRAPS — a horizontal scrollbar in the flow of
+   the transcript hides why a command failed with no hint there is anything to
+   the right. `show all` can reveal a whole 64 KB capture, so the body caps its
+   height and scrolls vertically instead of shoving the transcript away. */
 .step-detail__output-body {
-  background: var(--bg-canvas);
-  color: var(--text-bright);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-12-5);
-  line-height: var(--terminal-line-height);
-  tab-size: 8;
-  padding: var(--space-9) var(--space-11);
   margin: 0;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: var(--space-10) var(--space-14);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  tab-size: 8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .step-detail__fold {
-  background: var(--bg-canvas);
-  color: var(--text-faint);
-  font-size: var(--font-size-10-5);
-  padding: var(--space-7) var(--space-11);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-8);
+  padding: var(--space-5) var(--space-6) var(--space-5) var(--space-14);
+  background: var(--bg-rail);
+  border-top: 1px solid var(--line-subtle);
+  font: var(--type-mono-small);
+  color: var(--text-faint);
 }
 .step-detail__show-all {
-  background: none;
+  padding: var(--space-3) var(--space-8);
   border: 0;
-  padding: 0;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-10-5);
-  color: var(--text-dim);
+  border-radius: var(--radius-4);
+  background: var(--bg-selected);
+  font: var(--type-mono-small);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 .step-detail__show-all:hover {
-  color: var(--accent);
+  background: var(--bg-strong);
+  color: var(--text-primary);
 }
 .step-detail__loading,
 .step-detail__error {
-  padding: var(--space-7) var(--space-11);
-  font-size: var(--font-size-10-5);
+  padding: var(--space-8) var(--space-2);
+  font: var(--type-mono-small);
   color: var(--text-faint);
+}
+
+/* ── syntax tones (./step-syntax) ───────────────────────────────────────────
+   The --hue-* families the ANSI palette below already resolves to, so a
+   command and the output it printed share one colour vocabulary, in both
+   themes. */
+.syn--command {
+  color: var(--hue-blue);
+  font-weight: 500;
+}
+.syn--keyword,
+.syn--literal {
+  color: var(--hue-purple);
+}
+.syn--flag {
+  color: var(--hue-teal);
+}
+.syn--string {
+  color: var(--hue-clay);
+}
+.syn--variable {
+  color: var(--hue-purple-soft);
+}
+.syn--number {
+  color: var(--warn);
+}
+.syn--key {
+  color: var(--hue-blue);
+}
+.syn--operator,
+.syn--punct {
+  color: var(--text-faint);
+}
+.syn--comment {
+  color: var(--text-disabled);
+  font-style: italic;
 }
 
 /* ── the SGR palette (./ansi.ts) ────────────────────────────────────────────

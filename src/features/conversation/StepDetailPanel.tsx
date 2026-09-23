@@ -6,6 +6,7 @@
 // `StepDetail`.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Copy, SquareTerminal } from 'lucide-react';
 import type { SessionId } from '../../../contract/common';
 import type { StepDetail, StepOutput } from '../../../contract/command-inspect';
 import { shellEnsure, shellWrite } from '../../lib/api';
@@ -18,6 +19,7 @@ import {
   type StepHeaderSegment,
   visibleStepOutputLines,
 } from './step-detail';
+import { highlightJson, highlightShell, type SyntaxToken } from './step-syntax';
 
 export interface StepDetailPanelProps {
   detail: StepDetail;
@@ -31,9 +33,14 @@ export default function StepDetailPanel({ detail, sessionId, onOpenShell }: Step
     <div className="step-detail">
       <Header detail={detail} />
       {detail.body.kind === 'command' ? (
-        <CommandLine command={detail.body.command.command} sessionId={sessionId} onOpenShell={onOpenShell} />
+        <CommandLine
+          command={detail.body.command.command}
+          prompt={detail.tool.toLowerCase() === 'powershell' ? 'PS>' : '$'}
+          sessionId={sessionId}
+          onOpenShell={onOpenShell}
+        />
       ) : (
-        <div className="step-detail__json">{detail.body.inputJson}</div>
+        <JsonInput json={detail.body.inputJson} />
       )}
       <OutputBand output={detail.body.output} />
     </div>
@@ -71,7 +78,42 @@ function HeaderSegments({ segments }: { segments: StepHeaderSegment[] }) {
   );
 }
 
-function CommandLine({ command, sessionId, onOpenShell }: { command: string; sessionId: SessionId; onOpenShell?: () => void }) {
+/** Lossless coloured tokens (./step-syntax) — index-keyed, a line is positional. */
+function SyntaxText({ tokens }: { tokens: SyntaxToken[] }) {
+  return (
+    <>
+      {tokens.map((t, i) =>
+        t.tone === 'plain' ? t.text : (
+          <span key={i} className={`syn syn--${t.tone}`}>
+            {t.text}
+          </span>
+        ),
+      )}
+    </>
+  );
+}
+
+function JsonInput({ json }: { json: string }) {
+  const tokens = useMemo(() => highlightJson(json), [json]);
+  return (
+    <pre className="step-detail__json">
+      <SyntaxText tokens={tokens} />
+    </pre>
+  );
+}
+
+function CommandLine({
+  command,
+  prompt,
+  sessionId,
+  onOpenShell,
+}: {
+  command: string;
+  prompt: string;
+  sessionId: SessionId;
+  onOpenShell?: () => void;
+}) {
+  const tokens = useMemo(() => highlightShell(command), [command]);
   const [copied, setCopied] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -115,15 +157,24 @@ function CommandLine({ command, sessionId, onOpenShell }: { command: string; ses
 
   return (
     <div className="step-detail__cmd">
-      <span className="step-detail__cmd-line">
-        <span className="step-detail__prompt">$</span> {command}
+      <span className="step-detail__prompt" aria-hidden="true">
+        {prompt}
       </span>
+      <pre className="step-detail__cmd-line">
+        <SyntaxText tokens={tokens} />
+      </pre>
       <span className="step-detail__actions">
-        <button type="button" className="step-detail__action" onClick={() => void copy()}>
-          {copied ? 'copied' : 'copy'}
+        <button
+          type="button"
+          className={`step-detail__action${copied ? ' step-detail__action--done' : ''}`}
+          onClick={() => void copy()}
+          title="Copy command"
+          aria-label={copied ? 'Copied' : 'Copy command'}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
-        <button type="button" className="step-detail__action" onClick={() => void openInShell()}>
-          shell ↗
+        <button type="button" className="step-detail__action" onClick={() => void openInShell()} title="Paste into shell (not run)" aria-label="Paste into shell">
+          <SquareTerminal size={13} />
         </button>
       </span>
       {shellError && <div className="step-detail__error">{shellError}</div>}
@@ -162,11 +213,14 @@ function OutputBand({ output }: { output: StepOutput }) {
   const lines = visibleStepOutputLines(output, showAll);
   return (
     <div className="step-detail__output">
-      <div className="step-detail__output-strip">{stepOutputTotals(output)}</div>
+      <div className="step-detail__output-strip">
+        <span className="step-detail__label">output</span>
+        <span>{stepOutputTotals(output)}</span>
+      </div>
       <AnsiText text={lines.join('\n')} />
       {footer && (
         <div className="step-detail__fold">
-          {footer.kind === 'folded' ? `${footer.count} earlier lines folded` : `${footer.count} lines dropped at capture`}
+          <span>{footer.kind === 'folded' ? `${footer.count} earlier lines folded` : `${footer.count} lines dropped at capture`}</span>
           {footer.showAllLink && (
             <button type="button" className="step-detail__show-all" onClick={() => setShowAll(true)}>
               show all
