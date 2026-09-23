@@ -161,15 +161,15 @@ describe('stepHeaderGroups', () => {
 
 describe('stepOutputTotals', () => {
   it('states lines and formatted bytes', () => {
-    expect(stepOutputTotals(emptyOutput({ totalLines: 214, totalBytes: 8100 }))).toBe('output · 214 lines · 8 KB');
+    expect(stepOutputTotals(emptyOutput({ totalLines: 214, totalBytes: 8100 }))).toBe('214 lines · 8 KB');
   });
 
   it('appends the stderr chip only when the runtime separated the streams and it is non-zero', () => {
     expect(stepOutputTotals(emptyOutput({ totalLines: 1, totalBytes: 10, stderrLines: 12 }))).toBe(
-      'output · 1 lines · 10 B · 12 on stderr',
+      '1 line · 10 B · 12 on stderr',
     );
-    expect(stepOutputTotals(emptyOutput({ totalLines: 1, totalBytes: 10, stderrLines: 0 }))).toBe('output · 1 lines · 10 B');
-    expect(stepOutputTotals(emptyOutput({ totalLines: 1, totalBytes: 10 }))).toBe('output · 1 lines · 10 B');
+    expect(stepOutputTotals(emptyOutput({ totalLines: 1, totalBytes: 10, stderrLines: 0 }))).toBe('1 line · 10 B');
+    expect(stepOutputTotals(emptyOutput({ totalLines: 1, totalBytes: 10 }))).toBe('1 line · 10 B');
   });
 });
 
