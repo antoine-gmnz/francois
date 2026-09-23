@@ -6,9 +6,9 @@ import type { CohorteCheckStatus, CohorteDetection, CohorteDoctorReport } from '
 import type { StateKind } from '../../ui/state-kind';
 import type { ChipTone } from './run-view';
 
-/** `.cohorte/ · cohorte 3.4.1 · runtime Pi · state SQLite` — unknown segments omitted. */
+/** Service and state details — unknown segments omitted. */
 export function detectionSegments(d: CohorteDetection): string[] {
-  const out = ['.cohorte/'];
+  const out = ['cohorte/1 service'];
   if (d.cli.version) out.push(`cohorte ${d.cli.version}`);
   if (d.runtime) out.push(`runtime ${d.runtime}`);
   if (d.stateBackend === 'sqlite') out.push('state SQLite');
@@ -26,16 +26,16 @@ export function pageMode(d: CohorteDetection | null): PageMode {
 export interface DetectionHead {
   title: string;
   tone: 'success' | 'danger' | 'attention';
-  /** a mono hint beside the title (`npm i -g cohorte`), when there is one */
+  /** a mono hint beside the title, when there is one */
   hint?: string;
 }
 
 export function detectionHead(d: CohorteDetection): DetectionHead {
-  if (d.state === 'cli-missing') return { title: 'Cohorte CLI not found', tone: 'danger', hint: 'npm i -g cohorte' };
+  if (d.state === 'cli-missing') return { title: 'Python Cohorte service not found', tone: 'danger', hint: 'COHORTE_PYTHON_CLI' };
   if (d.state === 'cli-incompatible') {
     return { title: `Cohorte ${d.cli.version ?? '?'} is not supported — Francois needs ${d.cli.supportedRange}`, tone: 'attention' };
   }
-  return { title: 'Cohorte detected in this project', tone: 'success' };
+  return { title: 'Project registered with Cohorte', tone: 'success' };
 }
 
 /** FR-81: the doctor state chip, or null while it runs / before it ran. */
@@ -70,6 +70,6 @@ export function doctorResultApplies(ranFor: string, shownRoot: string | null): b
 /** R2-9: the note a failed `cohorte doctor` leaves on the page — only for a timeout. */
 export function doctorErrorNote(code: string): string | null {
   return code === 'COHORTE_TIMEOUT'
-    ? 'cohorte doctor did not finish — known issue in Cohorte 3.0.0-dev.1 on Windows when run without a terminal; run it in a shell'
+    ? 'The Cohorte service did not respond in time. Check that the local service is running.'
     : null;
 }

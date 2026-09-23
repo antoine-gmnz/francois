@@ -3,7 +3,9 @@
 // footer — or, with no linked run, the root's most recent runs. "Tail logs"
 // swaps the body for the run's activity log.
 
+import { useEffect, useState } from 'react';
 import type { CohorteRun } from '../../../contract/cohorte-integration';
+import { cohorteFeatures, cohorteStart, type CohorteFeatureChoice } from '../../lib/api';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
@@ -119,6 +121,41 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
 function NoRun({ cwd }: { cwd: string }) {
   const root = useCohorteStore((s) => detectionFor(s.detections, cwd, CASE_INSENSITIVE_FS)?.root ?? null);
   const runs = useCohorteStore((s) => s.runs);
+  const [features, setFeatures] = useState<CohorteFeatureChoice[]>([]);
+  const [selected, setSelected] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setFeatures([]);
+    setSelected('');
+    setError('');
+    if (!root) return;
+    let current = true;
+    void cohorteFeatures(root).then((result) => {
+      if (!current) return;
+      if (result.ok) {
+        setFeatures(result.data);
+        setSelected(result.data[0]?.id || '');
+      } else setError(result.error.message);
+    });
+    return () => { current = false; };
+  }, [root]);
+  const start = async () => {
+    if (!root || !selected || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await cohorteStart({ root, featureId: selected });
+      if (result.ok) {
+        useCohorteStore.getState().upsertRun(result.data);
+        openCohorteRun(result.data.runId);
+      } else setError(result.error.message);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const recent = Object.values(runs)
     .filter((r) => r.projectRoot === root)
     .sort((a, b) => b.startedAt - a.startedAt)
@@ -126,6 +163,18 @@ function NoRun({ cwd }: { cwd: string }) {
   return (
     <SidePanelBody className="cohorte-panel">
       <EmptyPane className="cohorte-panel__empty">No Cohorte run for this session</EmptyPane>
+      {root && features.length > 0 && (
+        <div className="cohorte-panel__recent">
+          <label className="cohorte-phases__label" htmlFor="cohorte-feature-select">FEATURE</label>
+          <select id="cohorte-feature-select" value={selected} onChange={(event) => setSelected(event.target.value)}>
+            {features.map((feature) => <option key={feature.id} value={feature.id}>{feature.title}</option>)}
+          </select>
+          <Button size="sm" variant="secondary" disabled={busy || !selected} onClick={() => void start()}>
+            {busy ? 'Starting…' : 'Start run'}
+          </Button>
+        </div>
+      )}
+      {error && <p role="alert" className="cohorte-panel__note cohorte-panel__note--danger">{error}</p>}
       {recent.length > 0 && (
         <div className="cohorte-panel__recent">
           <div className="cohorte-phases__label">

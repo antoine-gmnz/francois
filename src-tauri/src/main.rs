@@ -53,6 +53,9 @@ fn main() {
         .manage(extensions::ExtensionState::default())
         // cohorte-integration §6: detection/probe caches + the per-root watchers.
         .manage(cohorte::CohorteState::default())
+        .manage(std::sync::Arc::new(
+            cohorte::python_service::PythonState::default(),
+        ))
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
             // core-architecture-wave3 FR-9: the crate root is the one place that
@@ -246,6 +249,23 @@ fn main() {
             cohorte::cohorte_pause,
             cohorte::cohorte_resume,
             cohorte::cohorte_cancel,
+            cohorte::python_service::cohorte_v3_detect,
+            cohorte::python_service::cohorte_v3_doctor,
+            cohorte::python_service::cohorte_v3_policy,
+            cohorte::python_service::cohorte_v3_init,
+            cohorte::python_service::cohorte_v3_watch,
+            cohorte::python_service::cohorte_v3_list_runs,
+            cohorte::python_service::cohorte_v3_get_run,
+            cohorte::python_service::cohorte_v3_run_log,
+            cohorte::python_service::cohorte_v3_features,
+            cohorte::python_service::cohorte_v3_start,
+            cohorte::python_service::cohorte_v3_approve,
+            cohorte::python_service::cohorte_v3_answer,
+            cohorte::python_service::cohorte_v3_send_to_fix,
+            cohorte::python_service::cohorte_v3_deny,
+            cohorte::python_service::cohorte_v3_pause,
+            cohorte::python_service::cohorte_v3_resume,
+            cohorte::python_service::cohorte_v3_cancel,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,

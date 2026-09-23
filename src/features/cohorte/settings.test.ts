@@ -16,12 +16,12 @@ const report = (statuses: string[], ok = true): CohorteDoctorReport => ({
 describe('Settings · Cohorte (FR-80..FR-82)', () => {
   it('builds the detection sub-line, omitting unknown segments', () => {
     expect(detectionSegments(detection({ runtime: 'Pi', cli: { ...detection().cli, version: '3.4.1' } }))).toEqual([
-      '.cohorte/',
+      'cohorte/1 service',
       'cohorte 3.4.1',
       'runtime Pi',
       'state SQLite',
     ]);
-    expect(detectionSegments(detection({ stateBackend: null, cli: { ...detection().cli, version: undefined } }))).toEqual(['.cohorte/']);
+    expect(detectionSegments(detection({ stateBackend: null, cli: { ...detection().cli, version: undefined } }))).toEqual(['cohorte/1 service']);
   });
 
   it('draws frame 27 for any found .cohorte/, frame 28 otherwise', () => {
@@ -33,8 +33,8 @@ describe('Settings · Cohorte (FR-80..FR-82)', () => {
   });
 
   it('heads the card by state', () => {
-    expect(detectionHead(detection()).title).toBe('Cohorte detected in this project');
-    expect(detectionHead(detection({ state: 'cli-missing' }))).toEqual({ title: 'Cohorte CLI not found', tone: 'danger', hint: 'npm i -g cohorte' });
+    expect(detectionHead(detection()).title).toBe('Project registered with Cohorte');
+    expect(detectionHead(detection({ state: 'cli-missing' }))).toEqual({ title: 'Python Cohorte service not found', tone: 'danger', hint: 'COHORTE_PYTHON_CLI' });
     expect(detectionHead(detection({ state: 'cli-incompatible', cli: { installed: true, version: '2.4.0', supportedRange: '>=3.0.0-dev.1 <4.0.0', compatible: false } })).title).toBe(
       'Cohorte 2.4.0 is not supported — Francois needs >=3.0.0-dev.1 <4.0.0',
     );
@@ -66,7 +66,7 @@ describe('doctor race guard (R-16)', () => {
 describe('doctorErrorNote (R2-9)', () => {
   it('explains a doctor timeout, and only a timeout', () => {
     expect(doctorErrorNote('COHORTE_TIMEOUT')).toBe(
-      'cohorte doctor did not finish — known issue in Cohorte 3.0.0-dev.1 on Windows when run without a terminal; run it in a shell',
+      'The Cohorte service did not respond in time. Check that the local service is running.',
     );
     expect(doctorErrorNote('COHORTE_OUTPUT_INVALID')).toBeNull();
   });
