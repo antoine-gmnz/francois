@@ -32,6 +32,7 @@ import {
 import { modelInfoFromRuntimeDescriptor } from './runtime-model-info';
 import type { AppState } from './store';
 import { sessionIsRetired } from './runtimeCapability';
+import { dropUnseenTurn, type UnseenTurns } from './unseen-turns';
 
 export interface SessionsSlice {
   // session cache (owned/written by sessions-sidebar, read by all)
@@ -59,6 +60,12 @@ export interface SessionsSlice {
   /** Applies sanitized, ordered child state only when it belongs to the live connection. */
   applyRuntimeEvent: (event: RuntimeEventEnvelope) => void;
   removeSession: (id: SessionId) => void;
+  /**
+   * Sessions whose turn finished while another session was active — the
+   * roster's "turn finished" dot. Written by store.ts's `sessions` listener
+   * (`markFinishedTurns`); cleared by selecting the session or removing it.
+   */
+  unseenTurns: UnseenTurns;
 
   // sessions-sidebar store slice (§5)
   activeSessionId: SessionId | null;
@@ -87,12 +94,14 @@ export interface SessionsSlice {
  * gets them back when you return; pane 0 just cannot stay on a tab belonging to
  * the session it is leaving, hence the `mainTabAfterClose` fold — which leaves a
  * built-in `diff`/`shell` tab alone, as before. Re-selecting the session already
- * active stays a pure no-op.
+ * active stays a pure no-op. Selecting a session also clears its unseen
+ * finished-turn mark.
  */
 function switchTo(s: AppState, activeSessionId: SessionId | null): Partial<AppState> {
+  const unseenTurns = dropUnseenTurn(s.unseenTurns, activeSessionId);
   return s.activeSessionId === activeSessionId
-    ? { activeSessionId }
-    : { activeSessionId, mainTab: mainTabAfterClose(s.mainTab, null) as MainTab, extStreams: closedProjectStreams(s) };
+    ? { activeSessionId, unseenTurns }
+    : { activeSessionId, unseenTurns, mainTab: mainTabAfterClose(s.mainTab, null) as MainTab, extStreams: closedProjectStreams(s) };
 }
 
 /**
@@ -306,10 +315,12 @@ export const createSessionsSlice: StateCreator<AppState, [], [], SessionsSlice> 
       // nothing else would ever collect them, since the map is keyed by a
       // session id that no longer resolves.
       const agentTabs = dropSessionTabs(s.agentTabs, id);
-      if (extraPanes.length === s.extraPanes.length) return { sessions, agentTabs };
-      return { sessions, agentTabs, ...compact(s, extraPanes) };
+      const unseenTurns = dropUnseenTurn(s.unseenTurns, id);
+      if (extraPanes.length === s.extraPanes.length) return { sessions, agentTabs, unseenTurns };
+      return { sessions, agentTabs, unseenTurns, ...compact(s, extraPanes) };
     });
   },
+  unseenTurns: {},
 
   activeSessionId: null,
   // The USER's pick of the left pane's session (agent-tab FR-14's tab reset
