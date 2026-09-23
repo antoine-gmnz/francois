@@ -5,7 +5,8 @@
 // files`. Clicking a file opens the DIFF tab on that file (diff-focus.ts).
 //
 // Read-only on purpose: staging and committing stay in the DIFF tab, where the
-// hunks are in front of you.
+// hunks are in front of you. `Create PR` is the exception that proves it — it
+// touches nothing itself, it asks the agent to (create-pr.ts).
 
 import { useMemo, useState } from 'react';
 import type { SessionMeta } from '../../../contract/common';
@@ -17,6 +18,7 @@ import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
 import { MeterRow, SidePanelBody, SidePanelEmpty, SidePanelFooter } from '../../ui/SidePanel';
 import './changes-section.css';
+import { createPrAvailability, requestCreatePr } from './create-pr';
 import { requestDiffFile } from './diff-focus';
 import { buildDiffTree, flattenVisibleRows, type DiffTreeNode } from './diff-tree';
 import { diffStat, FILE_STATUS } from './file-status';
@@ -38,6 +40,8 @@ export default function ChangesSection({ session, context }: SessionPanelSection
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [filter, setFilter] = useState<string | null>(null);
+  const [sendingPr, setSendingPr] = useState(false);
+  const prState = createPrAvailability(session);
 
   const files = useMemo(() => summary?.files ?? [], [summary]);
   const tree = useMemo(() => buildDiffTree(files), [files]);
@@ -116,10 +120,25 @@ export default function ChangesSection({ session, context }: SessionPanelSection
 
       <SidePanelFooter>
         {context && <MeterRow label="Context" fraction={context.fraction} figure={context.figure} />}
-        {files.length > 0 && (
-          <Button title="Open the Changes view · d" onClick={() => openDiff()}>
-            Review {files.length} {files.length === 1 ? 'file' : 'files'}
-          </Button>
+        {!notRepo && (
+          <div className="changes-section__actions">
+            {files.length > 0 && (
+              <Button title="Open the Changes view · d" onClick={() => openDiff()}>
+                Review {files.length} {files.length === 1 ? 'file' : 'files'}
+              </Button>
+            )}
+            <Button
+              busy={sendingPr}
+              disabled={!prState.available}
+              title={prState.reason ?? 'Ask the agent to commit, push and open a pull request'}
+              onClick={() => {
+                setSendingPr(true);
+                void requestCreatePr(session.id).finally(() => setSendingPr(false));
+              }}
+            >
+              Create PR
+            </Button>
+          </div>
         )}
       </SidePanelFooter>
     </>

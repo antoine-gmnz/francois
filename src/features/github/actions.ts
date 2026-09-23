@@ -13,10 +13,8 @@
 // being spawned at all.
 
 import type { SessionId, SessionMeta } from '../../../contract/common';
-import { githubOpenUrl, sessionCreate, sessionSend, sessionWorktreeProbe } from '../../lib/api';
-import { parkPrompt, resolvePrompt } from '../../lib/pending-queue';
-import { setDraft } from '../../lib/composer-draft';
-import { recordSent } from '../../lib/message-history';
+import { githubOpenUrl, sessionCreate, sessionWorktreeProbe } from '../../lib/api';
+import { sendPrompt } from '../../lib/send-prompt';
 import { useStore } from '../../lib/store';
 
 /** Select `id` and switch the main pane to its SESSION view (FR-5's "Where
@@ -27,23 +25,6 @@ export function openSession(id: SessionId): void {
   st.setFocusedPane('main');
   st.setActiveSessionId(id);
   st.setMainTab('session');
-}
-
-/**
- * Send `text` as the new session's first message — the same parked-prompt
- * dance NewTaskDialog uses, so the message shows at once and survives a
- * failed send by falling back to the composer draft.
- */
-async function sendFirstMessage(sessionId: SessionId, text: string): Promise<void> {
-  const blockId = crypto.randomUUID();
-  parkPrompt(sessionId, blockId, text);
-  const res = await sessionSend(sessionId, blockId, text).catch(() => null);
-  if (res?.ok) {
-    recordSent(sessionId, text);
-    return;
-  }
-  resolvePrompt(sessionId, blockId);
-  setDraft(sessionId, text);
 }
 
 /**
@@ -76,7 +57,7 @@ export async function startSessionOnBranch(cwd: string, branch: string, firstMes
   if (!created.ok) return null;
 
   openSession(created.data.id);
-  if (firstMessage) await sendFirstMessage(created.data.id, firstMessage);
+  if (firstMessage) await sendPrompt(created.data.id, firstMessage);
   return created.data;
 }
 
