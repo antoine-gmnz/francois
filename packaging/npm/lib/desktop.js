@@ -23,6 +23,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+const { windowsAppRoot } = require('./platform.js');
+
 const ICON_SOURCE = path.join(__dirname, '..', 'assets', 'icon.png');
 
 /**
@@ -177,11 +179,22 @@ function installWindows({ executable, productName, channel, appVersion, notes })
   if (!registered) notes.push('could not register the notification identity — toasts may not show.');
 }
 
-function removeWindows({ productName, channel }) {
+function removeWindows({ productName, channel, localAppData }) {
   const shortcut = startMenuShortcut(productName);
   if (shortcut) fs.rmSync(shortcut, { force: true });
   attempt('reg', ['delete', uninstallRegistryKey(channel), '/f']);
   attempt('reg', ['delete', aumidRegistryKey(channel), '/f']);
+  // The payload lives outside the package (platform.windowsAppRoot), so npm
+  // deleting the package no longer takes the app with it. Last, and on its own:
+  // a still-running app keeps it locked, which must not undo the rest.
+  const root = windowsAppRoot(channel, localAppData);
+  if (root) {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // In use — left behind rather than failing the uninstall.
+    }
+  }
 }
 
 /** Single-quoted PowerShell literal — no expansion, '' escapes a quote. */
@@ -278,9 +291,16 @@ function install({
 }
 
 /** Undo install(). Safe to call when nothing was ever registered. */
-function remove({ bundle, productName, channel, platform = process.platform, home = os.homedir() }) {
+function remove({
+  bundle,
+  productName,
+  channel,
+  platform = process.platform,
+  home = os.homedir(),
+  localAppData = process.env.LOCALAPPDATA,
+}) {
   try {
-    if (platform === 'win32') removeWindows({ productName, channel });
+    if (platform === 'win32') removeWindows({ productName, channel, localAppData });
     else if (platform === 'darwin') removeMacos({ bundle, home });
     else if (platform === 'linux') removeLinux({ channel, home });
     return true;

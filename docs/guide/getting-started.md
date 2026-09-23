@@ -3,8 +3,12 @@
 ## Install
 
 ```sh
-npm i -g francois
+npm i -g francois --allowed-scripts=francois
 ```
+
+Keep `--allowed-scripts=francois`: recent npm no longer runs a global package's install scripts
+unless they are allowed by name, and the postinstall is what downloads and registers the app.
+Without it, npm installs the `francois` launcher and nothing else.
 
 Then open Francois from the **Start Menu, Launchpad, or your applications menu** like any other
 app — or type `francois` in a terminal, whichever you prefer.
@@ -32,8 +36,8 @@ never carries one — so the same unsigned build that would get blocked as a bro
 `.exe` or `.dmg` launches clean here. No certificate, no *More info → Run anyway*, no
 right-click → *Open*.
 
-Every push to the project's `main` branch cuts a new version, so `npm i -g francois` always gets
-you the newest build; `npm update -g francois` moves an existing install forward.
+Every push to the project's `main` branch cuts a new version, so installing always gets you the
+newest build; `npm i -g francois@latest --allowed-scripts=francois` moves an existing install forward.
 
 ### Or use the native installers
 
@@ -92,5 +96,7 @@ the [Interface tour](/guide/interface-tour) walks through what every part of the
 
 Every push to `main` cuts a release, and Francois checks for one itself: when a newer version is
 available an **update chip** appears in the app row, and `⌘K` → **Check for updates** probes on
-demand. Installing from the chip replaces the app in place. `npm update -g francois` does the same
-thing from a terminal.
+demand. Installing from the chip replaces the app in place. `npm i -g francois@latest --allowed-scripts=francois`
+does the same thing from a terminal. On Windows the app itself lives in
+`%LOCALAPPDATA%\francois\app-<version>` rather than inside the npm package, so an update never
+has to fight a running copy (or anything it left behind) for the package directory.

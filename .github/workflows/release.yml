@@ -200,7 +200,7 @@ jobs:
           ## Install
 
           ```sh
-          npm i -g francois
+          npm i -g francois --allowed-scripts=francois
           ```
 
           This is the recommended route: binaries fetched by a CLI never carry the browser's

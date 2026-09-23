@@ -7,8 +7,18 @@ import path from 'node:path';
 // platform.js is CommonJS on purpose (it runs inside npm's postinstall), so it
 // is pulled in through createRequire rather than a bare import.
 const require = createRequire(import.meta.url);
-const { assetKey, readInstallRecord, readManifest, resolveExecutable, supportedList, writeInstallRecord } =
-  require('./platform.js');
+const {
+  VENDOR_DIR,
+  assetKey,
+  payloadDir,
+  prunePayloads,
+  readInstallRecord,
+  readManifest,
+  resolveExecutable,
+  supportedList,
+  windowsAppRoot,
+  writeInstallRecord,
+} = require('./platform.js');
 
 /** A throwaway vendor/ directory; each test seeds only the layout it asserts on. */
 const tempDirs = [];
@@ -136,5 +146,49 @@ describe('resolveExecutable', () => {
 
   it('returns null on a platform we do not ship', () => {
     expect(resolveExecutable(tempDir(), 'freebsd')).toBeNull();
+  });
+});
+
+// The EBUSY fix: npm renames the package directory on every update, so on
+// Windows the app must not run from inside it.
+describe('payloadDir', () => {
+  const localAppData = path.join('C:', 'Users', 'x', 'AppData', 'Local');
+
+  it('puts the Windows payload under LOCALAPPDATA, one directory per version', () => {
+    expect(payloadDir({ version: '0.50.0', channel: 'stable', platform: 'win32', localAppData })).toBe(
+      path.join(localAppData, 'francois', 'app-0.50.0'),
+    );
+  });
+
+  it('keeps the dev channel apart from a stable install', () => {
+    expect(windowsAppRoot('dev', localAppData)).toBe(path.join(localAppData, 'francois-dev'));
+    expect(windowsAppRoot('stable', localAppData)).toBe(path.join(localAppData, 'francois'));
+  });
+
+  it('falls back to vendor/ when LOCALAPPDATA is unset', () => {
+    expect(windowsAppRoot('stable', '')).toBeNull();
+    expect(payloadDir({ version: '0.50.0', channel: 'stable', platform: 'win32', localAppData: '' })).toBe(VENDOR_DIR);
+  });
+
+  it('leaves macOS and Linux in vendor/', () => {
+    expect(payloadDir({ version: '0.50.0', platform: 'darwin', localAppData })).toBe(VENDOR_DIR);
+    expect(payloadDir({ version: '0.50.0', platform: 'linux', localAppData })).toBe(VENDOR_DIR);
+  });
+});
+
+describe('prunePayloads', () => {
+  it('removes every other version and nothing that is not a payload', () => {
+    const root = tempDir();
+    for (const dir of ['app-0.48.0', 'app-0.49.0', 'app-0.50.0', 'EBWebView']) {
+      fs.mkdirSync(path.join(root, dir));
+    }
+    const keep = path.join(root, 'app-0.50.0');
+    const removed = prunePayloads(root, keep);
+    expect(removed.map((d) => path.basename(d)).sort()).toEqual(['app-0.48.0', 'app-0.49.0']);
+    expect(fs.readdirSync(root).sort()).toEqual(['EBWebView', 'app-0.50.0']);
+  });
+
+  it('is a no-op on a root that does not exist', () => {
+    expect(prunePayloads(path.join(tempDir(), 'missing'), 'x')).toEqual([]);
   });
 });

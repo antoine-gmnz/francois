@@ -208,7 +208,10 @@ mod tests {
         let check =
             check_from_parts("0.15.8", "0.16.0", METHOD_NPM, Some("notes".into()), 42).unwrap();
         assert!(check.update_available);
-        assert_eq!(check.command, "npm i -g francois@latest");
+        assert_eq!(
+            check.command,
+            "npm i -g francois@latest --allowed-scripts=francois"
+        );
         assert_eq!(
             check.notes_url,
             "https://github.com/antoine-gmnz/francois/releases/tag/v0.16.0"

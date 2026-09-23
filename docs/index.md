@@ -78,7 +78,7 @@ main tabs (press again to go back to SESSION). Up to four session panes fit side
 ## Install in one line
 
 ```sh
-npm i -g francois
+npm i -g francois --allowed-scripts=francois
 ```
 
 Then open it from the Start Menu, Launchpad, or your applications menu like any other app. See

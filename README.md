@@ -83,8 +83,10 @@ Single-key bindings stand down while you're typing in an input or the SHELL term
 ## Install
 
 ```sh
-npm i -g francois
+npm i -g francois --allowed-scripts=francois
 ```
+
+`--allowed-scripts=francois` lets npm run the package's postinstall — the step that actually downloads and registers the app. Recent npm skips a global package's install scripts unless they are allowed by name, and without the flag you get a `francois` command with no app behind it.
 
 Then open it from the **Start Menu, Launchpad or your applications menu** like any other app — or type `francois` in a terminal, whichever you prefer.
 
@@ -100,7 +102,7 @@ It really is installed, not just a command on your `PATH`:
 
 All per-user — no admin rights, no elevation prompt. The download is checked against a published sha256, and `npm uninstall -g francois` cleans up after itself.
 
-Every push to `main` cuts a new version, so `npm i -g francois` is always the newest build — `npm update -g francois` to move up.
+Every push to `main` cuts a new version, so installing is always the newest build — the in-app update chip moves you up, or run `npm i -g francois@latest --allowed-scripts=francois` yourself.
 
 <details>
 <summary>Or use the native installers</summary>

@@ -36,7 +36,7 @@ const check = (over: Partial<UpdateCheck> = {}): UpdateCheck => ({
   method: 'npm',
   notes: '- fixed a thing',
   notesUrl: 'https://github.com/antoine-gmnz/francois/releases/tag/v0.16.0',
-  command: 'npm i -g francois@latest',
+  command: 'npm i -g francois@latest --allowed-scripts=francois',
   checkedAt: 1_700_000_000_000,
   ...over,
 });
@@ -197,7 +197,7 @@ describe('updatePrimaryView (FR-11, FR-12)', () => {
   it('never renders a button for a manual install — the command takes its place (FR-11)', () => {
     expect(updatePrimaryView(check({ method: 'manual' }), 0, false)).toEqual({
       kind: 'manual',
-      command: 'npm i -g francois@latest',
+      command: 'npm i -g francois@latest --allowed-scripts=francois',
       note: MANUAL_NOTE,
     });
   });
