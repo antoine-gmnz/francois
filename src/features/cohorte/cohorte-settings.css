@@ -300,3 +300,12 @@
   font: var(--type-small);
   color: var(--text-disabled);
 }
+
+/* R2-9: why doctor did not finish. */
+.cohorte-detect__note {
+  margin: 0;
+  padding: var(--space-10) var(--space-16);
+  border-top: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  color: var(--state-attention-text);
+}

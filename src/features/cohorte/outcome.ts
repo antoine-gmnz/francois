@@ -83,7 +83,8 @@ export function answeredByLine(
   r: { actor?: string; decision: string; at: number; byThisWindow: boolean } | undefined,
   now: number,
 ): string | null {
-  if (!r || r.byThisWindow || now - r.at > ANSWERED_BY_MS) return null;
+  // R2-8: an 'unknown' closure (the gate vanished, or the run went terminal) was answered by no one.
+  if (!r || r.byThisWindow || r.decision === 'unknown' || now - r.at > ANSWERED_BY_MS) return null;
   const actor = r.actor ? r.actor.replace(/^(human|client|system):/, '') || r.actor : 'someone else';
   return `Answered by ${actor} · ${DECISION_WORD[r.decision] ?? 'resolved'}`;
 }

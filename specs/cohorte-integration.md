@@ -905,7 +905,7 @@ Core:
   live runs are current.
 - **R2-4 [MINOR]** Job object: clear `KILL_ON_JOB_CLOSE` (or skip it) on the non-timeout path so a detached Cohorte host
   spawned by a command survives; kill the tree only at the deadline.
-- **R2-5 [MINOR]** Bash meta `started run_<id>` only for launch verbs (`run`, `resume` as the frontend's `LAUNCH_VERBS`).
+- **R2-5 [MINOR]** Bash meta `started run_<id>` only for the FR-30 launch verbs (`run | loop | build | fix | review`, = the frontend's `LAUNCH_VERBS`).
 - **R2-6 [MINOR]** `LoopGuard::drop` logs (eprintln) when the thread is panicking.
 
 Frontend:

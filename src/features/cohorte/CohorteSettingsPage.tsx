@@ -22,7 +22,7 @@ import { ensurePolicy } from './actions';
 import './cohorte.css';
 import './cohorte-settings.css';
 import { CohorteMark, CohorteStateChip } from './CohorteParts';
-import { checkGlyph, COHORTE_DOCS_URL, detectionHead, detectionSegments, doctorChip, doctorResultApplies, pageMode } from './settings';
+import { checkGlyph, COHORTE_DOCS_URL, detectionHead, detectionSegments, doctorChip, doctorErrorNote, doctorResultApplies, pageMode } from './settings';
 import { detectProject, useProjectDetection } from './useCohorte';
 
 const SWITCHES: { key: keyof CohortePrefs; title: string; description: string }[] = [
@@ -55,6 +55,8 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
   const detection = useProjectDetection(root);
   const [doctor, setDoctor] = useState<CohorteDoctorReport | null>(null);
   const [doctorRunning, setDoctorRunning] = useState(false);
+  // R2-9: a doctor timeout leaves an explanation on the page instead of a toast.
+  const [doctorNote, setDoctorNote] = useState<string | null>(null);
   const mode = pageMode(detection);
   const detected = detection?.state === 'detected';
   const cohorteRoot = detection?.root ?? null;
@@ -73,14 +75,21 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
     void cohorteDoctor({ root: ranFor }).then((res) => {
       if (!doctorResultApplies(ranFor, currentRoot.current)) return;
       setDoctorRunning(false);
-      if (res.ok) setDoctor(res.data);
-      else showToast(res.error.message, 'error');
+      if (res.ok) {
+        setDoctor(res.data);
+        setDoctorNote(null);
+        return;
+      }
+      const note = doctorErrorNote(res.error.code);
+      setDoctorNote(note);
+      if (!note) showToast(res.error.message, 'error');
     });
   };
 
   // FR-80: doctor once per page open, policy once per root.
   useEffect(() => {
     setDoctor(null);
+    setDoctorNote(null);
     setDoctorRunning(false);
     if (!detected || !cohorteRoot) return;
     runDoctor();
@@ -105,7 +114,7 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
         </p>
       </header>
       {mode === 'detected' && detection && (
-        <Detected detection={detection} doctor={doctor} doctorRunning={doctorRunning} onDoctor={runDoctor} />
+        <Detected detection={detection} doctor={doctor} doctorRunning={doctorRunning} doctorNote={doctorNote} onDoctor={runDoctor} />
       )}
       {mode === 'not-detected' && detection && <NotDetected detection={detection} root={root} />}
       {mode === 'checking' && <p className="cohorte-settings__foot">Checking for .cohorte/…</p>}
@@ -117,11 +126,13 @@ function Detected({
   detection,
   doctor,
   doctorRunning,
+  doctorNote,
   onDoctor,
 }: {
   detection: CohorteDetection;
   doctor: CohorteDoctorReport | null;
   doctorRunning: boolean;
+  doctorNote: string | null;
   onDoctor: () => void;
 }) {
   const prefs = useCohorteStore((s) => s.prefs);
@@ -161,6 +172,7 @@ function Detected({
             </Button>
           )}
         </div>
+        {doctorNote && <p className="cohorte-detect__note">{doctorNote}</p>}
         {((doctor?.rows.length ?? 0) > 0 || !detection.hasProjectFile) && (
           <div className="cohorte-detect__checks">
             {!detection.hasProjectFile && (

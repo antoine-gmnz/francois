@@ -293,10 +293,17 @@ fn cohorte_run_id(command: &str, result: &str) -> Option<String> {
             Some("npx") => words.find(|w| !w.starts_with('-')),
             other => other,
         };
-        program.is_some_and(|p| {
+        let is_cohorte = program.is_some_and(|p| {
             let name = p.rsplit(['/', '\\']).next().unwrap_or(p);
             matches!(name, "cohorte" | "cohorte.cmd" | "cohorte.exe")
-        })
+        });
+        // R2-5: only the launch verbs start a run — FR-30 rule 1, the same set as
+        // the frontend's LAUNCH_VERBS (src/features/cohorte/tool-row.ts).
+        is_cohorte
+            && matches!(
+                words.find(|w| !w.starts_with('-')),
+                Some("run" | "loop" | "build" | "fix" | "review")
+            )
     });
     if !invokes {
         return None;
@@ -416,7 +423,7 @@ mod tests {
         for cmd in [
             "cohorte run auth-retry --detach",
             "npx cohorte run auth-retry --detach",
-            "cd /r && FOO=1 cohorte loop x",
+            "cd /r && FOO=1 cohorte run x",
             r"C:\nvm4w\nodejs\cohorte.cmd run x",
         ] {
             assert_eq!(
@@ -428,6 +435,31 @@ mod tests {
         assert_eq!(
             tool_meta("Bash", &json!({ "command": "echo cohorte" }), out),
             "2 lines"
+        );
+        // R2-5: a non-launch verb printing a run id is not a launch
+        assert_eq!(
+            tool_meta(
+                "Bash",
+                &json!({ "command": "cohorte status run_7fa3c1deadbeef" }),
+                out
+            ),
+            "2 lines"
+        );
+        assert_eq!(
+            tool_meta(
+                "Bash",
+                &json!({ "command": "cohorte resume run_7fa3c1deadbeef" }),
+                out
+            ),
+            "2 lines"
+        );
+        assert_eq!(
+            tool_meta(
+                "Bash",
+                &json!({ "command": "cohorte loop auth-retry --detach" }),
+                out
+            ),
+            "started run_7fa3c1deadbeef0123456789abcdef01"
         );
         assert_eq!(
             tool_meta("Bash", &json!({ "command": "cohorte status" }), "ok\n"),

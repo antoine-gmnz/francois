@@ -58,7 +58,7 @@ describe('answeredByLine (R-15)', () => {
   it('names another actor and the decision for ~6 s', () => {
     expect(answeredByLine(r, 2_000)).toBe('Answered by alice · approved');
     expect(answeredByLine({ ...r, decision: 'deny', actor: undefined }, 2_000)).toBe('Answered by someone else · denied');
-    expect(answeredByLine({ ...r, decision: 'unknown' }, 2_000)).toBe('Answered by alice · resolved');
+    expect(answeredByLine({ ...r, decision: 'unknown' }, 2_000)).toBeNull();
     expect(answeredByLine(r, 7_500)).toBeNull();
   });
   it("says nothing for this window's own answer", () => {

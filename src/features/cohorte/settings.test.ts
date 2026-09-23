@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CohorteDoctorReport } from '../../../contract/cohorte-integration';
 import { detection } from '../../lib/cohorte.testutil';
-import { checkGlyph, detectionHead, detectionSegments, doctorChip, doctorResultApplies, navDotOn, pageMode } from './settings';
+import { checkGlyph, detectionHead, detectionSegments, doctorChip, doctorErrorNote, doctorResultApplies, navDotOn, pageMode } from './settings';
 
 const report = (statuses: string[], ok = true): CohorteDoctorReport => ({
   root: '/r',
@@ -60,5 +60,14 @@ describe('doctor race guard (R-16)', () => {
     expect(doctorResultApplies('/a', '/a')).toBe(true);
     expect(doctorResultApplies('/a', '/b')).toBe(false);
     expect(doctorResultApplies('/a', null)).toBe(false);
+  });
+});
+
+describe('doctorErrorNote (R2-9)', () => {
+  it('explains a doctor timeout, and only a timeout', () => {
+    expect(doctorErrorNote('COHORTE_TIMEOUT')).toBe(
+      'cohorte doctor did not finish — known issue in Cohorte 3.0.0-dev.1 on Windows when run without a terminal; run it in a shell',
+    );
+    expect(doctorErrorNote('COHORTE_OUTPUT_INVALID')).toBeNull();
   });
 });

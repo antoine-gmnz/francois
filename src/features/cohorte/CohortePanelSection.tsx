@@ -18,7 +18,7 @@ import { GateCard } from './GateCard';
 import { detectionFor } from './linkage';
 import { PhasesList } from './PhasesList';
 import { RunLog } from './RunLog';
-import { hostDead, panelSummary, runControls, runtimeLine, shortDigest, shortRunId } from './run-view';
+import { authHint, hostDead, panelSummary, runControls, runtimeLine, shortDigest, shortRunId } from './run-view';
 import { CASE_INSENSITIVE_FS, useSessionRun } from './useCohorte';
 
 export function CohorteTabIcon(): JSX.Element {
@@ -72,9 +72,9 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
               {run.lastError.remediation && ` — ${run.lastError.remediation}`}
             </div>
           )}
-          {run.view === 'auth' && authCli && (
+          {run.view === 'auth' && (
             <div className="cohorte-panel__note">
-              Log in with <code>{authCli}</code>
+              Log in with <code>{authHint(authCli)}</code>
             </div>
           )}
         </div>

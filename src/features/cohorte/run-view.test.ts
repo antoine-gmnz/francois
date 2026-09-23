@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CohorteRunView } from '../../../contract/cohorte-integration';
 import { gate, phase, request, run, RUN_ID, step } from '../../lib/cohorte.testutil';
 import {
+  authHint,
   donePhaseCount,
   formatClock,
   formatDuration,
@@ -141,5 +142,13 @@ describe('controls, host, footer lines', () => {
     expect(policyLine([])).toBeNull();
     expect(formatDuration(3_725_000)).toBe('1:02:05');
     expect(formatClock(65_000)).toBe('01:05');
+  });
+});
+
+describe('authHint (R2-7)', () => {
+  it("uses the event's cli, else falls back to cohorte auth login", () => {
+    expect(authHint('cohorte auth login pi')).toBe('cohorte auth login pi');
+    expect(authHint(undefined)).toBe('cohorte auth login');
+    expect(authHint('  ')).toBe('cohorte auth login');
   });
 });

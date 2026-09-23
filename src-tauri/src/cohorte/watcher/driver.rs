@@ -14,6 +14,9 @@ struct LoopGuard {
 
 impl Drop for LoopGuard {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("cohorte watcher: the poll thread panicked; the root is marked stopped");
+        }
         if self.armed {
             let mut w = lock(&self.handle);
             w.thread_running = false;

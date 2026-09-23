@@ -6,9 +6,10 @@
 //!
 //! Routing (`spawn_plan`): a native root resolves `cohorte` through
 //! `process_util::resolve_cli_program` (FR-6b — on Windows it is an npm `.cmd`
-//! shim); a WSL root runs `wsl.exe … --exec bash -lc 'exec cohorte "$@"' _ <args…>`
-//! (R-2/R-3) — a login shell so nvm-installed node resolves, and the args as
-//! separate values so no shell ever parses them.
+//! shim); a WSL root runs `wsl.exe … --exec bash -lc '<WSL_SCRIPT>' _ <args…>`
+//! (R-2/R-3/R2-1) — a login shell that also sources nvm (a non-interactive
+//! bash never reaches `.bashrc`'s nvm lines), and the args as separate values
+//! so no shell ever parses them.
 
 use super::sanitize;
 use super::CommandStep;
@@ -42,6 +43,11 @@ pub(crate) trait Runner: Send + Sync {
     ) -> RoutedRun;
 }
 
+/// R2-1: the WSL-side script. `nvm.sh` is sourced when present (bash `-l`
+/// alone does not load nvm), then `exec cohorte "$@"` — the args arrive as
+/// positional parameters, never re-parsed.
+pub(crate) const WSL_SCRIPT: &str = r#"nvm_sh="${NVM_DIR:-$HOME/.nvm}/nvm.sh"; [ -s "$nvm_sh" ] && . "$nvm_sh" >/dev/null 2>&1; exec cohorte "$@""#;
+
 /// Pure: the exact (bin, argv) a spawn of `program args` in `dir` runs.
 pub(crate) fn spawn_plan(program: &str, dir: &str, args: &[String]) -> (String, Vec<String>) {
     match (GitHost::of(dir), program) {
@@ -55,7 +61,7 @@ pub(crate) fn spawn_plan(program: &str, dir: &str, args: &[String]) -> (String, 
                 "--exec",
                 "bash",
                 "-lc",
-                "exec cohorte \"$@\"",
+                WSL_SCRIPT,
                 "_",
             ]
             .iter()
@@ -609,7 +615,7 @@ mod tests {
                 "--exec",
                 "bash",
                 "-lc",
-                "exec cohorte \"$@\"",
+                WSL_SCRIPT,
                 "_",
                 "approve",
                 "run_a",
@@ -620,6 +626,46 @@ mod tests {
         // git keeps the github-page form
         let (bin, a) = spawn_plan("git", r"\\wsl$\Ubuntu\home\u\api", &v(&["status"]));
         assert_eq!((bin.as_str(), a[4].as_str()), ("wsl.exe", "--"));
+    }
+
+    /// R2-1: the script sources nvm when present, then execs with "$@" —
+    /// and bash really runs it that way (unix runners only).
+    #[test]
+    fn the_wsl_script_sources_nvm_and_passes_args_through() {
+        assert!(WSL_SCRIPT.contains(r#"${NVM_DIR:-$HOME/.nvm}/nvm.sh"#));
+        assert!(WSL_SCRIPT.ends_with(r#"exec cohorte "$@""#));
+        if cfg!(windows) {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("francois-nvm-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        // a fake nvm.sh that puts a fake `cohorte` on PATH
+        std::fs::write(
+            dir.join("nvm.sh"),
+            format!("export PATH=\"{}/bin:$PATH\"\n", dir.display()),
+        )
+        .unwrap();
+        let fake = dir.join("bin").join("cohorte");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\nfor a in \"$@\"; do echo \"[$a]\"; done\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let out = crate::process_util::spawn("bash")
+            .args(["-c", WSL_SCRIPT, "_", "approve", "a b", "$(id)"])
+            .env("NVM_DIR", &dir)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "[approve]\n[a b]\n[$(id)]\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// FR-6b: a native root resolves the CLI (the `.cmd` shim on Windows).

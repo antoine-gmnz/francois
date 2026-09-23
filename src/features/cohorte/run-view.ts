@@ -289,3 +289,8 @@ export function policyLine(gatedSteps: readonly string[] | undefined): string | 
   if (!gatedSteps || gatedSteps.length === 0) return null;
   return `gates on ${gatedSteps.slice(0, 2).join(' + ')}`;
 }
+
+/** R2-7: the login hint — the `auth.required` event's own `cli`, else the CLI's default. */
+export function authHint(cli: string | undefined): string {
+  return cli && cli.trim() !== '' ? cli : 'cohorte auth login';
+}

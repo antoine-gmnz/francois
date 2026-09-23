@@ -66,3 +66,10 @@ export function navDotOn(d: CohorteDetection | null): boolean {
 export function doctorResultApplies(ranFor: string, shownRoot: string | null): boolean {
   return ranFor === shownRoot;
 }
+
+/** R2-9: the note a failed `cohorte doctor` leaves on the page — only for a timeout. */
+export function doctorErrorNote(code: string): string | null {
+  return code === 'COHORTE_TIMEOUT'
+    ? 'cohorte doctor did not finish — known issue in Cohorte 3.0.0-dev.1 on Windows when run without a terminal; run it in a shell'
+    : null;
+}

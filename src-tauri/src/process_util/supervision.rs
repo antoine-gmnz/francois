@@ -135,7 +135,9 @@ impl CommandBuilder {
             }
         };
         #[cfg(windows)]
-        let job = windows::Job::attach(&child).ok();
+        // R2-4: a PLAIN job (no KILL_ON_JOB_CLOSE): the tree dies only at the
+        // deadline, so a detached host a command spawned outlives this call.
+        let job = windows::Job::attach_plain(&child).ok();
         let stdout_pump = child
             .stdout
             .take()
@@ -326,6 +328,36 @@ mod windows {
                 Ok(job)
             }
         }
+        /// A job WITHOUT `KILL_ON_JOB_CLOSE` — closing the handle leaves the
+        /// processes running; only [`Job::terminate`] kills them.
+        pub fn attach_plain(child: &Child) -> io::Result<Self> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let job = Self(handle);
+                if AssignProcessToJobObject(handle, child.as_raw_handle()) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(job)
+            }
+        }
+        /// The job's basic limit flags (tests: R2-4).
+        #[cfg(test)]
+        pub fn limit_flags(&self) -> u32 {
+            unsafe {
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                QueryInformationJobObject(
+                    self.0,
+                    JobObjectExtendedLimitInformation,
+                    &mut info as *mut _ as *mut _,
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                );
+                info.BasicLimitInformation.LimitFlags
+            }
+        }
         pub fn terminate(&self) -> io::Result<()> {
             if unsafe { TerminateJobObject(self.0, 1) } == 0 {
                 Err(io::Error::last_os_error())
@@ -344,3 +376,23 @@ mod windows {
 #[cfg(test)]
 #[path = "supervision_tests.rs"]
 mod tests;
+
+/// R2-4: the bounded-tree job never kills on close; the owned-child one does.
+#[cfg(all(test, windows))]
+mod job_tests {
+    use super::windows::Job;
+    use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+    #[test]
+    fn the_plain_job_does_not_kill_on_close() {
+        let mut child = crate::process_util::spawn("cmd")
+            .args(["/c", "exit"])
+            .start()
+            .unwrap();
+        let plain = Job::attach_plain(&child);
+        let _ = child.wait();
+        if let Ok(job) = plain {
+            assert_eq!(job.limit_flags() & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0);
+        }
+    }
+}

@@ -33,6 +33,8 @@ const MAX_BACKOFF_MS: u64 = 60_000;
 const LOG_RING: usize = 500;
 /// dev.8's `tail` dumps at most this many durable events (FR-20).
 const DUMP_LIMIT: usize = 1000;
+/// R2-2: parse warnings take `sub`s far above any ephemeral sub Cohorte stamps.
+const PARSE_WARNING_SUB_BASE: u64 = 1 << 40;
 const TICK: Duration = Duration::from_millis(250);
 
 // ---------- the declarative root set (FR-15) ----------
@@ -126,6 +128,8 @@ pub(crate) struct RunSlot {
     /// R-5: a slot created by `status <run>` survives this many project
     /// statuses that do not list it (the list may lag, or be capped).
     keep_cycles: u8,
+    /// R2-2: hashes of unreadable tail lines already logged (logged once).
+    unreadable_seen: HashSet<u64>,
 }
 
 /// R-8: dev.8 `tail` prints through `sanitizeHuman`, which writes `\xHH`
@@ -173,6 +177,7 @@ impl RunSlot {
             tail_failures: 0,
             terminal_tailed: false,
             keep_cycles: 0,
+            unreadable_seen: HashSet::new(),
         }
     }
 
@@ -259,7 +264,12 @@ impl RunSlot {
                 .and_then(|v| normalise(root, &v, now))
             {
                 Some(n) => parsed.push(n),
-                None => unreadable.push(line.len()),
+                None => {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    line.hash(&mut h);
+                    unreadable.push((h.finish(), line.len()));
+                }
             }
         }
         parsed.sort_by_key(|n| {
@@ -319,12 +329,18 @@ impl RunSlot {
                 wire.push(n.event);
             }
         }
-        // R-8: an unreadable line is a parse warning in the run log, never silent.
-        for bytes in unreadable {
+        // R-8: an unreadable line is a parse warning in the run log, never
+        // silent; R2-2: each distinct line once, under its own `sub` so two
+        // warnings never share a log key (durable events all have sub 0).
+        for (hash, bytes) in unreadable {
+            if !self.unreadable_seen.insert(hash) {
+                continue;
+            }
+            let sub = PARSE_WARNING_SUB_BASE + self.unreadable_seen.len() as u64;
             self.log.push_back(LogEntry {
                 run_id: self.proj.run_id().to_string(),
                 sequence: self.hwm,
-                sub: 0,
+                sub,
                 at: now,
                 type_: "francois.parse-warning".into(),
                 severity: "warning".into(),
@@ -534,6 +550,27 @@ mod tests {
         assert_eq!(types, vec!["checkpoint.created", "francois.parse-warning"]);
         assert_eq!(s.log[0].summary, "cp bold");
         assert_eq!(s.log[1].severity, "warning");
+    }
+
+    /// R2-2: the same unreadable line is logged once across passes; two
+    /// distinct lines get distinct log keys.
+    #[test]
+    fn unreadable_lines_are_logged_once_each_with_their_own_key() {
+        let mut s = RunSlot::new("/r", "run_a");
+        s.ingest_dump("/r", b"garbage one\n", 0);
+        s.ingest_dump("/r", b"garbage one\ngarbage two\n", 0);
+        s.ingest_dump("/r", b"garbage one\ngarbage two\n", 0);
+        let warnings: Vec<_> = s
+            .log
+            .iter()
+            .filter(|e| e.type_ == "francois.parse-warning")
+            .map(|e| (e.sequence, e.sub))
+            .collect();
+        assert_eq!(warnings.len(), 2);
+        assert_ne!(warnings[0], warnings[1]);
+        assert!(warnings
+            .iter()
+            .all(|(_, sub)| *sub > PARSE_WARNING_SUB_BASE));
     }
 
     /// R-9: a full dump whose last events are behind the status' lastSequence

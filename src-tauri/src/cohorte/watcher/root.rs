@@ -55,12 +55,32 @@ impl RootWatch {
         if now >= self.next_status_at {
             jobs.push(Job::Status);
         }
-        if let Some((id, slot)) = self
+        let due = |s: &&RunSlot| now >= s.next_tail_at && !s.terminal_tailed;
+        let live = |s: &&RunSlot| !is_terminal(s.proj.state());
+        // R2-3: live runs first; a terminal run is backfilled lazily — only
+        // once every live run has been backfilled and none is due — and one
+        // at a time (one tail job per pass).
+        let live_due = self
             .runs
             .iter()
-            .filter(|(_, s)| now >= s.next_tail_at && !s.terminal_tailed)
-            .min_by_key(|(_, s)| (is_terminal(s.proj.state()), s.next_tail_at))
-        {
+            .filter(|(_, s)| live(s) && due(s))
+            .min_by_key(|(_, s)| s.next_tail_at);
+        let live_current = self
+            .runs
+            .values()
+            .filter(|s| live(s))
+            .all(|s| s.backfilled && !due(&s));
+        let pick = live_due.or_else(|| {
+            live_current
+                .then(|| {
+                    self.runs
+                        .iter()
+                        .filter(|(_, s)| !live(s) && due(s))
+                        .min_by_key(|(_, s)| s.next_tail_at)
+                })
+                .flatten()
+        });
+        if let Some((id, slot)) = pick {
             jobs.push(Job::Tail(id.clone(), slot.hwm));
         }
         jobs
@@ -407,6 +427,39 @@ mod tests {
             vec![8, 9, 10]
         );
         assert!(w.log("run_x", 3).is_none());
+    }
+
+    /// R2-3: a terminal run waits until every live run is backfilled and
+    /// not due, then goes alone.
+    #[test]
+    fn terminal_runs_are_backfilled_lazily_after_live_ones() {
+        let mut w = RootWatch::new("/r");
+        let doc = json!([
+            fixture_record("run_done", "COMPLETED"),
+            fixture_record("run_old", "CANCELLED"),
+            fixture_record("run_live", "BUILD")
+        ]);
+        w.apply_project_status(&out(0, &doc.to_string()), 0, true);
+        let tails = |w: &RootWatch, now| {
+            w.due(now)
+                .into_iter()
+                .filter_map(|j| match j {
+                    Job::Tail(id, _) => Some(id),
+                    Job::Status => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tails(&w, 0), vec!["run_live"]);
+        w.apply_tail("run_live", &out(0, ""), 0, true); // backfilled, next in 2 s
+        assert_eq!(tails(&w, 1).len(), 1, "one terminal run at a time");
+        let first = tails(&w, 1)[0].clone();
+        assert_ne!(first, "run_live");
+        w.apply_tail(&first, &out(0, ""), 1, true);
+        assert_eq!(
+            tails(&w, 2_000),
+            vec!["run_live"],
+            "a due live run goes first again"
+        );
     }
 
     /// R-6: a non-terminal run's tail is picked before a terminal one.
