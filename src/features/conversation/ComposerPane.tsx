@@ -235,7 +235,9 @@ export default function ComposerPane({
     if (guessedBusy) {
       parkPrompt(sessionId, blockId, text);
     } else {
-      dispatch({ t: 'optimisticUser', blockId, text });
+      // Stamped with the send time: the turn header's clock, and what marks the
+      // prompt as fresh enough to land with the send animation (isFreshPrompt).
+      dispatch({ t: 'optimisticUser', blockId, text, at: Date.now() });
       setPinned(true); // FR-20
     }
     setInput('');

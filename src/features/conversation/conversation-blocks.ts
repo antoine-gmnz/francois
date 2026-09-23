@@ -150,7 +150,7 @@ export interface DeltaChunk {
 
 export type TranscriptAction =
   | { t: 'seed'; blocks: ConversationBlock[] }
-  | { t: 'optimisticUser'; blockId: string; text: string }
+  | { t: 'optimisticUser'; blockId: string; text: string; at?: number }
   // pi-transcript-events FR-7: attachments ride the Pi runtime's message.user
   // event only — the plain Claude message.user carries none.
   // FR-6: clientMessageId is the optimistic blockId ComposerPane minted
@@ -280,7 +280,13 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       return { blocks: a.blocks.map(safeQuestionBlock), windowSize: RENDER_WINDOW };
     case 'optimisticUser': {
       if (idx(a.blockId) !== -1) return state;
-      const b: UserConversationBlock = { kind: 'user', blockId: a.blockId, isStreaming: false, text: a.text };
+      const b: UserConversationBlock = {
+        kind: 'user',
+        blockId: a.blockId,
+        isStreaming: false,
+        text: a.text,
+        ...(a.at !== undefined ? { at: a.at } : {}),
+      };
       return { blocks: [...state.blocks, b], windowSize: state.windowSize };
     }
     case 'msgUser': {
