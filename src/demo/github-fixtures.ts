@@ -3,7 +3,17 @@
 // of real builds — keep every export a literal or a function, never a
 // module-scope call (scripts/capture/no-demo.test.mjs).
 
-import type { BranchInfo, CommitDetail, CommitSummary, GithubRepoInfo, PullDetail, PullSummary } from '../../contract/github-page';
+import type {
+  BranchInfo,
+  CheckJob,
+  CommitDetail,
+  CommitSummary,
+  GithubRepoInfo,
+  JobStep,
+  PullDetail,
+  PullSummary,
+  StepLog,
+} from '../../contract/github-page';
 import { fileDiff, T0 } from './fixtures';
 
 const MIN = 60_000;
@@ -189,9 +199,19 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'me
       { path: 'src/auth/retry.test.ts', additions: 13, deletions: 3, comments: 0 },
     ],
     checkRuns: [
-      { name: 'unit tests', state: 'passed', durationMs: 41_000 },
-      { name: 'lint', state: 'failed', durationMs: 8_000, summary: '1 error', detailsUrl: 'https://github.com/antoine-gmnz/orbit/actions/runs/128' },
-      { name: 'typecheck', state: 'pending' },
+      { name: 'unit tests', state: 'passed', durationMs: 41_000, jobId: 5101, runId: 9200, startedAt: T0 - 8 * MIN },
+      {
+        name: 'lint',
+        state: 'failed',
+        durationMs: 8_000,
+        summary: '1 error',
+        detailsUrl: 'https://github.com/antoine-gmnz/orbit/actions/runs/9200/job/5102',
+        jobId: 5102,
+        runId: 9200,
+        startedAt: T0 - 8 * MIN,
+      },
+      { name: 'typecheck', state: 'pending', jobId: 5103, runId: 9200, startedAt: T0 - 90_000 },
+      { name: 'preview', state: 'pending', detailsUrl: 'https://vercel.com/antoine-gmnz/orbit/preview' },
     ],
     comments: [
       {
@@ -206,6 +226,26 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'me
     reviewers: ['antoine-gmnz'],
     labels: ['auth'],
     headSha: '9c41ea2',
+    headOid: '9c41ea2'.padEnd(40, '0'),
+    body: [
+      '<!-- Thanks for the PR! Describe what changed and why. -->',
+      '## Why',
+      '',
+      'A flapping auth server pushed the retry loop past **4 minutes** of backoff, and the session looked hung. This caps the window at 30 s.',
+      '',
+      '## What changed',
+      '',
+      '- `nextDelay()` clamps to `MAX_BACKOFF_MS` (30 000)',
+      '- jitter stays proportional, so the cap never synchronises clients',
+      '- new tests for the clamp and the jitter bounds',
+      '',
+      '## Test plan',
+      '',
+      '1. `npm test -- retry`',
+      '2. Point the app at a stub that always returns 503 and watch the retry log',
+      '',
+      'Follow-up to [#119](https://github.com/antoine-gmnz/orbit/pull/119). The cap could read from config later — see the review thread.',
+    ].join('\n'),
     mergeable: 'blocked',
   },
   127: {
@@ -220,6 +260,8 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'me
     reviewers: ['antoine-gmnz'],
     labels: [],
     headSha: '7fd90b1',
+    headOid: '7fd90b1'.padEnd(40, '0'),
+    body: 'Moves the token bucket out of `http/client.ts` into `http/rate-limiter.ts` so the websocket path can share it. No behaviour change.',
     mergeable: 'clean',
   },
   126: {
@@ -231,6 +273,8 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'me
     reviewers: [],
     labels: ['docs'],
     headSha: '2ab6e14',
+    headOid: '2ab6e14'.padEnd(40, '0'),
+    body: '',
     mergeable: 'behind',
   },
   125: {
@@ -248,6 +292,8 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'me
     reviewers: ['antoine-gmnz'],
     labels: [],
     headSha: 'f30cd88',
+    headOid: 'f30cd88'.padEnd(40, '0'),
+    body: 'Routine bump of the Pi runtime. Release notes: https://github.com/pi/runtime/releases/tag/v0.9.2',
     mergeable: 'clean',
   },
   124: {
@@ -262,6 +308,8 @@ const PULL_DETAIL_EXTRA: Record<number, Omit<PullDetail, keyof PullSummary | 'me
     reviewers: ['antoine-gmnz'],
     labels: [],
     headSha: '61e0a4c',
+    headOid: '61e0a4c'.padEnd(40, '0'),
+    body: ['The restore test raced the autosave timer.', '', 'Now it awaits `flushPending()` before asserting, which removes the 1-in-20 failure.'].join('\n'),
     mergeable: 'clean',
   },
 };
@@ -397,6 +445,168 @@ function allCommits(): CommitSummary[] {
   ];
 }
 
+// ---------- github-ci-logs demo fixtures (FR-17) ----------
+// PR #128's three Actions jobs on run 9200: unit tests (passed), lint (failed,
+// an error inside a group), typecheck (running — its steps advance one at a
+// time on each poll, no timer needed). Plus a non-Actions status ("preview")
+// for the no-caret / Open on GitHub case.
+
+const UNIT_TESTS_JOB: CheckJob = {
+  jobId: 5101,
+  runId: 9200,
+  runAttempt: 1,
+  name: 'unit tests',
+  workflowName: 'CI',
+  state: 'passed',
+  completed: true,
+  startedAt: T0 - 8 * MIN,
+  durationMs: 41_000,
+  steps: [
+    { number: 1, name: 'Set up job', state: 'passed', durationMs: 2_000 },
+    { number: 2, name: 'Checkout', state: 'passed', durationMs: 1_000 },
+    { number: 3, name: 'Install dependencies', state: 'passed', durationMs: 9_000 },
+    { number: 4, name: 'Run tests', state: 'passed', durationMs: 29_000 },
+  ],
+  htmlUrl: 'https://github.com/antoine-gmnz/orbit/actions/runs/9200/job/5101',
+};
+
+const LINT_JOB: CheckJob = {
+  jobId: 5102,
+  runId: 9200,
+  runAttempt: 1,
+  name: 'lint',
+  workflowName: 'CI',
+  state: 'failed',
+  completed: true,
+  startedAt: T0 - 8 * MIN,
+  durationMs: 8_000,
+  steps: [
+    { number: 1, name: 'Set up job', state: 'passed', durationMs: 1_000 },
+    { number: 2, name: 'Checkout', state: 'passed', durationMs: 500 },
+    { number: 3, name: 'Install dependencies', state: 'passed', durationMs: 4_500 },
+    { number: 4, name: 'Run eslint', state: 'failed', durationMs: 2_000 },
+  ],
+  htmlUrl: 'https://github.com/antoine-gmnz/orbit/actions/runs/9200/job/5102',
+};
+
+const TYPECHECK_STEP_NAMES = ['Set up job', 'Checkout', 'Install dependencies', 'Run tsc'];
+let typecheckStepIndex = 0;
+
+function typecheckJob(): CheckJob {
+  const steps: JobStep[] = TYPECHECK_STEP_NAMES.map((name, i) => {
+    if (i < typecheckStepIndex) return { number: i + 1, name, state: 'passed', durationMs: 4_000 };
+    if (i === typecheckStepIndex) return { number: i + 1, name, state: 'running', startedAt: Date.now() - 3_000 };
+    return { number: i + 1, name, state: 'queued' };
+  });
+  const completed = typecheckStepIndex >= TYPECHECK_STEP_NAMES.length;
+  return {
+    jobId: 5103,
+    runId: 9200,
+    runAttempt: 1,
+    name: 'typecheck',
+    workflowName: 'CI',
+    state: completed ? 'passed' : 'pending',
+    completed,
+    startedAt: T0 - 90_000,
+    durationMs: completed ? 96_000 : undefined,
+    steps,
+    htmlUrl: 'https://github.com/antoine-gmnz/orbit/actions/runs/9200/job/5103',
+  };
+}
+
+/** Every read of the running job (getJob or a list-checks poll) advances it
+ *  one step, so the demo fleet's "typecheck" walks to completion over a few
+ *  polls with no timer. Once done, PR #128's own checkRuns entry updates too. */
+function advanceTypecheck(): void {
+  if (typecheckStepIndex >= TYPECHECK_STEP_NAMES.length) return;
+  typecheckStepIndex += 1;
+  if (typecheckStepIndex >= TYPECHECK_STEP_NAMES.length) {
+    const check = GITHUB_PULL_DETAILS[128]?.checkRuns.find((c) => c.jobId === 5103);
+    if (check) Object.assign(check, { state: 'passed' as const, durationMs: 96_000 });
+    const summary = GITHUB_PULLS.find((p) => p.number === 128);
+    if (summary) summary.checks = { total: summary.checks.total, passed: summary.checks.passed + 1, failed: summary.checks.failed, pending: summary.checks.pending - 1 };
+  }
+}
+
+function simpleLog(jobId: number, stepNumber: number, lines: string[]): StepLog {
+  return {
+    jobId,
+    stepNumber,
+    lines: lines.map((text, i) => ({ n: i + 1, text, kind: 'plain' as const })),
+    totalLines: lines.length,
+    droppedLines: 0,
+  };
+}
+
+const LINT_LOG: StepLog = {
+  jobId: 5102,
+  stepNumber: 4,
+  lines: [
+    { n: 1, text: '> eslint .', kind: 'command' },
+    { n: 2, text: 'Linting src/', kind: 'groupStart' },
+    { n: 3, text: 'src/auth/retry.ts', kind: 'plain' },
+    { n: 4, text: '  42:11  error  Unexpected any  @typescript-eslint/no-explicit-any', kind: 'error' },
+    { n: 5, text: '', kind: 'plain' },
+    { n: 6, text: '', kind: 'groupEnd' },
+    { n: 7, text: '✖ 1 problem (1 error, 0 warnings)', kind: 'error' },
+  ],
+  totalLines: 7,
+  droppedLines: 0,
+  firstErrorLine: 4,
+};
+
+const STEP_LOGS: Record<string, StepLog> = {
+  '5101:1': simpleLog(5101, 1, ['Preparing runner', 'Runner image: ubuntu-22.04']),
+  '5101:2': simpleLog(5101, 2, ['Cloning into orbit…', 'HEAD is now at 9c41ea2']),
+  '5101:3': simpleLog(5101, 3, ['npm ci', 'added 412 packages in 6s']),
+  '5101:4': simpleLog(5101, 4, ['> vitest run', '✓ 128 tests passed (38.1s)']),
+  '5102:1': simpleLog(5102, 1, ['Preparing runner', 'Runner image: ubuntu-22.04']),
+  '5102:2': simpleLog(5102, 2, ['Cloning into orbit…', 'HEAD is now at 9c41ea2']),
+  '5102:3': simpleLog(5102, 3, ['npm ci', 'added 412 packages in 4s']),
+  '5102:4': LINT_LOG,
+  '5103:1': simpleLog(5103, 1, ['Preparing runner', 'Runner image: ubuntu-22.04']),
+  '5103:2': simpleLog(5103, 2, ['Cloning into orbit…', 'HEAD is now at 9c41ea2']),
+  '5103:3': simpleLog(5103, 3, ['npm ci', 'added 412 packages in 5s']),
+  '5103:4': simpleLog(5103, 4, ['> tsc --noEmit', 'No errors found.']),
+};
+
+export function githubJobById(jobId: number): CheckJob | undefined {
+  if (jobId === 5101) return UNIT_TESTS_JOB;
+  if (jobId === 5102) return LINT_JOB;
+  if (jobId === 5103) {
+    const job = typecheckJob();
+    advanceTypecheck();
+    return job;
+  }
+  return undefined;
+}
+
+export function githubStepLogFor(jobId: number, stepNumber: number): StepLog | undefined {
+  return STEP_LOGS[`${jobId}:${stepNumber}`];
+}
+
+/** Checks for a full sha — the PR head (advancing typecheck a step, same as
+ *  polling its job would) or a commit's own checkRuns. */
+export function githubChecksForSha(sha: string) {
+  const pull = Object.values(GITHUB_PULL_DETAILS).find((p) => p.headOid === sha);
+  if (pull) {
+    advanceTypecheck();
+    return pull.checkRuns;
+  }
+  return githubCommitDetail(sha)?.checkRuns;
+}
+
+/** github_rerun_failed demo: puts every failed check on `runId` back to
+ *  pending and rewinds the typecheck walk, so FR-13 polling shows it live again. */
+export function githubRerunDemo(runId: number): void {
+  for (const detail of Object.values(GITHUB_PULL_DETAILS)) {
+    for (const check of detail.checkRuns) {
+      if (check.runId === runId && check.state === 'failed') Object.assign(check, { state: 'pending' as const, durationMs: undefined, summary: undefined });
+    }
+  }
+  if (runId === 9200) typecheckStepIndex = 0;
+}
+
 export function githubCommitDetail(sha: string): CommitDetail | undefined {
   const summary = allCommits().find((c) => c.sha === sha || c.shortSha === sha);
   if (!summary) return undefined;
@@ -412,7 +622,7 @@ export function githubCommitDetail(sha: string): CommitDetail | undefined {
     onDefaultBranch: GITHUB_COMMITS.main.some((c) => c.sha === summary.sha),
     files: [{ path: 'src/auth/retry.ts', additions: 12, deletions: 3 }],
     firstFileDiff: fileDiff('src/auth/retry.ts'),
-    checkRuns: [{ name: 'unit tests', state: 'passed', durationMs: 18_000 }],
+    checkRuns: [{ name: 'unit tests', state: 'passed', durationMs: 18_000, jobId: 5101, runId: 9200, startedAt: T0 - 8 * MIN }],
     pullNumber: pull?.number,
   };
 }

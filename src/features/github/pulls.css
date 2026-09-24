@@ -395,6 +395,72 @@
 .pull-card--padded > .pull-card__head {
   padding: 0;
 }
+/* the padded card's body now sits inside the collapse wrapper — keep its rhythm */
+.pull-card--padded .ci-reveal__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+/* github-ci-logs refinement — CollapsibleCard's toggle: the caret + the
+   grid-rows collapse motion, shared with the CI check accordion (moved out
+   of ci-logs.css since every pull-card / commit-card section uses it now). */
+.collapsible-card__head {
+  cursor: pointer;
+}
+.collapsible-card__head:hover {
+  background: var(--bg-raised);
+}
+.collapsible-card__head:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.ci-caret {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 11px;
+  transition: transform 160ms var(--ease-out);
+}
+.ci-caret--open {
+  transform: rotate(90deg);
+}
+
+/* Motion (quiet, fast). Collapse animates grid rows 0fr <-> 1fr; the body
+   stays mounted while closed, so it goes `visibility: hidden` once the
+   collapse has finished (out of the tab order). Only open/close and the
+   first arrival of content move — a poll re-render changes no class, so
+   nothing re-animates. Fills are `backwards`, never `both`: a persisting
+   opacity fill would keep a stacking context around the commit-detail log
+   Modal. The global prefers-reduced-motion rule (src/styles.css) zeroes all
+   of it. */
+.ci-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 180ms var(--ease-out);
+}
+.ci-reveal--open {
+  grid-template-rows: 1fr;
+}
+.ci-reveal__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.ci-reveal > .ci-reveal__inner {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 120ms var(--ease-out),
+    visibility 0s linear 180ms;
+}
+.ci-reveal--open > .ci-reveal__inner {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 160ms var(--ease-out) 40ms,
+    visibility 0s;
+}
 .pull-card__title {
   font: var(--type-ui-strong);
   color: var(--text-primary);
@@ -708,4 +774,33 @@
 }
 .merge-modal__note--ok {
   color: var(--state-success-text);
+}
+
+/* github-ci-logs refinement — the PR description card. Fades in with the
+   detail (global `fadeIn`); a long body clamps to 240px (PullDescription's
+   CLAMP_PX) with a soft bottom mask instead of an inner scroll. */
+.pull-desc {
+  animation: fadeIn 180ms var(--ease-out) both;
+}
+.pull-desc__body {
+  padding: 0 var(--space-14) var(--space-12);
+  overflow-wrap: anywhere;
+}
+.pull-desc__body--clamped {
+  max-height: 240px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+.pull-desc__body .md-link {
+  cursor: pointer;
+}
+.pull-desc__empty {
+  padding: 0 var(--space-14) var(--space-12);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.pull-desc__foot {
+  display: flex;
+  padding: 0 var(--space-8) var(--space-8);
 }

@@ -68,6 +68,13 @@ export interface CheckRun {
   /** short failure summary when GitHub gives one (e.g. '3 tests failed'). */
   summary?: string;
   detailsUrl?: string;
+  /** Actions job id (== check-run id). Present only for GitHub Actions jobs;
+   *  absent ⇒ no steps/log (github-ci-logs). */
+  jobId?: number;
+  /** Actions workflow run id; present iff jobId is (github-ci-logs). */
+  runId?: number;
+  /** epoch ms; lets a pending row tick its elapsed clock (github-ci-logs). */
+  startedAt?: number;
 }
 
 export interface CheckRollup {
@@ -150,6 +157,10 @@ export interface PullDetail extends PullSummary {
   mergeMethods: MergeMethod[];
   /** head lives in a fork — its branch can't be deleted from this repo. */
   crossRepository: boolean;
+  /** full 40-char head sha (headSha stays the 7-char display form) — github-ci-logs. */
+  headOid: string;
+  /** the PR description as authored (GitHub-flavoured markdown); '' when empty. */
+  body: string;
 }
 
 export interface GithubGetPullRequest extends GithubScope {
@@ -289,6 +300,85 @@ export interface PruneOutcome {
   reason?: string; // why it was skipped
 }
 export type GithubPruneResponse = Result<PruneOutcome[]>;
+
+// ---------- francois:github:listChecks → github_list_checks ----------
+// github-ci-logs. Check runs (`GET repos/{o}/{n}/commits/{sha}/check-runs?per_page=100`) +
+// commit statuses (`…/commits/{sha}/status`, statuses map to CheckRun without jobId).
+// Used for polling (FR-13).
+export interface GithubListChecksRequest extends GithubScope {
+  sha: string; // full 40-hex; anything else → INVALID_INPUT
+}
+export type GithubListChecksResponse = Result<CheckRun[]>;
+
+// ---------- francois:github:getJob → github_get_job ----------
+// github-ci-logs. `GET repos/{o}/{n}/actions/jobs/{jobId}`.
+export type StepState = 'queued' | 'running' | 'passed' | 'failed' | 'skipped' | 'cancelled';
+
+export interface JobStep {
+  number: number; // GitHub's 1-based step number
+  name: string;
+  state: StepState;
+  startedAt?: number;
+  durationMs?: number; // completed steps only
+}
+
+export interface CheckJob {
+  jobId: number;
+  runId: number;
+  runAttempt: number;
+  name: string;
+  workflowName?: string;
+  state: CheckState;
+  completed: boolean; // status === 'completed' — the only state in which a log exists
+  startedAt?: number;
+  durationMs?: number;
+  steps: JobStep[]; // ordered by number
+  htmlUrl: string;
+}
+export interface GithubGetJobRequest extends GithubScope {
+  jobId: number;
+}
+export type GithubGetJobResponse = Result<CheckJob>;
+
+// ---------- francois:github:getStepLog → github_get_step_log ----------
+// github-ci-logs. `gh api repos/{o}/{n}/actions/jobs/{jobId}/logs` (follows the redirect,
+// plain text).
+export type LogLineKind =
+  | 'plain'
+  | 'command'
+  | 'error'
+  | 'warning'
+  | 'notice'
+  | 'debug'
+  | 'groupStart'
+  | 'groupEnd';
+
+export interface LogLine {
+  n: number; // 1-based line number within the step (stable across the dropped-head cap)
+  text: string; // sanitized, `##[kind]` marker and timestamp removed; groupStart text = group title
+  kind: LogLineKind;
+}
+
+export interface StepLog {
+  jobId: number;
+  stepNumber: number; // 0 = the whole job (segmentation fallback)
+  lines: LogLine[]; // at most 5,000 — the LAST ones
+  totalLines: number; // before the cap
+  droppedLines: number; // totalLines − lines.length
+  firstErrorLine?: number; // LogLine.n of the first 'error' line in the step
+}
+export interface GithubGetStepLogRequest extends GithubScope {
+  jobId: number;
+  stepNumber: number; // ≥ 0
+}
+export type GithubGetStepLogResponse = Result<StepLog>;
+
+// ---------- francois:github:rerunFailed → github_rerun_failed ----------
+// github-ci-logs. `gh run rerun <runId> --failed`. The only write verb in this feature.
+export interface GithubRerunFailedRequest extends GithubScope {
+  runId: number;
+}
+export type GithubRerunFailedResponse = Result<null>;
 
 // ---------- francois:github:openUrl → github_open_url ----------
 // Opens an https URL in the system browser. The core refuses anything that is not

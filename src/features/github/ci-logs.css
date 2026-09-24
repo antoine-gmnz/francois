@@ -1,0 +1,222 @@
+/* github-ci-logs — the check accordion, its step rows and the in-app log
+ * panel. Colour stays state-only: cyan running, red failed/error, --warn
+ * warnings, everything else graphite (design brief §8). */
+
+.ci-check-row--clickable {
+  cursor: pointer;
+}
+
+/* `.ci-caret` / `.ci-reveal*` — the disclosure caret and the grid-rows
+   collapse motion — live in pulls.css now: CollapsibleCard reuses them for
+   every pull-card / commit-card section, not just this accordion. */
+.ci-step__log {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: ci-reveal-open 180ms var(--ease-out) backwards;
+}
+.ci-step__log > .ci-reveal__inner {
+  animation: fadeIn 160ms var(--ease-out) 40ms backwards;
+}
+@keyframes ci-reveal-open {
+  from {
+    grid-template-rows: 0fr;
+  }
+}
+.ci-fade-in {
+  animation: fadeIn 160ms var(--ease-out) backwards;
+}
+
+.ci-job__body {
+  padding: var(--space-8) var(--space-14) var(--space-10) 30px;
+  border-top: 1px solid var(--line-subtle);
+  border-left: 2px solid var(--line-subtle);
+  margin-left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.ci-job__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 28px;
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+}
+.ci-job__title {
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+
+.ci-step {
+  display: flex;
+  flex-direction: column;
+}
+.ci-step__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 26px;
+  width: 100%;
+  padding: 0 var(--space-6);
+  border: none;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-small);
+  cursor: pointer;
+  text-align: left;
+}
+.ci-step__row:disabled {
+  cursor: default;
+}
+.ci-step__row:not(:disabled):hover {
+  background: var(--bg-raised);
+}
+.ci-step__no {
+  min-width: 2ch;
+  text-align: right;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.ci-step__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ci-step__dur {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.ci-step__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--text-faint);
+  flex-shrink: 0;
+}
+.ci-step--failed .ci-step__name {
+  color: var(--state-danger-text);
+}
+.ci-step--failed svg {
+  color: var(--state-danger);
+}
+.ci-step--skipped {
+  opacity: 0.5;
+}
+
+.ci-log {
+  background: var(--bg-input);
+  border-radius: var(--radius-4);
+  margin: var(--space-4) 0 var(--space-4) 0;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ci-log__toolbar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 24px;
+  padding: 0 var(--space-8);
+  background: var(--bg-raised);
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.ci-log__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: var(--radius-4);
+}
+.ci-log__icon-btn:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.ci-log__notice {
+  padding: var(--space-4) var(--space-8);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.ci-log__body {
+  overflow: auto;
+  padding: var(--space-4) 0;
+}
+/* min-height holds the row while the 300ms-gated loader caret is still
+   invisible, so the reveal does not jump when it appears. */
+.ci-log__state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  min-height: 26px;
+  padding: var(--space-10) var(--space-8);
+  box-sizing: content-box;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.ci-log__group {
+  display: flex;
+  flex-direction: column;
+}
+.ci-log__group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  padding: 0 var(--space-8);
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  cursor: pointer;
+  text-align: left;
+}
+.ci-log__caret {
+  width: 10px;
+}
+.ci-log__line {
+  display: flex;
+  gap: var(--space-8);
+  padding: 0 var(--space-8);
+  font: var(--type-mono-small);
+  line-height: 18px;
+  white-space: pre;
+}
+.ci-log__gutter {
+  flex-shrink: 0;
+  min-width: 4ch;
+  text-align: right;
+  color: var(--text-disabled);
+  user-select: none;
+}
+.ci-log__text {
+  color: var(--text-primary);
+}
+.ci-log__line--error {
+  background: color-mix(in srgb, var(--state-danger) 12%, transparent);
+  color: var(--state-danger-text);
+}
+.ci-log__line--error .ci-log__text {
+  color: var(--state-danger-text);
+}
+.ci-log__line--warning {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.ci-log__line--warning .ci-log__text {
+  color: var(--warn);
+}
+.ci-log__line--command .ci-log__text {
+  color: var(--text-faint);
+}

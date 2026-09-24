@@ -13,9 +13,11 @@
 // being spawned at all.
 
 import type { SessionId, SessionMeta } from '../../../contract/common';
-import { githubOpenUrl, sessionCreate, sessionWorktreeProbe } from '../../lib/api';
+import type { CheckRun } from '../../../contract/github-page';
+import { githubGetJob, githubGetStepLog, githubOpenUrl, sessionCreate, sessionWorktreeProbe } from '../../lib/api';
 import { sendPrompt } from '../../lib/send-prompt';
 import { useStore } from '../../lib/store';
+import { failureExcerpt, firstFailedStep } from './ci-logs';
 
 /** Select `id` and switch the main pane to its SESSION view (FR-5's "Where
  *  this came from" card, FR-8's "Continue this session", FR-10's roster ⋯
@@ -87,4 +89,44 @@ export async function startSessionAtCommit(cwd: string, sha: string): Promise<Se
  *  result can fire-and-forget this. */
 export async function openOnGithub(cwd: string, url: string): Promise<void> {
   await githubOpenUrl({ cwd, url });
+}
+
+const FIX_EXCERPT_BUDGET_MS = 5_000;
+const FIX_EXCERPT_MAX_JOBS = 3;
+const FIX_EXCERPT_MAX_LINES_PER_JOB = 60;
+const FIX_EXCERPT_MAX_TOTAL_LINES = 150;
+
+/**
+ * github-ci-logs FR-15: appends up to 3 failed jobs' failure excerpts to the
+ * base "fix the failing checks" sentence, `<job> › <step>:` followed by a
+ * fenced block of `failureExcerpt()`, capped at 150 lines total across jobs.
+ * Best-effort within a 5s budget — a job whose getJob/getStepLog call fails,
+ * times out, or has no failed step / Actions job id is silently skipped, and
+ * with nothing gathered the base sentence is returned unchanged.
+ */
+export async function fixFailingChecksMessage(cwd: string, baseSentence: string, checkRuns: CheckRun[]): Promise<string> {
+  const failedJobs = checkRuns.filter((c) => c.state === 'failed' && c.jobId !== undefined).slice(0, FIX_EXCERPT_MAX_JOBS);
+  if (failedJobs.length === 0) return baseSentence;
+
+  const deadline = Date.now() + FIX_EXCERPT_BUDGET_MS;
+  const sections: string[] = [];
+  let linesLeft = FIX_EXCERPT_MAX_TOTAL_LINES;
+
+  for (const check of failedJobs) {
+    if (Date.now() >= deadline || linesLeft <= 0) break;
+    const jobRes = await githubGetJob({ cwd, jobId: check.jobId! });
+    if (!jobRes.ok || Date.now() >= deadline) continue;
+    const failedStep = firstFailedStep(jobRes.data);
+    if (!failedStep) continue;
+    const logRes = await githubGetStepLog({ cwd, jobId: check.jobId!, stepNumber: failedStep.number });
+    if (!logRes.ok) continue;
+    const excerpt = failureExcerpt(logRes.data, FIX_EXCERPT_MAX_LINES_PER_JOB);
+    if (!excerpt) continue;
+    const excerptLines = excerpt.split('\n').slice(0, linesLeft);
+    if (excerptLines.length === 0) continue;
+    linesLeft -= excerptLines.length;
+    sections.push(`\`${jobRes.data.name} › ${failedStep.name}\`:\n\`\`\`\n${excerptLines.join('\n')}\n\`\`\``);
+  }
+
+  return sections.length > 0 ? `${baseSentence}\n\n${sections.join('\n\n')}` : baseSentence;
 }

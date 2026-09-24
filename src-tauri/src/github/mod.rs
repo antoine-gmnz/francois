@@ -19,6 +19,8 @@
 //  * branches — `github_list_branches`, worktree disk usage, create, prune.
 //  * commands — the `#[tauri::command]` surface, `github_open_url`.
 
+pub(crate) mod actions;
+pub(crate) mod actions_log;
 mod branches;
 mod commands;
 mod commits;
@@ -96,6 +98,16 @@ pub struct CheckRun {
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details_url: Option<String>,
+    /// Actions job id (== check-run id). Present only for GitHub Actions
+    /// jobs; absent ⇒ no steps/log (github-ci-logs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<u64>,
+    /// Actions workflow run id; present iff job_id is (github-ci-logs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<u64>,
+    /// epoch ms; lets a pending row tick its elapsed clock (github-ci-logs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, Default)]
@@ -189,6 +201,10 @@ pub struct PullDetail {
     pub mergeable: String, // 'clean' | 'blocked' | 'conflicting' | 'behind' | 'unknown'
     pub merge_methods: Vec<String>, // 'squash' | 'merge' | 'rebase', preference order
     pub cross_repository: bool,
+    /// full 40-char head sha (head_sha stays the 7-char display form) — github-ci-logs.
+    pub head_oid: String,
+    /// PR description as authored (GitHub markdown), "" when null/absent.
+    pub body: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -292,6 +308,83 @@ pub struct PruneOutcome {
     pub removed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+// ---------- github-ci-logs shared shapes ----------
+
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum StepState {
+    Queued,
+    Running,
+    Passed,
+    Failed,
+    Skipped,
+    Cancelled,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStep {
+    pub number: u32,
+    pub name: String,
+    pub state: StepState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckJob {
+    pub job_id: u64,
+    pub run_id: u64,
+    pub run_attempt: u32,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_name: Option<String>,
+    pub state: CheckState,
+    pub completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    pub steps: Vec<JobStep>,
+    pub html_url: String,
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum LogLineKind {
+    Plain,
+    Command,
+    Error,
+    Warning,
+    Notice,
+    Debug,
+    GroupStart,
+    GroupEnd,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LogLine {
+    pub n: u32,
+    pub text: String,
+    pub kind: LogLineKind,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StepLog {
+    pub job_id: u64,
+    pub step_number: u32,
+    pub lines: Vec<LogLine>,
+    pub total_lines: u32,
+    pub dropped_lines: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_error_line: Option<u32>,
 }
 
 // ---------- shared pure helpers ----------

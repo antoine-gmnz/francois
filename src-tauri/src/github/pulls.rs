@@ -4,11 +4,10 @@
 //! `PullSummary`/`PullDetail`. JSON -> contract mapping stays in small pure
 //! functions, unit-tested against captured sample JSON.
 
-use super::gh::{gh_failed, gh_json, gh_routed, gh_status_cached, gh_unavailable};
+use super::gh::{gh_failed, gh_json, gh_routed, require_gh};
 use super::{
     parse_rfc3339_ms, remote_owner_name_host, resolve_scope, CheckRollup, CheckRun, CheckState,
-    GhStatus, MergeOutcome, PullDetail, PullFile, PullState, PullSummary, ReviewComment,
-    ReviewDecision,
+    MergeOutcome, PullDetail, PullFile, PullState, PullSummary, ReviewComment, ReviewDecision,
 };
 use crate::diff::GitHost;
 use crate::ipc::{AppError, ErrorCode};
@@ -17,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 const LIST_FIELDS: &str = "number,title,headRefName,baseRefName,state,isDraft,author,createdAt,updatedAt,mergedAt,mergedBy,statusCheckRollup,reviewDecision,latestReviews,url";
-const VIEW_FIELDS: &str = "number,title,headRefName,baseRefName,state,isDraft,author,createdAt,updatedAt,mergedAt,mergedBy,statusCheckRollup,reviewDecision,latestReviews,url,additions,deletions,files,reviewRequests,labels,milestone,headRefOid,mergeable,mergeStateStatus,isCrossRepository";
+const VIEW_FIELDS: &str = "number,title,headRefName,baseRefName,state,isDraft,author,createdAt,updatedAt,mergedAt,mergedBy,statusCheckRollup,reviewDecision,latestReviews,url,additions,deletions,files,reviewRequests,labels,milestone,headRefOid,mergeable,mergeStateStatus,isCrossRepository,body";
 
 // ---------- gh JSON shapes ----------
 
@@ -117,6 +116,7 @@ struct GhPr {
     merge_state_status: Option<String>,
     #[serde(rename = "isCrossRepository", default)]
     is_cross_repository: bool,
+    body: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -180,6 +180,12 @@ fn map_check_runs(items: &[GhCheckItem]) -> Vec<CheckRun> {
                 },
                 _ => None,
             };
+            let details_url = item.details_url.clone().or_else(|| item.target_url.clone());
+            let (job_id, run_id) = details_url
+                .as_deref()
+                .and_then(super::actions::parse_actions_job_url)
+                .map(|(r, j)| (Some(j), Some(r)))
+                .unwrap_or((None, None));
             CheckRun {
                 name: item
                     .name
@@ -189,7 +195,10 @@ fn map_check_runs(items: &[GhCheckItem]) -> Vec<CheckRun> {
                 state: item_check_state(item),
                 duration_ms,
                 summary: None,
-                details_url: item.details_url.clone().or_else(|| item.target_url.clone()),
+                details_url,
+                job_id,
+                run_id,
+                started_at: item.started_at.as_deref().and_then(parse_rfc3339_ms),
             }
         })
         .collect()
@@ -373,6 +382,8 @@ fn map_pull_detail(
         mergeable: map_mergeable(pr.mergeable.as_deref(), pr.merge_state_status.as_deref()),
         merge_methods: all_merge_methods(),
         cross_repository: pr.is_cross_repository,
+        head_oid: pr.head_ref_oid.clone().unwrap_or_default(),
+        body: pr.body.clone().unwrap_or_default(),
         summary,
     }
 }
@@ -399,14 +410,6 @@ fn viewer_login(host: &GitHost, root: &str) -> Option<String> {
         .unwrap()
         .insert(root.to_string(), login.clone());
     Some(login)
-}
-
-fn require_gh(host: &GitHost, root: &str, remote_host: Option<&str>) -> Result<(), AppError> {
-    let status = gh_status_cached(host, root, remote_host);
-    if status != GhStatus::Ok {
-        return Err(gh_unavailable(status));
-    }
-    Ok(())
 }
 
 // ---------- commands' impls ----------
@@ -750,6 +753,32 @@ mod tests {
         let d = map_pull_detail(&pr, None, Vec::new());
         assert!(d.cross_repository);
         assert_eq!(d.merge_methods, ["squash", "merge", "rebase"]);
+        assert_eq!(d.body, "");
+    }
+
+    #[test]
+    fn detail_carries_the_pr_body_and_defaults_to_empty_when_absent() {
+        let pr: GhPr = serde_json::from_str(
+            r#"{"number":1,"title":"t","headRefName":"h","baseRefName":"main","state":"OPEN",
+                "author":null,"createdAt":"2024-03-01T10:00:00Z","updatedAt":"2024-03-01T10:00:00Z",
+                "mergedAt":null,"mergedBy":null,"reviewDecision":null,"url":"u",
+                "milestone":null,"headRefOid":null,"mergeable":null,"mergeStateStatus":null,
+                "isCrossRepository":false,"body":"Summary: fixes things"}"#,
+        )
+        .unwrap();
+        let d = map_pull_detail(&pr, None, Vec::new());
+        assert_eq!(d.body, "Summary: fixes things");
+
+        let pr_null: GhPr = serde_json::from_str(
+            r#"{"number":1,"title":"t","headRefName":"h","baseRefName":"main","state":"OPEN",
+                "author":null,"createdAt":"2024-03-01T10:00:00Z","updatedAt":"2024-03-01T10:00:00Z",
+                "mergedAt":null,"mergedBy":null,"reviewDecision":null,"url":"u",
+                "milestone":null,"headRefOid":null,"mergeable":null,"mergeStateStatus":null,
+                "isCrossRepository":false,"body":null}"#,
+        )
+        .unwrap();
+        let d_null = map_pull_detail(&pr_null, None, Vec::new());
+        assert_eq!(d_null.body, "");
     }
 
     fn sample_pr(json: &str) -> GhPr {

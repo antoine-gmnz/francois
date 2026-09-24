@@ -199,3 +199,14 @@ export function ghUnavailableMessage(status: GhStatus): string {
       return '';
   }
 }
+
+/**
+ * The PR description as the Description card shows it: PR-template HTML
+ * comments stripped (the markdown renderer would print them raw), CRLF
+ * normalised, trimmed. `null` when nothing is left — the card then reads
+ * "No description provided."
+ */
+export function pullDescription(body: string): string | null {
+  const text = body.replace(/<!--[\s\S]*?-->/g, '').replace(/\r\n?/g, '\n').trim();
+  return text === '' ? null : text;
+}

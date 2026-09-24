@@ -98,6 +98,7 @@
 - 2026-09-21 · runtimes · Native Claude/Codex own execution; adapters translate session controls — no new Francois tool loop · process-runtime-decisions
 - 2026-09-21 · data · Retired Pi records remain raw and read-only; never reinterpret their identity or defaults · pi-retirement-data-compatibility
 - 2026-09-21 · requests · Pending requests belong to live session state; transcript replay never grants reply authority · process-runtime-boundaries
+- 2026-09-24 · api · Live GitHub data is polled only while its view is visible AND something it shows is still in progress; a finished or hidden view makes zero gh calls — because every poll spends the user's own GitHub rate limit · github-ci-logs
 
 ## Superseded
 

@@ -223,6 +223,12 @@ pub enum ErrorCode {
     GhUnavailable,
     /// github-page: gh ran and exited non-zero (detail: { code, stderr })
     GhFailed,
+    /// github-ci-logs: getStepLog on a not-yet-completed job
+    GhLogNotReady,
+    /// github-ci-logs: GitHub 404/410s the log of a completed job (retention expired)
+    GhLogGone,
+    /// github-ci-logs: raw log exceeds the 32 MiB output cap (detail: { capBytes })
+    GhLogTooLarge,
     /// cohorte-integration: no .cohorte/ for that root (detail: { startDir })
     CohorteNotDetected,
     /// cohorte-integration: `cohorte` does not resolve on the login-shell PATH
@@ -355,6 +361,9 @@ impl ErrorCode {
         ErrorCode::ProfileRuntimeMismatch,
         ErrorCode::GhUnavailable,
         ErrorCode::GhFailed,
+        ErrorCode::GhLogNotReady,
+        ErrorCode::GhLogGone,
+        ErrorCode::GhLogTooLarge,
         ErrorCode::CohorteNotDetected,
         ErrorCode::CohorteCliMissing,
         ErrorCode::CohorteCliIncompatible,
@@ -477,6 +486,9 @@ impl ErrorCode {
             ErrorCode::ProfileRuntimeMismatch => "PROFILE_RUNTIME_MISMATCH",
             ErrorCode::GhUnavailable => "GH_UNAVAILABLE",
             ErrorCode::GhFailed => "GH_FAILED",
+            ErrorCode::GhLogNotReady => "GH_LOG_NOT_READY",
+            ErrorCode::GhLogGone => "GH_LOG_GONE",
+            ErrorCode::GhLogTooLarge => "GH_LOG_TOO_LARGE",
             ErrorCode::CohorteNotDetected => "COHORTE_NOT_DETECTED",
             ErrorCode::CohorteCliMissing => "COHORTE_CLI_MISSING",
             ErrorCode::CohorteCliIncompatible => "COHORTE_CLI_INCOMPATIBLE",

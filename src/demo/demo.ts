@@ -54,8 +54,12 @@ import {
   GITHUB_PULL_DETAILS,
   GITHUB_PULLS,
   GITHUB_REPO,
+  githubChecksForSha,
   githubCommitDetail,
   githubCommitsForRef,
+  githubJobById,
+  githubRerunDemo,
+  githubStepLogFor,
 } from './github-fixtures';
 
 // Every guard here and at the call sites tests the `__FRANCOIS_DEMO__` literal
@@ -509,6 +513,29 @@ function route(cmd: string, a: Args): unknown {
       return ok(branches.map((branch) => ({ branch, removed: true })));
     }
     case 'github_open_url':
+      return ok(null);
+    case 'github_list_checks': {
+      const checks = githubChecksForSha(String(g?.sha ?? ''));
+      return ok(checks ?? []);
+    }
+    case 'github_get_job': {
+      const job = githubJobById(Number(g?.jobId));
+      return job ? ok(job) : { ok: false, error: { code: 'GH_FAILED', message: 'No such job.' } };
+    }
+    case 'github_get_step_log': {
+      const jobId = Number(g?.jobId);
+      const stepNumber = Number(g?.stepNumber);
+      const job = githubJobById(jobId);
+      if (!job) return { ok: false, error: { code: 'GH_FAILED', message: 'No such job.' } };
+      const step = job.steps.find((s) => s.number === stepNumber);
+      if (!job.completed || step?.state === 'queued') {
+        return { ok: false, error: { code: 'GH_LOG_NOT_READY', message: 'Log available when the job finishes.' } };
+      }
+      const log = githubStepLogFor(jobId, stepNumber);
+      return log ? ok(log) : { ok: false, error: { code: 'GH_FAILED', message: 'No log for this step.' } };
+    }
+    case 'github_rerun_failed':
+      githubRerunDemo(Number(g?.runId));
       return ok(null);
 
     // extensions: the demo fleet ships no providers, so the registry reads
