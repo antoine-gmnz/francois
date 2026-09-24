@@ -228,4 +228,8 @@ describe('pullDescription', () => {
   it('treats a body that is only a template comment as empty', () => {
     expect(pullDescription('<!-- Thanks for the PR! -->\n')).toBeNull();
   });
+  it('does not let stripping one comment assemble another from the leftovers', () => {
+    expect(pullDescription('<!<!-- x -->-- y -->ok')).toBe('ok');
+    expect(pullDescription('<!<!-- x -->-- y -->ok')).not.toContain('<!--');
+  });
 });
