@@ -100,12 +100,13 @@ export function modelPickerPlacement(
   const above = trigger.top - 12;
   const openAbove = above > below;
   const maxHeight = Math.max(0, Math.min(viewportHeight * 0.6, openAbove ? above : below));
-  return {
-    left: Math.max(8, Math.min(trigger.left, viewportWidth - width - 8)),
-    top: openAbove ? trigger.top - maxHeight - 4 : trigger.bottom + 4,
-    width,
-    maxHeight,
-  };
+  const left = Math.max(8, Math.min(trigger.left, viewportWidth - width - 8));
+  // Opening above anchors the panel's BOTTOM edge to the trigger: the list is
+  // usually shorter than `maxHeight`, so a `top` computed from it would leave
+  // the panel floating near the top of the window, detached from the trigger.
+  return openAbove
+    ? { left, bottom: viewportHeight - trigger.top + 4, width, maxHeight }
+    : { left, top: trigger.bottom + 4, width, maxHeight };
 }
 
 export function revealModelOption(root: HTMLElement): void {
