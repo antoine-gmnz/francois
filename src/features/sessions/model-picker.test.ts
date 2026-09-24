@@ -268,11 +268,21 @@ describe('catalogue access', () => {
     const rect = modelPickerPlacement({ left: 120, top: 300, bottom: 332, width: 480 }, 720, 600);
     expect(rect.left).toBeGreaterThanOrEqual(8);
     expect(rect.left + rect.width).toBeLessThanOrEqual(712);
-    expect(rect.top + rect.maxHeight).toBeLessThanOrEqual(592);
+    const top = rect.top ?? 600 - (rect.bottom ?? 0) - rect.maxHeight;
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(top + rect.maxHeight).toBeLessThanOrEqual(592);
+  });
+  it('opens below a high trigger, anchored by its top edge', () => {
+    const rect = modelPickerPlacement({ left: 120, top: 100, bottom: 132, width: 480 }, 720, 600);
+    expect(rect.top).toBe(136);
+    expect(rect.bottom).toBeUndefined();
   });
   it('opens above a low trigger and bounds long lists', () => {
     const rect = modelPickerPlacement({ left: 680, top: 550, bottom: 582, width: 480 }, 720, 600);
-    expect(rect.top).toBeLessThan(550);
+    // Anchored by its bottom edge 4px above the trigger, so a short list hugs
+    // the trigger instead of floating at the top of the window.
+    expect(rect.bottom).toBe(600 - 550 + 4);
+    expect(rect.top).toBeUndefined();
     expect(rect.maxHeight).toBeLessThanOrEqual(360);
     expect(rect.left + rect.width).toBeLessThanOrEqual(712);
   });
