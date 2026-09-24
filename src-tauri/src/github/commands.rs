@@ -2,13 +2,15 @@
 //! Every command takes a `cwd`-scoped request and resolves an `IpcResult` —
 //! domain failures never reject across the bridge (§Conventions).
 
+use super::actions::{do_get_job, do_list_checks, do_rerun_failed};
+use super::actions_log::do_get_step_log;
 use super::branches::{do_create_worktree, do_list_branches, do_prune, do_worktree_disk_usage};
 use super::commits::{do_get_commit, do_list_commits};
 use super::pulls::{do_get_pull, do_list_pulls, do_merge_pull, do_update_pull_branch};
 use super::repo::{compute_repo_info, do_fetch};
 use super::{
-    remote_host_of, resolve_scope, BranchInfo, BranchWorktree, CommitDetail, CommitPage,
-    GithubRepoInfo, MergeOutcome, PruneOutcome, PullDetail, PullSummary,
+    remote_host_of, resolve_scope, BranchInfo, BranchWorktree, CheckJob, CheckRun, CommitDetail,
+    CommitPage, GithubRepoInfo, MergeOutcome, PruneOutcome, PullDetail, PullSummary, StepLog,
 };
 use crate::ipc::{err, ok, AppError, ErrorCode, IpcResult};
 use serde::Deserialize;
@@ -85,6 +87,35 @@ pub struct GithubOpenUrlRequest {
     pub url: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubListChecksRequest {
+    pub cwd: String,
+    pub sha: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubGetJobRequest {
+    pub cwd: String,
+    pub job_id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubGetStepLogRequest {
+    pub cwd: String,
+    pub job_id: u64,
+    pub step_number: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRerunFailedRequest {
+    pub cwd: String,
+    pub run_id: u64,
+}
+
 #[tauri::command(async)]
 pub fn github_repo_info(req: GithubScope) -> IpcResult<GithubRepoInfo> {
     compute_repo_info(&req.cwd).into()
@@ -157,6 +188,31 @@ pub fn github_create_worktree(req: GithubCreateWorktreeRequest) -> IpcResult<Bra
 #[tauri::command(async)]
 pub fn github_prune(req: GithubPruneRequest) -> IpcResult<Vec<PruneOutcome>> {
     do_prune(&req.cwd, &req.branches).into()
+}
+
+// ---------- github-ci-logs ----------
+
+#[tauri::command(async)]
+pub fn github_list_checks(req: GithubListChecksRequest) -> IpcResult<Vec<CheckRun>> {
+    do_list_checks(&req.cwd, &req.sha).into()
+}
+
+#[tauri::command(async)]
+pub fn github_get_job(req: GithubGetJobRequest) -> IpcResult<CheckJob> {
+    do_get_job(&req.cwd, req.job_id).into()
+}
+
+#[tauri::command(async)]
+pub fn github_get_step_log(req: GithubGetStepLogRequest) -> IpcResult<StepLog> {
+    do_get_step_log(&req.cwd, req.job_id, req.step_number).into()
+}
+
+#[tauri::command(async)]
+pub fn github_rerun_failed(req: GithubRerunFailedRequest) -> IpcResult<Option<()>> {
+    match do_rerun_failed(&req.cwd, req.run_id) {
+        Ok(()) => ok(None),
+        Err(e) => e.into(),
+    }
 }
 
 // ---------- open_url ----------

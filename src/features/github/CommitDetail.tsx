@@ -11,9 +11,11 @@ import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
-import { Orbit, LoaderPane } from '../../ui/Loaders';
+import { LoaderPane } from '../../ui/Loaders';
 import { openOnGithub, openSession, startSessionAtCommit } from './actions';
+import { CheckRunList } from './CheckRunList';
 import { commitAuthorLabel, commitChecksChip, commitTimeLabel, otherCommitFiles } from './commits';
+import { CollapsibleCard } from './CollapsibleCard';
 import { sessionForBranch } from './linkage';
 import { useLatestRequest } from './useLatestRequest';
 import './pulls.css';
@@ -135,17 +137,29 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
       <div className="pull-detail__columns">
         <div className="pull-detail__col pull-detail__col--left">
           {linkedSession && (
-            <div className="pull-card pull-card--padded">
-              <div className="pull-card__head">
-                <Icon name="terminal" size={13} />
-                <span className="commit-origin__text">
-                  Written by session <span className="commit-origin__name">{linkedSession.name}</span>
-                </span>
-                <span className="pull-row__sp" />
-                <Button variant="secondary" size="sm" onClick={() => openSession(linkedSession.id)}>
-                  Open transcript
-                </Button>
-              </div>
+            <CollapsibleCard
+              id="commit-session"
+              className="pull-card--padded"
+              head={
+                <>
+                  <Icon name="terminal" size={13} />
+                  <span className="commit-origin__text">
+                    Written by session <span className="commit-origin__name">{linkedSession.name}</span>
+                  </span>
+                  <span className="pull-row__sp" />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openSession(linkedSession.id);
+                    }}
+                  >
+                    Open transcript
+                  </Button>
+                </>
+              }
+            >
               <div className="commit-stats">
                 <span className="commit-stats__item">
                   <span className="commit-stats__label">model</span>
@@ -158,34 +172,39 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
                   </span>
                 )}
               </div>
-            </div>
+            </CollapsibleCard>
           )}
 
           {firstFile && (
-            <div className="pull-card">
-              <div className="pull-card__head">
-                <Icon name="file" size={12} />
-                <span className="commit-file__path">{firstFile.path}</span>
-                <span className="commit-file__stat">
-                  <span className="pull-detail__meta-add">+{firstFile.additions}</span>{' '}
-                  <span className="pull-detail__meta-del">−{firstFile.deletions}</span>
-                </span>
-                <span className="pull-row__sp" />
-                <span className="pull-card__faint">
-                  1 of {detail.files.length} file{detail.files.length === 1 ? '' : 's'}
-                </span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={!linkedSession}
-                  title={linkedSession ? undefined : 'No session is linked to this branch'}
-                  onClick={() => {
-                    if (linkedSession) openSession(linkedSession.id);
-                  }}
-                >
-                  Review in François
-                </Button>
-              </div>
+            <CollapsibleCard
+              id="files"
+              head={
+                <>
+                  <Icon name="file" size={12} />
+                  <span className="commit-file__path">{firstFile.path}</span>
+                  <span className="commit-file__stat">
+                    <span className="pull-detail__meta-add">+{firstFile.additions}</span>{' '}
+                    <span className="pull-detail__meta-del">−{firstFile.deletions}</span>
+                  </span>
+                  <span className="pull-row__sp" />
+                  <span className="pull-card__faint">
+                    1 of {detail.files.length} file{detail.files.length === 1 ? '' : 's'}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!linkedSession}
+                    title={linkedSession ? undefined : 'No session is linked to this branch'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (linkedSession) openSession(linkedSession.id);
+                    }}
+                  >
+                    Review in François
+                  </Button>
+                </>
+              }
+            >
               {detail.firstFileDiff && !detail.firstFileDiff.binary && (
                 <div className="commit-diff-lines">
                   {detail.firstFileDiff.hunks.flatMap((hunk) =>
@@ -210,7 +229,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
                   ))}
                 </div>
               )}
-            </div>
+            </CollapsibleCard>
           )}
         </div>
 
@@ -218,20 +237,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
           {detail.checkRuns && detail.checkRuns.length > 0 && (
             <div className="pull-side-card">
               <p className="pull-side-card__label">Checks on this commit</p>
-              {detail.checkRuns.map((run) => (
-                <div className="pull-kv" key={run.name}>
-                  {run.state === 'pending' ? (
-                    <Orbit size={14} label={`${run.name} running`} />
-                  ) : (
-                    <Icon name={run.state === 'failed' ? 'x' : 'check'} size={12} />
-                  )}
-                  <span className="commit-check__name">{run.name}</span>
-                  <span className="pull-row__sp" />
-                  <span className="commit-check__value">
-                    {run.state === 'failed' ? (run.summary ?? 'failed') : run.durationMs !== undefined ? formatDuration(run.durationMs) : ''}
-                  </span>
-                </div>
-              ))}
+              <CheckRunList cwd={cwd} sha={detail.sha} initialChecks={detail.checkRuns} variant="commit" />
             </div>
           )}
 
@@ -273,11 +279,4 @@ function KeyValue({ label, value }: { label: string; value: string }): JSX.Eleme
       <span className="pull-kv__value">{value}</span>
     </div>
   );
-}
-
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes} m ${String(seconds).padStart(2, '0')} s` : `${seconds} s`;
 }

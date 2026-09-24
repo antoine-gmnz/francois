@@ -2,6 +2,7 @@
 //! NUL/unit-separator format, plus (best-effort, gh-gated) check runs and the
 //! owning PR number on the detail call.
 
+use super::actions::fetch_actions_check_runs;
 use super::gh::{gh_json, gh_status_cached, git_routed};
 use super::{
     remote_owner_name_host, resolve_scope, CheckRun, CommitDetail, CommitFile, CommitPage,
@@ -154,22 +155,6 @@ fn map_signed(code: &str) -> SignedState {
     }
 }
 
-#[derive(Deserialize)]
-struct GhCommitCheckRun {
-    name: String,
-    status: Option<String>,
-    conclusion: Option<String>,
-    started_at: Option<String>,
-    completed_at: Option<String>,
-    html_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GhCommitCheckRuns {
-    #[serde(default)]
-    check_runs: Vec<GhCommitCheckRun>,
-}
-
 fn fetch_check_runs(
     host: &GitHost,
     root: &str,
@@ -177,40 +162,7 @@ fn fetch_check_runs(
     name: &str,
     sha: &str,
 ) -> Option<Vec<CheckRun>> {
-    let path = format!("repos/{owner}/{name}/commits/{sha}/check-runs");
-    let runs: GhCommitCheckRuns = gh_json(host, root, &["api", &path]).ok()?;
-    Some(
-        runs.check_runs
-            .into_iter()
-            .map(|r| {
-                let state = match r.status.as_deref() {
-                    Some("completed") => match r.conclusion.as_deref() {
-                        Some("success") | Some("neutral") => super::CheckState::Passed,
-                        Some("skipped") => super::CheckState::Skipped,
-                        Some(_) => super::CheckState::Failed,
-                        None => super::CheckState::Pending,
-                    },
-                    _ => super::CheckState::Pending,
-                };
-                let duration_ms = match (&r.started_at, &r.completed_at) {
-                    (Some(s), Some(c)) => {
-                        match (super::parse_rfc3339_ms(s), super::parse_rfc3339_ms(c)) {
-                            (Some(s), Some(c)) if c >= s => Some((c - s) as u64),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                CheckRun {
-                    name: r.name,
-                    state,
-                    duration_ms,
-                    summary: None,
-                    details_url: r.html_url,
-                }
-            })
-            .collect(),
-    )
+    fetch_actions_check_runs(host, root, owner, name, sha).ok()
 }
 
 #[derive(Deserialize)]

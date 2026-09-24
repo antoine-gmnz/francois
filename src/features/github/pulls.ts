@@ -199,3 +199,21 @@ export function ghUnavailableMessage(status: GhStatus): string {
       return '';
   }
 }
+
+/**
+ * The PR description as the Description card shows it: PR-template HTML
+ * comments stripped (the markdown renderer would print them raw), CRLF
+ * normalised, trimmed. `null` when nothing is left — the card then reads
+ * "No description provided." Stripping repeats to a fixpoint, because removing
+ * one comment can splice its neighbours into a new one (`<!<!-- x -->-- y -->`).
+ */
+export function pullDescription(body: string): string | null {
+  let stripped = body;
+  let previous: string;
+  do {
+    previous = stripped;
+    stripped = stripped.replace(/<!--[\s\S]*?-->/g, '');
+  } while (stripped !== previous);
+  const text = stripped.replace(/\r\n?/g, '\n').trim();
+  return text === '' ? null : text;
+}

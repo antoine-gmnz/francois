@@ -12,6 +12,7 @@ import {
   mergeMethodLabel,
   mergeOutcomeNote,
   mergeableTone,
+  pullDescription,
   pullOpenedBy,
   pullRelativeTime,
   pullReviewText,
@@ -212,5 +213,23 @@ describe('in-app merge (FR-5a)', () => {
       'Merged, but feat/x was not deleted: protected',
     );
     expect(mergeOutcomeNote({ branchDeleted: false }, 'feat/x', false)).toBeNull();
+  });
+});
+
+describe('pullDescription', () => {
+  it('returns null for an empty or whitespace-only body', () => {
+    expect(pullDescription('')).toBeNull();
+    expect(pullDescription('  \r\n\n ')).toBeNull();
+  });
+  it('strips template HTML comments, normalises CRLF and trims', () => {
+    expect(pullDescription('<!-- describe your change -->\r\n## Why\r\n\r\nBecause.\r\n')).toBe('## Why\n\nBecause.');
+    expect(pullDescription('a <!-- multi\nline --> b')).toBe('a  b');
+  });
+  it('treats a body that is only a template comment as empty', () => {
+    expect(pullDescription('<!-- Thanks for the PR! -->\n')).toBeNull();
+  });
+  it('does not let stripping one comment assemble another from the leftovers', () => {
+    expect(pullDescription('<!<!-- x -->-- y -->ok')).toBe('ok');
+    expect(pullDescription('<!<!-- x -->-- y -->ok')).not.toContain('<!--');
   });
 });

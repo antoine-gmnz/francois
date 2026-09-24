@@ -276,6 +276,20 @@ pub(crate) fn gh_failed(out: &GitOut) -> AppError {
     )
 }
 
+/// Every gh-backed command's entry check: `gh` must be installed, authenticated
+/// against the repo's remote host, and the remote must be a GitHub host.
+pub(crate) fn require_gh(
+    host: &GitHost,
+    root: &str,
+    remote_host: Option<&str>,
+) -> Result<(), AppError> {
+    let status = gh_status_cached(host, root, remote_host);
+    if status != GhStatus::Ok {
+        return Err(gh_unavailable(status));
+    }
+    Ok(())
+}
+
 pub(crate) fn gh_json<T: serde::de::DeserializeOwned>(
     host: &GitHost,
     root: &str,

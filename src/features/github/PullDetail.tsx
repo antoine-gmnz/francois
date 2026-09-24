@@ -2,20 +2,24 @@
 // 29 `160:16062`). Rendered by PullsTab for the selected PR.
 
 import { useEffect, useState } from 'react';
-import type { PullDetail as PullDetailData } from '../../../contract/github-page';
+import type { CheckRun, PullDetail as PullDetailData } from '../../../contract/github-page';
 import { githubGetPull, githubUpdatePullBranch } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
 import { Icon } from '../../ui/Icon';
-import { Orbit, LoaderPane } from '../../ui/Loaders';
-import { openOnGithub, openSession, startSessionOnBranch } from './actions';
+import { LoaderPane } from '../../ui/Loaders';
+import { fixFailingChecksMessage, openOnGithub, openSession, startSessionOnBranch } from './actions';
+import { CheckRunList } from './CheckRunList';
+import { rerunTargets } from './ci-logs';
+import { CollapsibleCard } from './CollapsibleCard';
 import { sessionForBranch } from './linkage';
 import { MergeModal } from './MergeModal';
+import { PullDescription } from './PullDescription';
+import { RerunModal } from './RerunModal';
 import {
   canMergeInApp,
   canUpdateBranch,
-  checkRollupHeadline,
   mergeButtonLabel,
   mergeableTone,
   pullOpenedBy,
@@ -42,6 +46,9 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [liveChecks, setLiveChecks] = useState<CheckRun[]>([]);
+  const [fixing, setFixing] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
   const beginRequest = useLatestRequest();
 
   const load = async (): Promise<void> => {
@@ -96,9 +103,19 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
 
   const linkedSession = sessionForBranch(sessions, detail.head);
   const stateChip = pullStateChip(detail.state);
-  const headline = checkRollupHeadline(detail.checks);
   const { shown: shownFiles, moreCount } = visiblePullFiles(detail.files);
   const review = pullReviewText(detail);
+  const rerun = rerunTargets(liveChecks);
+  const firstFailedCheck = liveChecks.find((c) => c.state === 'failed');
+
+  async function onFixInNewSession(): Promise<void> {
+    setFixing(true);
+    const failing = liveChecks.filter((r) => r.state === 'failed').map((r) => r.name);
+    const base = `Fix the failing checks on PR #${detail!.number}: ${failing.join(', ')}.`;
+    const message = await fixFailingChecksMessage(cwd, base, liveChecks);
+    setFixing(false);
+    void startSessionOnBranch(cwd, detail!.head, message);
+  }
 
   async function onUpdateBranch(): Promise<void> {
     setUpdating(true);
@@ -138,83 +155,53 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
 
       <div className="pull-detail__columns">
         <div className="pull-detail__col pull-detail__col--left">
+          <PullDescription key={detail.number} cwd={cwd} body={detail.body} />
+
           {detail.checkRuns.length > 0 && (
-            <div className="pull-card">
-              <div className="pull-card__head">
-                {headline && <span className={`pull-chip pull-chip--${headline.tone}`}>{headline.label}</span>}
-                <span className="pull-row__sp" />
-                <span className="pull-card__faint">CI · GitHub Actions</span>
-              </div>
-              <div className="pull-card__list">
-                {detail.checkRuns.map((run) => (
-                  <div className="pull-check-row" key={run.name}>
-                    {run.state === 'pending' ? (
-                      <Orbit size={14} label={`${run.name} running`} />
-                    ) : (
-                      <Icon name={run.state === 'failed' ? 'x' : 'check'} size={13} />
-                    )}
-                    <span className="pull-check-row__name">{run.name}</span>
-                    <span className="pull-row__sp" />
-                    {run.state === 'failed' ? (
-                      <>
-                        <span className="pull-check-row__fail">
-                          {run.summary ?? 'failed'}
-                          {run.durationMs !== undefined ? ` · ${formatDuration(run.durationMs)}` : ''}
-                        </span>
-                        {run.detailsUrl && (
-                          <Button variant="ghost" size="sm" onClick={() => void openOnGithub(cwd, run.detailsUrl!)}>
-                            View log
-                          </Button>
-                        )}
-                      </>
-                    ) : (
-                      <span className="pull-card__faint">{run.durationMs !== undefined ? formatDuration(run.durationMs) : ''}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {detail.checks.failed > 0 && (
+            <>
+              <CheckRunList cwd={cwd} sha={detail.headOid} initialChecks={detail.checkRuns} variant="pr" onChecksChange={setLiveChecks} />
+              {firstFailedCheck && (
                 <div className="pull-card__foot pull-card__foot--danger">
                   <Icon name="spark" size={13} />
-                  <span className="pull-card__foot-text">
-                    {detail.checkRuns.find((r) => r.state === 'failed')?.summary ?? 'A check is failing.'}
-                  </span>
+                  <span className="pull-card__foot-text">{firstFailedCheck.summary ?? 'A check is failing.'}</span>
                   <span className="pull-row__sp" />
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      // FR-6: the first message names the failing checks and asks to fix them.
-                      const failing = detail.checkRuns.filter((r) => r.state === 'failed').map((r) => r.name);
-                      void startSessionOnBranch(cwd, detail.head, `Fix the failing checks on PR #${detail.number}: ${failing.join(', ')}.`);
-                    }}
-                  >
+                  {rerun.length > 0 && (
+                    <Button variant="ghost" size="sm" onClick={() => setRerunning(true)}>
+                      Re-run failed
+                    </Button>
+                  )}
+                  <Button variant="primary" size="sm" busy={fixing} onClick={() => void onFixInNewSession()}>
                     Fix in a new session
                   </Button>
                 </div>
               )}
-            </div>
+            </>
           )}
 
-          <div className="pull-card">
-            <div className="pull-card__head">
-              <span className="pull-card__title">Files changed</span>
-              <span className="pull-card__count">{detail.files.length}</span>
-              <span className="pull-row__sp" />
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!linkedSession}
-                title={linkedSession ? undefined : 'No session is linked to this branch'}
-                onClick={() => {
-                  if (!linkedSession) return;
-                  openSession(linkedSession.id);
-                  setMainTab('diff');
-                }}
-              >
-                Review in François
-              </Button>
-            </div>
+          <CollapsibleCard
+            id="files"
+            head={
+              <>
+                <span className="pull-card__title">Files changed</span>
+                <span className="pull-card__count">{detail.files.length}</span>
+                <span className="pull-row__sp" />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!linkedSession}
+                  title={linkedSession ? undefined : 'No session is linked to this branch'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!linkedSession) return;
+                    openSession(linkedSession.id);
+                    setMainTab('diff');
+                  }}
+                >
+                  Review in François
+                </Button>
+              </>
+            }
+          >
             <div className="pull-card__list">
               {shownFiles.map((f) => (
                 <div className="pull-file-row" key={f.path}>
@@ -230,15 +217,20 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
               ))}
               {moreCount > 0 && <div className="pull-card__more">{moreCount} more files</div>}
             </div>
-          </div>
+          </CollapsibleCard>
 
           {(detail.changesRequested > 0 || detail.comments.length > 0) && (
-            <div className="pull-card pull-card--padded">
-              <div className="pull-card__head">
-                {review && <span className={`pull-review-chip pull-review-chip--${review.tone}`}>{review.text}</span>}
-                <span className="pull-row__sp" />
-                {detail.comments.length > 0 && <span className="pull-card__faint">{detail.comments.length} unresolved comments</span>}
-              </div>
+            <CollapsibleCard
+              id="comments"
+              className="pull-card--padded"
+              head={
+                <>
+                  {review && <span className={`pull-review-chip pull-review-chip--${review.tone}`}>{review.text}</span>}
+                  <span className="pull-row__sp" />
+                  {detail.comments.length > 0 && <span className="pull-card__faint">{detail.comments.length} unresolved comments</span>}
+                </>
+              }
+            >
               {detail.comments.slice(0, 1).map((comment) => (
                 <div className="pull-comment" key={`${comment.author}-${comment.createdAt}`}>
                   <span className="pull-comment__avatar">{initials(comment.author)}</span>
@@ -255,12 +247,19 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
                     </p>
                     <p className="pull-comment__text">{comment.body}</p>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => void openOnGithub(cwd, comment.url)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openOnGithub(cwd, comment.url);
+                    }}
+                  >
                     Reply
                   </Button>
                 </div>
               ))}
-            </div>
+            </CollapsibleCard>
           )}
         </div>
 
@@ -326,6 +325,14 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
           }}
         />
       )}
+      {rerunning && rerun.length > 0 && (
+        <RerunModal
+          cwd={cwd}
+          targets={rerun}
+          onClose={() => setRerunning(false)}
+          onRerun={() => void load()}
+        />
+      )}
     </div>
   );
 }
@@ -346,9 +353,3 @@ function initials(name: string): string {
   return chars.join('').toUpperCase();
 }
 
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.round(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes} m ${String(seconds).padStart(2, '0')} s` : `${seconds} s`;
-}

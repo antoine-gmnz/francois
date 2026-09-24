@@ -12,9 +12,15 @@ import type {
     GithubFetchResponse,
     GithubGetCommitRequest,
     GithubGetCommitResponse,
+    GithubGetJobRequest,
+    GithubGetJobResponse,
     GithubGetPullRequest,
     GithubGetPullResponse,
+    GithubGetStepLogRequest,
+    GithubGetStepLogResponse,
     GithubListBranchesResponse,
+    GithubListChecksRequest,
+    GithubListChecksResponse,
     GithubListCommitsRequest,
     GithubListCommitsResponse,
     GithubListPullsRequest,
@@ -26,6 +32,8 @@ import type {
     GithubPruneRequest,
     GithubPruneResponse,
     GithubRepoInfoResponse,
+    GithubRerunFailedRequest,
+    GithubRerunFailedResponse,
     GithubUpdatePullBranchRequest,
     GithubUpdatePullBranchResponse,
     GithubWorktreeDiskUsageResponse,
@@ -631,6 +639,13 @@ export const githubCreateWorktree = (req: GithubCreateWorktreeRequest) =>
   ipc<GithubCreateWorktreeResponse>('github_create_worktree', { req });
 export const githubPrune = (req: GithubPruneRequest) => ipc<GithubPruneResponse>('github_prune', { req });
 export const githubOpenUrl = (req: GithubOpenUrlRequest) => ipc<GithubOpenUrlResponse>('github_open_url', { req });
+export const githubListChecks = (req: GithubListChecksRequest) =>
+  ipc<GithubListChecksResponse>('github_list_checks', { req });
+export const githubGetJob = (req: GithubGetJobRequest) => ipc<GithubGetJobResponse>('github_get_job', { req });
+export const githubGetStepLog = (req: GithubGetStepLogRequest) =>
+  ipc<GithubGetStepLogResponse>('github_get_step_log', { req });
+export const githubRerunFailed = (req: GithubRerunFailedRequest) =>
+  ipc<GithubRerunFailedResponse>('github_rerun_failed', { req });
 
 // ---------- cohorte-integration (francois:cohorte:*) ----------
 // Keep the existing UI contract while routing actions to the Python cohorte/1

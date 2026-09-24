@@ -113,7 +113,7 @@ export type ErrorCode =
   | 'EXT_MANIFEST_UNSUPPORTED' // extension-install FR-5: unknown `manifest` version; detail: { found, supported }
   | 'EXT_NOT_CONSENTED' // extension-install FR-17: enable/spawn refused before consent
   | 'EXT_CONSENT_STALE' // extension-install FR-18: the manifest changed under the dialog
-  | 'GH_UNAVAILABLE' | 'GH_FAILED' // github-page: gh missing/unauthenticated/not GitHub (detail: { status }) · gh exited non-zero (detail: { code, stderr })
+  | 'GH_UNAVAILABLE' | 'GH_FAILED' | 'GH_LOG_NOT_READY' | 'GH_LOG_GONE' | 'GH_LOG_TOO_LARGE' // github-page: gh missing/unauthenticated/not GitHub (detail: { status }) · gh exited non-zero (detail: { code, stderr }) · github-ci-logs: job not completed · log 404/410 (retention) · log > 32 MiB (detail: { capBytes })
   | 'COHORTE_NOT_DETECTED' | 'COHORTE_CLI_MISSING' | 'COHORTE_CLI_INCOMPATIBLE' | 'COHORTE_TIMEOUT' | 'COHORTE_OUTPUT_CAPPED' | 'COHORTE_OUTPUT_INVALID' | 'COHORTE_COMMAND_FAILED' | 'COHORTE_REJECTED' | 'COHORTE_RUN_NOT_FOUND' | 'COHORTE_GATE_NOT_PENDING' // cohorte-integration (detail shapes: CohorteErrorCode in contract/cohorte-integration.ts)
   | 'PROFILE_NOT_FOUND' // session-profiles: a profileId that is not in the registry
   | 'PROFILE_ARG_DENIED' // session-profiles: extraArgs carried a denied flag (detail: { flag, reason })
