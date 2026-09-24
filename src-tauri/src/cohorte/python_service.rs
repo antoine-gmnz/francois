@@ -3,6 +3,8 @@
 //! TypeScript CLI to the durable local protocol.
 
 use super::catalogue::{CohorteEvent, DetectionChanged, EventHeader, RunUpdated, UnknownEvent};
+use super::cli::{Runner, SystemRunner};
+use super::detect;
 use super::python_rpc::{self, RpcClient};
 use super::{
     ApprovalPreview, ApprovalRequest, CliInfo, CohorteDetectRequest, CohorteDetection,
@@ -17,7 +19,7 @@ use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -81,22 +83,39 @@ fn items(result: &Value) -> Result<&[Value], AppError> {
         .ok_or_else(|| bad("Cohorte returned no items list"))
 }
 
+/// The first registered project whose canonicalized `root_path` contains one
+/// of `candidates` (already canonicalized, tried in order).
+fn match_project(projects: &[Value], candidates: &[PathBuf]) -> Option<Value> {
+    let roots: Vec<(PathBuf, &Value)> = projects
+        .iter()
+        .filter_map(|p| Some((Path::new(p["root_path"].as_str()?).canonicalize().ok()?, p)))
+        .collect();
+    candidates.iter().find_map(|c| {
+        roots
+            .iter()
+            .find(|(root, _)| c.starts_with(root))
+            .map(|(_, p)| (*p).clone())
+    })
+}
+
+/// The canonicalized main checkout of the git repo `start` lives in — how a
+/// linked worktree finds the project its main checkout registered.
+fn main_checkout_of(runner: &dyn Runner, start: &Path) -> Option<PathBuf> {
+    detect::main_checkout(runner, &start.to_string_lossy())?
+        .canonicalize()
+        .ok()
+}
+
 fn project_for(client: &mut RpcClient, start: &Path) -> Result<Option<Value>, AppError> {
-    let start = start
+    let canonical = start
         .canonicalize()
         .map_err(|_| AppError::new(ErrorCode::InvalidInput, "Project directory does not exist"))?;
     let projects = client.call("projects.list", json!({}))?;
-    for project in items(&projects)? {
-        let Some(root) = project["root_path"].as_str() else {
-            continue;
-        };
-        if let Ok(root) = Path::new(root).canonicalize() {
-            if start.starts_with(&root) {
-                return Ok(Some(project.clone()));
-            }
-        }
+    let projects = items(&projects)?;
+    if let Some(project) = match_project(projects, std::slice::from_ref(&canonical)) {
+        return Ok(Some(project));
     }
-    Ok(None)
+    Ok(main_checkout_of(&SystemRunner, start).and_then(|main| match_project(projects, &[main])))
 }
 
 fn client() -> Result<RpcClient, AppError> {

@@ -163,3 +163,87 @@ fn python_service_question_response() {
     let outcome = respond_value(&root, &run_id, &request_id, json!({"answer":"A"}), false).unwrap();
     assert!(outcome.run.unwrap().gate.is_none());
 }
+
+struct Tmp(std::path::PathBuf);
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+fn tmp() -> Tmp {
+    let p = std::env::temp_dir().join(format!("francois-cohorte-py-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&p).unwrap();
+    Tmp(p)
+}
+fn git(dir: &Path, args: &[&str]) {
+    let ok = crate::process_util::spawn("git")
+        .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    assert!(ok, "git {args:?}");
+}
+fn registered(id: &str, root: &Path) -> Value {
+    json!({"id": id, "root_path": root.to_string_lossy()})
+}
+
+#[test]
+fn match_project_finds_the_root_containing_a_candidate() {
+    let t = tmp();
+    let a = t.0.join("a");
+    let b = t.0.join("b");
+    std::fs::create_dir_all(b.join("deep")).unwrap();
+    std::fs::create_dir_all(&a).unwrap();
+    let projects = [registered("pa", &a), registered("pb", &b)];
+    let start = b.join("deep").canonicalize().unwrap();
+    let hit = match_project(&projects, &[start]).expect("b contains b/deep");
+    assert_eq!(hit["id"], "pb");
+}
+
+#[test]
+fn match_project_tries_later_candidates_and_skips_bad_roots() {
+    let t = tmp();
+    let main = t.0.join("main");
+    let other = t.0.join("other");
+    std::fs::create_dir_all(&main).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let projects = [
+        json!({"id": "no-root"}),
+        registered("gone", &t.0.join("missing")),
+        registered("pm", &main),
+    ];
+    let candidates = [other.canonicalize().unwrap(), main.canonicalize().unwrap()];
+    assert_eq!(match_project(&projects, &candidates).unwrap()["id"], "pm");
+    assert!(match_project(&projects, &candidates[..1]).is_none());
+}
+
+#[test]
+fn a_linked_worktree_matches_its_main_checkouts_project() {
+    let t = tmp();
+    let main = t.0.join("main");
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q"]);
+    std::fs::write(main.join("f"), "x").unwrap();
+    git(&main, &["add", "f"]);
+    git(&main, &["commit", "-q", "-m", "init"]);
+    git(&main, &["worktree", "add", "-q", "../wt"]);
+    let projects = [registered("pm", &main)];
+    let wt = t.0.join("wt");
+    let direct = [wt.canonicalize().unwrap()];
+    assert!(match_project(&projects, &direct).is_none());
+    let main_checkout = main_checkout_of(&SystemRunner, &wt).expect("common dir resolves");
+    assert_eq!(main_checkout, main.canonicalize().unwrap());
+    assert_eq!(
+        match_project(&projects, &[main_checkout]).unwrap()["id"],
+        "pm"
+    );
+}
+
+#[test]
+fn main_checkout_of_is_none_outside_git() {
+    let t = tmp();
+    assert_eq!(main_checkout_of(&SystemRunner, &t.0), None);
+}
