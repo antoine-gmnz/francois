@@ -108,6 +108,16 @@ fn find_root(
             return Some((a.to_path_buf(), "walk-up"));
         }
     }
+    let main = main_checkout(runner, start)?;
+    main.join(".cohorte")
+        .is_dir()
+        .then_some((main, "git-common-dir"))
+}
+
+/// The main checkout of the git repo `start` lives in (for a linked worktree,
+/// the checkout it was added from), in the host dialect. `None` outside git or
+/// when the common dir is not a `.git` directory (bare repo).
+pub(crate) fn main_checkout(runner: &dyn cli::Runner, start: &str) -> Option<PathBuf> {
     let host = GitHost::of(start);
     let common = git_line(
         runner,
@@ -117,10 +127,7 @@ fn find_root(
     let main = common
         .strip_suffix("/.git")
         .or_else(|| common.strip_suffix("\\.git"))?;
-    let main = PathBuf::from(host_path(&host, main));
-    main.join(".cohorte")
-        .is_dir()
-        .then_some((main, "git-common-dir"))
+    Some(PathBuf::from(host_path(&host, main)))
 }
 
 /// FR-2/FR-3, uncached. `probe(dir)` answers the CLI question for that dir.
