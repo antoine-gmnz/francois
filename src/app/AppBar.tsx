@@ -16,8 +16,10 @@
 //
 // Everything here is app-scoped; everything session-scoped lives in the session
 // header (SessionHeader.tsx) above the transcript. Nothing in this bar animates
-// (usage-bar FR-25) — permanent chrome that repaints forever is exactly what a
-// software-composited webview cannot afford.
+// on its own (usage-bar FR-25) — permanent chrome that repaints forever is
+// exactly what a software-composited webview cannot afford. The one motion is
+// click-driven: the nav's indicator slides to the chosen view, the same
+// treatment as the session header's view switcher.
 //
 // What moved, and where it stayed reachable:
 //  · the old `Agents` nav pill → the roster footer strip, `3`, and ⌘K;
@@ -32,7 +34,7 @@
 // the drag region toggles maximize, matching the native caption's own gesture.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { MouseEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { statusNeedsAttention } from '../../contract/fleet-board';
 import { accountDisplayLabel, accountNeedsLogin, findAccount, usageAccountId } from '../features/accounts/accounts';
 import { NotifyMutedChip } from '../features/notifications/NotifyMutedChip';
@@ -90,6 +92,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
   // Fleet-wide on purpose: the parked session is usually NOT the one on screen.
   const waiting = sessions.filter((s) => statusNeedsAttention(s.status));
   const nav = activeNav(mainTab);
+  const { navRef, indicator } = useNavIndicator(nav);
 
   const go = (tab: 'overview' | 'session' | 'github') => {
     if (settingsOpen) toggleSettings(); // the nav leaves Settings
@@ -112,7 +115,12 @@ export default function AppBar({ appVersion }: AppBarProps) {
           <span className="app-bar__wordmark">Francois</span>
         </div>
 
-        <nav className="app-bar__nav" aria-label="views">
+        <nav className="app-bar__nav" aria-label="views" ref={navRef}>
+          <span
+            className={indicator ? 'app-bar__nav-indicator' : 'app-bar__nav-indicator app-bar__nav-indicator--hidden'}
+            style={indicator ? { transform: `translateX(${indicator.left}px)`, width: indicator.width } : undefined}
+            aria-hidden
+          />
           <button
             type="button"
             className={nav === 'overview' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
@@ -192,6 +200,33 @@ export default function AppBar({ appVersion }: AppBarProps) {
       </div>
     </header>
   );
+}
+
+/**
+ * The nav's sliding indicator: measured off the `--on` item after layout, and
+ * re-measured when the nav resizes (font load, badge appearing). Transitions
+ * are enabled only once the first rect is placed, so mount never animates in.
+ */
+function useNavIndicator(nav: string) {
+  const navRef = useRef<HTMLElement>(null);
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const measure = () => {
+      const on = el.querySelector<HTMLElement>('.app-bar__nav-item--on');
+      setIndicator(on ? { left: on.offsetLeft, width: on.offsetWidth } : null);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    const raf = requestAnimationFrame(() => el.classList.add('app-bar__nav--ready'));
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [nav]);
+  return { navRef, indicator };
 }
 
 /** The focused session's account as a 26px initials disc; opens the Accounts modal. */
