@@ -25,8 +25,9 @@ import { GateCard } from './GateCard';
 import { detectionFor } from './linkage';
 import { derivePipeline, type PipelineCard } from './pipeline';
 import { PhasesList } from './PhasesList';
-import { openCohorteTerminal } from './terminal';
-import { cohorteBrainstormDisplay, cohorteSpecDisplay } from './command-display';
+import { openCohorteTerminal, openPlumbingTerminal } from './terminal';
+import { cohorteBrainstormDisplay, cohortePlumbingLine, cohorteSpecDisplay } from './command-display';
+import { PipelineEmpty } from './PipelineEmpty';
 import { RunLog } from './RunLog';
 import { authHint, hostDead, panelSummary, runControls, runtimeLine, shortDigest, shortRunId } from './run-view';
 import { CASE_INSENSITIVE_FS, useSessionRun } from './useCohorte';
@@ -51,7 +52,8 @@ export default function CohortePanelSection({ session }: SessionPanelSectionProp
   return (
     <div className="cohorte-panel-wrap" key={session.id}>
       <div className="cohorte-panel__toggle" role="tablist" aria-label="Cohorte view">
-        <button type="button" role="tab" aria-selected={tab === 'run'} className={tab === 'run' ? 'cohorte-panel__toggle-btn cohorte-panel__toggle-btn--sel' : 'cohorte-panel__toggle-btn'} onClick={() => setTab('run')}>
+        {/* Frame 38: with no run linked to this session there is nothing to show. */}
+        <button type="button" role="tab" aria-selected={tab === 'run'} disabled={!run} title={run ? undefined : 'No Cohorte run for this session yet'} className={tab === 'run' ? 'cohorte-panel__toggle-btn cohorte-panel__toggle-btn--sel' : 'cohorte-panel__toggle-btn'} onClick={() => setTab('run')}>
           This run
         </button>
         <button type="button" role="tab" aria-selected={tab === 'pipeline'} className={tab === 'pipeline' ? 'cohorte-panel__toggle-btn cohorte-panel__toggle-btn--sel' : 'cohorte-panel__toggle-btn'} onClick={() => setTab('pipeline')}>
@@ -200,34 +202,32 @@ function PipelineView({ cwd, sessionId }: { cwd: string; sessionId: string }) {
   if (!root) return <SidePanelBody className="cohorte-panel"><EmptyPane className="cohorte-panel__empty">No Cohorte project detected here</EmptyPane></SidePanelBody>;
 
   const cards = derivePipeline(features, runsForRoot);
+  // Frame 38: before the first feature, the empty state owns the whole body —
+  // the Project block and the footer's own "New feature…" would only repeat it.
+  if (loaded && !error && cards.length === 0) {
+    return (
+      <SidePanelBody className="cohorte-panel cohorte-pipeline">
+        <PipelineEmpty sessionId={sessionId} />
+      </SidePanelBody>
+    );
+  }
   return (
     <SidePanelBody className="cohorte-panel cohorte-pipeline">
       {error && <p role="alert" className="cohorte-panel__note cohorte-panel__note--danger">{error}</p>}
-      {loaded && !error && cards.length === 0 && (
-        <EmptyPane className="cohorte-panel__empty">
-          No features yet
-          <Button size="sm" variant="secondary" onClick={() => useCohorteActionsStore.getState().openSheet({ action: 'intake', sessionId })}>
-            New feature…
-          </Button>
-        </EmptyPane>
-      )}
       {cards.map((card) => (
         <PipelineCardRow key={card.featureId} card={card} sessionId={sessionId} isNew={newFeatureIds.has(card.featureId)} />
       ))}
       <div className="cohorte-pipeline__project">
         <div className="cohorte-phases__label">PROJECT</div>
-        <button type="button" className="cohorte-panel__recent-row" onClick={() => { if (root) useCohorteActionsStore.getState().openSheet({ action: 'audit', sessionId }); }}>
-          <span className="cohorte-panel__recent-name">Audit</span>
-          <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); void openCohorteTerminal(sessionId, 'cohorte audit ', { execute: false }); }}>
-            Run
-          </Button>
-        </button>
-        <button type="button" className="cohorte-panel__recent-row" onClick={() => void openCohorteTerminal(sessionId, 'cohorte retro ', { execute: false })}>
-          <span className="cohorte-panel__recent-name">Retro</span>
-          <Button size="sm" variant="ghost" onClick={(e) => e.stopPropagation()}>
-            Run
-          </Button>
-        </button>
+        {(['audit', 'retro'] as const).map((verb) => (
+          <div key={verb} className="cohorte-panel__recent-row">
+            <span className="cohorte-panel__recent-name">{verb === 'audit' ? 'Audit' : 'Retro'}</span>
+            {/* FR-21: typed into a terminal, never executed. */}
+            <Button size="sm" variant="ghost" onClick={() => openPlumbingTerminal(sessionId, verb, cohortePlumbingLine(verb))}>
+              Run
+            </Button>
+          </div>
+        ))}
       </div>
       <div className="cohorte-pipeline__footer">
         <Button size="sm" variant="ghost" onClick={() => useCohorteActionsStore.getState().openSheet({ action: 'intake', sessionId })}>

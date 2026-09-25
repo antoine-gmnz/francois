@@ -1193,3 +1193,146 @@
   flex-direction: row;
   justify-content: flex-end;
 }
+
+.cohorte-panel__toggle-btn:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+/* Frame 38 (Figma 225:22467) — the Pipeline view before the first feature. */
+.cohorte-pipeline-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 2px 8px;
+}
+.cohorte-pipeline-empty__ghost {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px dashed var(--line-default);
+  border-radius: var(--radius-6);
+}
+.cohorte-pipeline-empty__track {
+  display: flex;
+  gap: 3px;
+}
+.cohorte-pipeline-empty__seg {
+  flex: 1 1 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-default);
+}
+.cohorte-pipeline-empty__seg--start {
+  background: var(--text-secondary);
+  opacity: 0.5;
+}
+.cohorte-pipeline-empty__stages {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+.cohorte-pipeline-empty__stage {
+  font: var(--type-small);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.cohorte-pipeline-empty__stage--start {
+  color: var(--text-secondary);
+}
+.cohorte-pipeline-empty__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cohorte-pipeline-empty__title {
+  margin: 0;
+  font: var(--type-ui-strong);
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.cohorte-pipeline-empty__text {
+  margin: 0;
+  font: var(--type-small);
+  line-height: 17px;
+  color: var(--text-muted);
+}
+.cohorte-pipeline-empty__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cohorte-pipeline-empty__terminal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-terminal);
+  border-radius: var(--radius-5);
+}
+.cohorte-pipeline-empty__label {
+  font: var(--type-label);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-pipeline-empty__terminal .cohorte-pipeline-empty__label {
+  font-size: 9px;
+}
+.cohorte-pipeline-empty__cmd {
+  overflow: hidden;
+  font: var(--type-mono-small);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cohorte-pipeline-empty__next {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.cohorte-pipeline-empty__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cohorte-pipeline-empty__step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.cohorte-pipeline-empty__num {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  font: var(--type-mono-small);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.cohorte-pipeline-empty__step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.cohorte-pipeline-empty__step-title {
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+}
+.cohorte-pipeline-empty__step-detail {
+  font: var(--type-small);
+  font-size: 11px;
+  color: var(--text-muted);
+}
