@@ -17,7 +17,7 @@ import { buttonClassName, Button } from '../../ui/Button';
 import { StateIcon } from '../../ui/StateIcon';
 import { Switch } from '../../ui/Switch';
 import { Tag } from '../../ui/Tag';
-import { showToast } from '../palette/palette';
+import { showToast } from '../../lib/toast';
 import { ensurePolicy } from './actions';
 import './cohorte.css';
 import './cohorte-settings.css';

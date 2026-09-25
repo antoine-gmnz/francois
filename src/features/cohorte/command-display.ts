@@ -8,8 +8,11 @@
 import type { CohorteIntakeRequest } from '../../../contract/cohorte-actions';
 import { COHORTE_ACTION_LIMITS } from '../../../contract/cohorte-actions';
 
+/** Double-quote an arg holding whitespace or a quote; inside the quotes,
+ * escape backslashes first so an escaped quote can't read as a closing one.
+ * Mirrors actions_cli.rs `quote`. */
 function quoteArg(arg: string): string {
-  return /[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg;
+  return /[\s"]/.test(arg) ? `"${arg.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : arg;
 }
 
 /** FR-3: `--text` values longer than 60 chars render as `<text, N lines>`. */

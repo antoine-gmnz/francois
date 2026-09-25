@@ -12,7 +12,7 @@ import { gateNotificationBody } from './gate-view';
 import { computeLinks, originSessionId } from './linkage';
 import { shouldNotifyGate } from './notify';
 import { rejectionToast } from './outcome';
-import { showToast } from '../palette/palette';
+import { showToast } from '../../lib/toast';
 import { CASE_INSENSITIVE_FS } from './useCohorte';
 import { watchedRunList } from './watch';
 

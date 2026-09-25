@@ -19,7 +19,7 @@ import {
 import { getDraft } from '../../lib/composer-draft';
 import { useCohorteStore, type CohorteBusy } from '../../lib/cohorteStore';
 import { useStore, type MainTab } from '../../lib/store';
-import { showToast } from '../palette/palette';
+import { showToast } from '../../lib/toast';
 import { commandErrorFeedback, hasPendingStep, NOTE_DROPPED_TOAST, OUTCOME_VISIBLE_MS, PENDING_REENABLE_MS } from './outcome';
 import { cohorteRunIdFromTab, cohorteTabId } from './tab';
 

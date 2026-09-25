@@ -18,7 +18,7 @@ import {
   renameShell,
   requestActiveShellRename,
 } from './shellActions';
-import { useShellStore } from './shellStore';
+import { useShellStore } from '../../lib/shellStore';
 
 function shell(id: string, patch: Partial<ShellInfo> = {}): ShellInfo {
   return { id, owner: { kind: 'session', sessionId: 's1' }, name: `zsh ${id}`, shellName: 'zsh', cwd: '/tmp', alive: true, ...patch };

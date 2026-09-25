@@ -10,7 +10,7 @@ import type { ShellId, ShellInfo } from '../../../contract/shell-terminal';
 import { Icon } from '../../ui/Icon';
 import { atShellCap, truncateShellLabel } from './shell';
 import { closeShell, newShell, renameShell } from './shellActions';
-import { useShellStore, useShellUnread } from './shellStore';
+import { useShellStore, useShellUnread } from '../../lib/shellStore';
 import './shell.css';
 
 export interface ShellStripProps {

@@ -16,9 +16,9 @@ import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
 import { Switch } from '../../ui/Switch';
-import { showToast } from '../palette/palette';
+import { showToast } from '../../lib/toast';
 import { cohorteBrainstormDisplay, cohorteCommandLines, cohorteIntakeDisplay, cohorteSpecDisplay, cohorteStartDisplay } from './command-display';
-import { intakeClientError, type IntakeFields } from './intake-validate';
+import { intakeClientError, intakeSeedFromDraft, type IntakeFields } from './intake-validate';
 import { openCohorteRun } from './actions';
 import { openCohorteTerminal } from './terminal';
 import { detectionFor } from './linkage';
@@ -28,12 +28,6 @@ import './cohorte.css';
 
 const STAGES = ['Intake', 'Brainstorm', 'Spec', 'Freeze', 'Run', 'Ship'];
 const STAGE_INDEX: Record<string, number> = { intake: 0, brainstorm: 1, spec: 2, start: 4 };
-
-/** The /cohorte…-eligible draft: non-empty and not itself a /cohorte invocation. */
-export function intakeSeedFromDraft(draft: string): string {
-  const trimmed = draft.trim();
-  return trimmed !== '' && !/^\/cohorte\b/.test(trimmed) ? draft : '';
-}
 
 export default function CohorteActionSheet({ home = '' }: { home?: string }): JSX.Element | null {
   const sheet = useCohorteActionsStore((s) => s.sheet);

@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 describe('initShellEvents (FR-14)', () => {
   let shellHandler: ((e: { payload: ShellEvent }) => void) | undefined;
-  let shellStore: typeof import('./shellStore');
+  let shellStore: typeof import('../../lib/shellStore');
   let appStore: typeof import('../../lib/store');
 
   beforeEach(async () => {
@@ -23,7 +23,7 @@ describe('initShellEvents (FR-14)', () => {
       return Promise.resolve(vi.fn());
     });
     appStore = await import('../../lib/store');
-    shellStore = await import('./shellStore');
+    shellStore = await import('../../lib/shellStore');
     appStore.useStore.setState({ mainTab: 'session', activeSessionId: null });
     shellStore.useShellStore.setState({ shells: {}, activeShellId: {}, unread: {}, renameRequest: null });
   });

@@ -6,8 +6,8 @@
 import type { SessionId } from '../../../contract/common';
 import { shellCreate, shellRename, shellWrite } from '../../lib/api';
 import { useStore } from '../../lib/store';
-import { useShellStore } from '../shell/shellStore';
-import { showToast } from '../palette/palette';
+import { useShellStore } from '../../lib/shellStore';
+import { showToast } from '../../lib/toast';
 
 /** The verb `cohorte <verb> …` names the shell tab after ("cohorte brainstorm"). */
 export function terminalShellName(line: string): string {

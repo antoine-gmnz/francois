@@ -12,7 +12,7 @@ import { registerBuiltinCommands } from './paletteCommands';
 import { paletteCommands } from './palette';
 import { shellPaneEligibleProjects } from '../../lib/layoutStore';
 import { useStore } from '../../lib/store';
-import { useShellStore } from '../shell/shellStore';
+import { useShellStore } from '../../lib/shellStore';
 import type { PaletteContext, SecondaryStep } from '../../../contract/command-palette';
 import type { ShellInfo } from '../../../contract/shell-terminal';
 

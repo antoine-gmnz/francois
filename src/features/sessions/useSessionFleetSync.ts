@@ -8,7 +8,7 @@ import { useStore } from '../../lib/store';
 import { clearDraft } from '../../lib/composer-draft';
 import { clearPending, resolvePrompt } from '../../lib/pending-queue';
 import { prunePaletteSession } from '../palette/paletteData';
-import { useShellStore } from '../shell/shellStore';
+import { useShellStore } from '../../lib/shellStore';
 import { activityLabel } from './activity';
 import { handleSessionEvent, type SessionEventContext } from './sessionEventHandler';
 

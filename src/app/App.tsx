@@ -20,7 +20,7 @@ import { loadProfiles } from '../features/profiles/profiles';
 import SessionSettingsSheet from '../features/sessions/SessionSettingsSheet';
 import type { SessionSettingsCarryOver } from '../features/sessions/session-settings';
 import Sidebar from '../features/sessions/Sidebar';
-import { initShellEvents } from '../features/shell/shellStore';
+import { initShellEvents } from '../lib/shellStore';
 import SkillsPanel from '../features/skills/SkillsPanel';
 import UpdateModal from '../features/update/UpdateModal';
 import { checkUpdateOnLaunch } from '../features/update/update';

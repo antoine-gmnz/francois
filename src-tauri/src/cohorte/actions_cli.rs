@@ -170,7 +170,8 @@ pub(crate) fn intake_argv(req: &CohorteIntakeRequest) -> Vec<String> {
 
 fn quote(arg: &str) -> String {
     if arg.is_empty() || arg.chars().any(|c| c.is_whitespace() || c == '"') {
-        format!("\"{}\"", arg.replace('"', "\\\""))
+        // Backslashes first, so an escaped quote can't read as a closing one.
+        format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         arg.to_string()
     }
@@ -363,6 +364,16 @@ mod tests {
             display(&intake_argv(&text_req("/r", "Webhook retries", "brief"))),
             r#"cohorte intake --text brief --title "Webhook retries""#
         );
+    }
+
+    #[test]
+    fn display_escapes_backslashes_inside_quotes_only() {
+        assert_eq!(
+            display(&intake_argv(&text_req("/r", r#"say "hi" \o/"#, "brief"))),
+            r#"cohorte intake --text brief --title "say \"hi\" \\o/""#
+        );
+        // An unquoted arg (a plain Windows path) keeps its backslashes as-is.
+        assert_eq!(quote(r"C:\x\brief.md"), r"C:\x\brief.md");
     }
 
     #[test]

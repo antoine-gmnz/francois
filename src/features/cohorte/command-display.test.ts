@@ -9,6 +9,15 @@ import {
 } from './command-display';
 
 describe('cohorteIntakeDisplay', () => {
+  it('escapes backslashes inside quotes only, like actions_cli.rs', () => {
+    expect(cohorteIntakeDisplay({ root: '/r', title: 'say "hi" \\o/', source: { kind: 'text', text: 'brief' } })).toBe(
+      'cohorte intake --text brief --title "say \\"hi\\" \\\\o/"',
+    );
+    expect(cohorteIntakeDisplay({ root: '/r', title: 'T', source: { kind: 'file', path: 'C:\\x\\brief.md' } })).toBe(
+      'cohorte intake --file C:\\x\\brief.md --title T',
+    );
+  });
+
   it('renders a text source verbatim under the abbreviation cap', () => {
     expect(cohorteIntakeDisplay({ root: '/r', title: 'Fix the thing', source: { kind: 'text', text: 'short brief' } })).toBe(
       'cohorte intake --text "short brief" --title "Fix the thing"',

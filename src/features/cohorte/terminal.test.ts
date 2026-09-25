@@ -8,8 +8,8 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 
 import type { ShellInfo } from '../../../contract/shell-terminal';
 import { useStore } from '../../lib/store';
-import { useToastState } from '../palette/palette';
-import { useShellStore } from '../shell/shellStore';
+import { useToastState } from '../../lib/toast';
+import { useShellStore } from '../../lib/shellStore';
 import { openCohorteTerminal, openPlumbingTerminal, terminalShellName } from './terminal';
 
 function shell(id: string): ShellInfo {

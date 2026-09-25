@@ -35,3 +35,9 @@ export function intakeClientError(fields: IntakeFields): string | null {
   }
   return null;
 }
+
+/** The /cohorte…-eligible draft: non-empty and not itself a /cohorte invocation. */
+export function intakeSeedFromDraft(draft: string): string {
+  const trimmed = draft.trim();
+  return trimmed !== '' && !/^\/cohorte\b/.test(trimmed) ? draft : '';
+}
