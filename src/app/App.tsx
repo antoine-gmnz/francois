@@ -3,6 +3,7 @@ import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab, tabsForSession } from '../lib/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
+import CohorteActionSheet from '../features/cohorte/CohorteActionSheet';
 import { initCohorteFeed } from '../features/cohorte/cohorteFeed';
 import { registerCohortePaletteCommands } from '../features/cohorte/cohortePaletteCommands';
 import { useCohorteWatch } from '../features/cohorte/useCohorteWatch';
@@ -554,6 +555,11 @@ export default function App() {
       {/* session-profiles: the Profiles modal, sibling to Projects. Needs NO
           session — a profile is authored whether or not anything is running. */}
       {profilesOpen && <ProfilesModal onClose={() => setProfilesOpen(false)} />}
+
+      {/* cohorte-actions FR-40: the intake/brainstorm/spec/start sheet — reads
+          its own session/root from cohorteActionsStore, renders nothing while
+          no sheet is open. */}
+      <CohorteActionSheet home={home} />
 
       {/* extensions FR-56: the Extensions modal, from ⌘K and the app row. Needs
           NO session — every registry entry is listed either way, undetected ones

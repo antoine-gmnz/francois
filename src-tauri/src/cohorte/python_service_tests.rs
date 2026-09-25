@@ -14,6 +14,29 @@ fn maps_pending_request_and_status() {
     assert_eq!(run_view("blocked_uncertain", false), "blocked");
 }
 
+/// FR-5 (cohorte-actions): `FeatureChoice` gains `kind` (default "unknown")
+/// and `updatedAt` (epoch ms, `0` when the service sends no `updated_at`).
+#[test]
+fn feature_choice_serialises_kind_and_updated_at() {
+    let choice = FeatureChoice {
+        id: "auth-retry".into(),
+        title: "Auth retry".into(),
+        status: "draft".into(),
+        kind: "patch".into(),
+        updated_at: 1_767_225_600_000,
+    };
+    let json = serde_json::to_value(&choice).unwrap();
+    assert_eq!(json["kind"], "patch");
+    assert_eq!(json["updatedAt"], 1_767_225_600_000_u64);
+
+    assert_eq!(
+        millis_or_zero(&json!("2026-01-01T00:00:00Z")),
+        1_767_225_600_000
+    );
+    assert_eq!(millis_or_zero(&Value::Null), 0);
+    assert_eq!(millis_or_zero(&json!("not-a-date")), 0);
+}
+
 #[test]
 #[ignore = "requires an isolated Python service and a seeded feature"]
 fn python_service_run_lifecycle() {

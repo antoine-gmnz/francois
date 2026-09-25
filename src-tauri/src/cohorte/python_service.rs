@@ -58,6 +58,11 @@ pub struct FeatureChoice {
     id: String,
     title: String,
     status: String,
+    /// FR-5 (cohorte-actions): the service's `features.list` item `kind`.
+    kind: String,
+    /// FR-5: epoch ms from `updated_at`; 0 when missing (never `now_ms()` —
+    /// an absent timestamp must read as "unknown", not "just now").
+    updated_at: u64,
 }
 
 fn bad(message: &str) -> AppError {
@@ -74,6 +79,17 @@ fn millis(value: &Value) -> u64 {
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .and_then(|d| u64::try_from(d.timestamp_millis()).ok())
         .unwrap_or_else(now_ms)
+}
+
+/// FR-5 (cohorte-actions): like [`millis`], but a missing/unparseable
+/// timestamp reads as `0` rather than "now" — `FeatureChoice.updatedAt` must
+/// never claim freshness the service never reported.
+fn millis_or_zero(value: &Value) -> u64 {
+    value
+        .as_str()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .and_then(|d| u64::try_from(d.timestamp_millis()).ok())
+        .unwrap_or(0)
 }
 
 fn items(result: &Value) -> Result<&[Value], AppError> {
@@ -717,6 +733,8 @@ pub fn cohorte_v3_features(req: CohorteRootRequest) -> IpcResult<Vec<FeatureChoi
                     id: f["id"].as_str()?.into(),
                     title: f["title"].as_str()?.into(),
                     status: f["status"].as_str().unwrap_or("unknown").into(),
+                    kind: f["kind"].as_str().unwrap_or("unknown").into(),
+                    updated_at: millis_or_zero(&f["updated_at"]),
                 })
             })
             .collect())

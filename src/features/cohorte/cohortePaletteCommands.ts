@@ -5,6 +5,7 @@
 
 import type { CohorteGateActionId, CohorteRun } from '../../../contract/cohorte-integration';
 import { cohorteDoctor } from '../../lib/api';
+import { useCohorteActionsStore } from '../../lib/cohorteActionsStore';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
 import { registerPaletteCommand, showToast } from '../palette/palette';
@@ -27,6 +28,15 @@ function activeRun(sessionId: string | null): CohorteRun | null {
   });
   const link = linkForSession(links, sessionId);
   return link ? (c.runs[link.runId] ?? null) : null;
+}
+
+/** FR-33: the active session's own cwd detection — separate from the active PROJECT's. */
+function activeSessionCohorteRoot(sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  const session = useStore.getState().sessions.find((s) => s.id === sessionId);
+  if (!session) return null;
+  const d = detectionFor(useCohorteStore.getState().detections, session.cwd, CASE_INSENSITIVE_FS);
+  return d?.state === 'detected' ? (d.root ?? null) : null;
 }
 
 function projectRoot(): string | null {
@@ -94,6 +104,16 @@ export function registerCohortePaletteCommands(): void {
   gateCommand('approve', 'Cohorte: Approve gate');
   gateCommand('fix', 'Cohorte: Send gate to fix');
   gateCommand('deny', 'Cohorte: Deny gate');
+
+  registerPaletteCommand({
+    id: 'cohorte-actions-menu',
+    glyph: '»',
+    name: 'Cohorte: Actions…',
+    enabled: (ctx) => activeSessionCohorteRoot(ctx.activeSessionId) !== null,
+    run: (ctx) => {
+      if (ctx.activeSessionId) useCohorteActionsStore.getState().openMenu(ctx.activeSessionId);
+    },
+  });
 
   registerPaletteCommand({
     id: 'cohorte-pause-run',

@@ -182,3 +182,21 @@
 .run-settings__footer-text--error {
   color: var(--state-danger-text);
 }
+
+/* The composer's tool strip (under the input bar): borderless, 22px, so the
+   chip reads as a setting of the prompt rather than a second button beside Send. */
+.run-chip--compact .run-chip__chip {
+  height: 22px;
+  padding: 0 6px;
+  border-color: transparent;
+  font: var(--type-mono-small);
+}
+
+/* Open/close motion — keyframes in styles.css, exit kept on screen by usePresence. */
+.run-settings {
+  animation: popoverIn var(--dur-slow) var(--ease-out);
+}
+.run-settings--exiting {
+  animation: popoverOut var(--dur-base) ease-in forwards;
+  pointer-events: none;
+}

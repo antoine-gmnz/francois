@@ -270,6 +270,8 @@ fn main() {
             cohorte::python_service::cohorte_v3_pause,
             cohorte::python_service::cohorte_v3_resume,
             cohorte::python_service::cohorte_v3_cancel,
+            cohorte::actions_cli::cohorte_action_intake,
+            cohorte::actions_cli::cohorte_action_preview,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,

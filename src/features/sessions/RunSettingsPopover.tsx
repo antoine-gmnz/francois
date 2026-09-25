@@ -37,9 +37,12 @@ export function RunSettingsPopover({
   session,
   onClose,
   position,
+  exiting = false,
 }: {
   session: SessionMeta;
   onClose: () => void;
+  /** Closed, playing its exit animation (usePresence) — inert. */
+  exiting?: boolean;
   /** Runtime placement (run-settings.ts `runSettingsPlacement`) — fixed px. */
   position: { right: number; top: number } | null;
 }) {
@@ -97,7 +100,7 @@ export function RunSettingsPopover({
     <div
       role="dialog"
       aria-label="Run settings"
-      className="run-settings"
+      className={exiting ? 'run-settings run-settings--exiting' : 'run-settings'}
       style={position ? { right: position.right, top: position.top } : { visibility: 'hidden' }}
     >
       <div className="run-settings__section">Model</div>

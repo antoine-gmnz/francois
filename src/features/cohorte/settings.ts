@@ -15,11 +15,12 @@ export function detectionSegments(d: CohorteDetection): string[] {
   return out;
 }
 
-export type PageMode = 'detected' | 'not-detected' | 'checking';
+export type PageMode = 'detected' | 'not-detected' | 'checking' | 'error';
 
 /** Which frame the page draws: 27 (found, whatever the CLI says) or 28. */
-export function pageMode(d: CohorteDetection | null): PageMode {
-  if (!d) return 'checking';
+export function pageMode(d: CohorteDetection | null, detectError?: string | null): PageMode {
+  // A failed check must end the spinner: without a detection, the error wins.
+  if (!d) return detectError ? 'error' : 'checking';
   return d.state === 'detected' || d.state === 'cli-missing' || d.state === 'cli-incompatible' ? 'detected' : 'not-detected';
 }
 

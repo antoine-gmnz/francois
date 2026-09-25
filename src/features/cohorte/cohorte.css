@@ -585,3 +585,611 @@
   font: var(--type-small);
   color: var(--text-secondary);
 }
+
+/* ---------- cohorte-actions (specs/cohorte-actions.md §8) ---------- */
+
+/* the composer chip — same 30px square treatment as .composer-attach. */
+/* FR-33 — the composer's Cohorte control, in the tool strip under the input
+   bar (beside the run chip): borderless, 22px, mark + label. */
+.composer-cohorte-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-mono-small);
+  cursor: pointer;
+}
+.composer-cohorte-chip:hover,
+.composer-cohorte-chip--open {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+/* FR-32: the actions popover — same anchoring as .slash-menu, max 580px. */
+/* FR-32 — the actions popover, frame 35 (Figma 217:29305). A floating layer,
+   so it keeps its border and shadow; only the results list scrolls. */
+.cohorte-actions-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 580px;
+  max-height: min(680px, 70vh);
+  margin-bottom: 6px;
+  overflow: hidden;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-8);
+  box-shadow: var(--shadow-float);
+  transform-origin: bottom left;
+  animation: popoverIn var(--dur-slow) var(--ease-out);
+}
+.cohorte-actions-menu--exiting {
+  animation: popoverOut var(--dur-base) ease-in forwards;
+  pointer-events: none;
+}
+.cohorte-actions-menu__head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line-subtle);
+}
+.cohorte-actions-menu__title {
+  font: var(--type-small-medium);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cohorte-actions-menu__project {
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-actions-menu__dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-success);
+}
+.cohorte-actions-menu__dot--bad {
+  background: var(--state-danger);
+}
+.cohorte-actions-menu__health {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-actions-menu__results {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px 6px 6px;
+  overflow-y: auto;
+}
+.cohorte-actions-menu__label {
+  flex-shrink: 0;
+  padding: 8px 10px 3px;
+  font: var(--type-label);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-actions-menu__row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-5);
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.cohorte-actions-menu__row--sel {
+  background: var(--bg-selected);
+}
+.cohorte-actions-menu__icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.cohorte-actions-menu__text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cohorte-actions-menu__row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-actions-menu__row-label {
+  min-width: 0;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.cohorte-actions-menu__row-desc {
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-actions-menu__row-hint {
+  max-width: 45%;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-actions-menu__row--sel .cohorte-actions-menu__row-hint {
+  color: var(--text-secondary);
+}
+.cohorte-actions-menu__row--attention .cohorte-actions-menu__icon,
+.cohorte-actions-menu__row--attention .cohorte-actions-menu__row-label {
+  color: var(--state-attention-text);
+}
+.cohorte-actions-menu__tag {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: var(--radius-3);
+  background: var(--tint-attention-strong);
+  color: var(--state-attention-text);
+  font: var(--type-mono-small);
+  font-size: 10px;
+}
+.cohorte-actions-menu__footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cohorte-actions-menu__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cohorte-actions-menu__footer-note {
+  color: var(--text-faint);
+}
+
+/* FR-40 — the action sheet, frame 36 (Figma 219:21379). A floating layer: it
+   keeps the popover surface, a 1px edge and its shadow. Tiers top to bottom —
+   head · stage strip (--bg-rail) · fields · command (--bg-terminal) · footer —
+   separated by --line-subtle rules. */
+.cohorte-sheet-backdrop .modal-panel {
+  max-width: calc(100vw - 32px);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-8);
+  box-shadow: var(--shadow-float);
+  animation: popoverIn var(--dur-slow) var(--ease-out);
+}
+.cohorte-sheet {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text-primary);
+}
+.cohorte-sheet__head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 14px 12px 18px;
+}
+.cohorte-sheet__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cohorte-sheet__title {
+  margin: 0;
+  font: var(--type-title);
+  color: var(--text-primary);
+}
+.cohorte-sheet__subtitle {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-sheet__stages {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  background: var(--bg-rail);
+  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.cohorte-sheet__stage-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cohorte-sheet__stage-sep {
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.cohorte-sheet__stage {
+  padding: 2px 7px;
+  border-radius: var(--radius-4);
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-sheet__stage--current {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.cohorte-sheet__stage-note {
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-sheet__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+.cohorte-sheet__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cohorte-sheet__field-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+.cohorte-sheet__label {
+  font: var(--type-small-medium);
+  color: var(--text-secondary);
+}
+.cohorte-sheet__flag {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-sheet__input {
+  width: 100%;
+  padding: 9px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  color: var(--text-primary);
+  font: var(--type-ui);
+  outline: none;
+}
+.cohorte-sheet__input::placeholder {
+  color: var(--text-faint);
+}
+.cohorte-sheet__input:focus-visible {
+  border-color: var(--line-strong);
+}
+.cohorte-sheet__input--area {
+  height: 150px;
+  resize: vertical;
+  line-height: 19px;
+  color: var(--text-secondary);
+}
+.cohorte-sheet__input--mono {
+  font: var(--type-mono);
+}
+.cohorte-sheet__input--static {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.cohorte-sheet__project {
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+.cohorte-sheet__project-path {
+  min-width: 0;
+  color: var(--text-muted);
+}
+.cohorte-sheet__select {
+  position: relative;
+}
+.cohorte-sheet__select select {
+  appearance: none;
+  padding-right: 34px;
+  cursor: pointer;
+}
+.cohorte-sheet__select-caret {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.cohorte-sheet__segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+.cohorte-sheet__seg {
+  padding: 5px 14px;
+  border: none;
+  border-radius: var(--radius-4);
+  background: transparent;
+  color: var(--text-muted);
+  font: var(--type-small);
+  cursor: pointer;
+}
+.cohorte-sheet__seg:hover {
+  color: var(--text-secondary);
+}
+.cohorte-sheet__seg--sel,
+.cohorte-sheet__seg--sel:hover {
+  background: var(--bg-strong);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.cohorte-sheet__then {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cohorte-sheet__then-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cohorte-sheet__then-title {
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.cohorte-sheet__then-sub,
+.cohorte-sheet__hint {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-sheet__command {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 18px;
+  background: var(--bg-terminal);
+  border-top: 1px solid var(--line-subtle);
+}
+.cohorte-sheet__command-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.cohorte-sheet__command-label {
+  font: var(--type-label);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cohorte-sheet__command-meta {
+  min-width: 0;
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-sheet__copy {
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-3);
+  background: transparent;
+  color: var(--text-faint);
+  font: var(--type-mono-small);
+  cursor: pointer;
+}
+.cohorte-sheet__copy:hover {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+.cohorte-sheet__command-line {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  font: var(--type-mono);
+  color: var(--text-secondary);
+  white-space: pre;
+}
+.cohorte-sheet__foot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 12px 14px 12px 18px;
+  border-top: 1px solid var(--line-subtle);
+}
+.cohorte-sheet__foot-note {
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.cohorte-sheet__error {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--state-danger-text);
+}
+
+/* FR-51: the intake result card. */
+.cohorte-result {
+  padding: var(--space-12);
+  border-radius: var(--radius-6);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cohorte-result--success {
+  background: var(--tint-success);
+  border: 1px solid var(--tint-success-line);
+}
+.cohorte-result__head {
+  display: flex;
+  align-items: center;
+}
+.cohorte-result__kicker {
+  font: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--state-success-text);
+}
+.cohorte-result__meta {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.cohorte-result__title {
+  margin: 0;
+  font: var(--type-ui-strong);
+  color: var(--text-primary);
+}
+.cohorte-result__row {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.cohorte-result__list {
+  margin: 0;
+  padding-left: 18px;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.cohorte-result__actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* FR-60: the This run | Pipeline toggle. */
+.cohorte-panel-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.cohorte-panel__toggle {
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px 0;
+}
+.cohorte-panel__toggle-btn {
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: var(--type-small-medium);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.cohorte-panel__toggle-btn--sel {
+  color: var(--text-primary);
+  border-bottom-color: var(--action-primary);
+}
+
+/* FR-61/62: the Pipeline view's cards. */
+.cohorte-pipeline-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-6);
+  padding: var(--space-10);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cohorte-pipeline-card--attention {
+  background: var(--tint-attention);
+  border: 1px solid var(--tint-attention-line);
+}
+.cohorte-pipeline-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cohorte-pipeline-card__id {
+  font: var(--type-mono-small);
+  color: var(--text-primary);
+}
+.cohorte-pipeline-card__stage {
+  font: var(--type-small);
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.cohorte-pipeline-card__track {
+  display: flex;
+  gap: 2px;
+}
+.cohorte-pipeline-card__seg {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-default);
+}
+.cohorte-pipeline-card__seg--done {
+  background: var(--state-success);
+  opacity: 0.6;
+}
+.cohorte-pipeline-card__seg--current.cohorte-pipeline-card__seg--attention {
+  background: var(--state-attention);
+}
+.cohorte-pipeline-card__seg--current.cohorte-pipeline-card__seg--danger {
+  background: var(--state-danger);
+}
+.cohorte-pipeline-card__seg--current.cohorte-pipeline-card__seg--success {
+  background: var(--state-success);
+}
+.cohorte-pipeline-card__seg--current.cohorte-pipeline-card__seg--running {
+  background: var(--state-running);
+}
+.cohorte-pipeline-card__seg--current.cohorte-pipeline-card__seg--neutral {
+  background: var(--text-faint);
+}
+.cohorte-pipeline-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cohorte-pipeline-card__title {
+  min-width: 0;
+  color: var(--text-secondary);
+  font: var(--type-small);
+}
+.cohorte-pipeline__project,
+.cohorte-pipeline__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.cohorte-pipeline__footer {
+  flex-direction: row;
+  justify-content: flex-end;
+}
