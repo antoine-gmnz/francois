@@ -15,7 +15,6 @@
 //! `Unknown` — visible to the caller, never fatal.
 
 use serde::Deserialize;
-#[cfg(test)]
 use serde_json::Value;
 
 /// FR-15: token accounting off `turn.completed`.
@@ -51,6 +50,35 @@ pub(super) struct Item {
     pub(super) kind: ItemKind,
 }
 
+/// One file of a `fileChange` item. `diff` is a unified hunk for `update`
+/// and the whole file content for `add`/`delete` (live 0.155.1 capture).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct PatchChange {
+    pub(super) path: String,
+    /// `add` / `delete` / `update`.
+    pub(super) kind: String,
+    pub(super) move_path: Option<String>,
+    pub(super) diff: String,
+}
+
+/// One `TodoWrite` entry: `status` is Claude's `pending` / `in_progress` /
+/// `completed`.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Todo {
+    pub(super) content: String,
+    pub(super) status: String,
+}
+
+/// Codex's plan-step status (`inProgress`) in Claude's `TodoWrite` spelling.
+pub(super) fn todo_status(status: &str) -> String {
+    match status {
+        "inProgress" | "in_progress" => "in_progress",
+        "completed" => "completed",
+        _ => "pending",
+    }
+    .into()
+}
+
 // Legacy `codex exec --json` vocabulary: only the (test-only) line parser
 // constructs it now that turns run over the native App Server.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -68,18 +96,25 @@ pub(super) enum ItemKind {
         exit_code: Option<i64>,
     },
     FileChange {
-        paths: Vec<String>,
+        changes: Vec<PatchChange>,
+        /// `completed` / `failed` / `declined` / `inProgress` (native); `""`
+        /// when the wire did not say.
+        status: String,
     },
     McpToolCall {
         server: String,
         tool: String,
         status: String,
+        arguments: Value,
+        result: Value,
+        error: Option<String>,
     },
     WebSearch {
         query: String,
     },
+    /// A plan, already in Claude's `TodoWrite` vocabulary.
     TodoList {
-        count: usize,
+        todos: Vec<Todo>,
     },
     /// An item kind this version of Francois does not know. Codex adds them
     /// between releases; none of them may break a turn.
@@ -197,31 +232,54 @@ fn parse_item(v: &Value) -> Option<Item> {
             exit_code: v.get("exit_code").and_then(|c| c.as_i64()),
         },
         "file_change" => ItemKind::FileChange {
-            paths: v
+            changes: v
                 .get("changes")
                 .and_then(|c| c.as_array())
                 .map(|arr| {
                     arr.iter()
-                        .filter_map(|c| c.get("path").and_then(|p| p.as_str()))
-                        .map(String::from)
+                        .filter_map(|c| {
+                            Some(PatchChange {
+                                path: c.get("path")?.as_str()?.to_string(),
+                                kind: str_field(c, "kind"),
+                                move_path: None,
+                                diff: String::new(),
+                            })
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
+            status: str_field(v, "status"),
         },
         "mcp_tool_call" => ItemKind::McpToolCall {
             server: str_field(v, "server"),
             tool: str_field(v, "tool"),
             status: str_field(v, "status"),
+            arguments: v.get("arguments").cloned().unwrap_or(Value::Null),
+            result: v.get("result").cloned().unwrap_or(Value::Null),
+            error: v
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(String::from),
         },
         "web_search" => ItemKind::WebSearch {
             query: str_field(v, "query"),
         },
         "todo_list" => ItemKind::TodoList {
-            count: v
+            todos: v
                 .get("items")
                 .and_then(|i| i.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0),
+                .into_iter()
+                .flatten()
+                .map(|i| Todo {
+                    content: str_field(i, "text"),
+                    status: if i.get("completed").and_then(|c| c.as_bool()) == Some(true) {
+                        "completed".into()
+                    } else {
+                        "pending".into()
+                    },
+                })
+                .collect(),
         },
         _ => ItemKind::Unknown,
     };
@@ -397,7 +455,21 @@ mod tests {
                 assert_eq!(
                     item.kind,
                     ItemKind::FileChange {
-                        paths: vec!["src/a.ts".into(), "src/b.ts".into()]
+                        changes: vec![
+                            PatchChange {
+                                path: "src/a.ts".into(),
+                                kind: "update".into(),
+                                move_path: None,
+                                diff: String::new()
+                            },
+                            PatchChange {
+                                path: "src/b.ts".into(),
+                                kind: "add".into(),
+                                move_path: None,
+                                diff: String::new()
+                            }
+                        ],
+                        status: "completed".into()
                     }
                 );
             }
@@ -410,7 +482,13 @@ mod tests {
         let ev = parse_line(r#"{"type":"item.started","item":{"id":"i2","type":"file_change"}}"#);
         match ev {
             CodexEvent::ItemStarted { item } => {
-                assert_eq!(item.kind, ItemKind::FileChange { paths: vec![] });
+                assert_eq!(
+                    item.kind,
+                    ItemKind::FileChange {
+                        changes: vec![],
+                        status: String::new()
+                    }
+                );
             }
             other => panic!("expected item.started, got {other:?}"),
         }
@@ -427,7 +505,10 @@ mod tests {
                 ItemKind::McpToolCall {
                     server: "serena".into(),
                     tool: "find_symbol".into(),
-                    status: "completed".into()
+                    status: "completed".into(),
+                    arguments: Value::Null,
+                    result: Value::Null,
+                    error: None
                 }
             ),
             other => panic!("unexpected {other:?}"),
@@ -447,11 +528,29 @@ mod tests {
         }
 
         let ev = parse_line(
-            r#"{"type":"item.completed","item":{"id":"i5","type":"todo_list","items":[{"text":"a"},{"text":"b"},{"text":"c"}]}}"#,
+            r#"{"type":"item.completed","item":{"id":"i5","type":"todo_list","items":[{"text":"a","completed":true},{"text":"b"},{"text":"c"}]}}"#,
         );
         match ev {
             CodexEvent::ItemCompleted { item } => {
-                assert_eq!(item.kind, ItemKind::TodoList { count: 3 })
+                assert_eq!(
+                    item.kind,
+                    ItemKind::TodoList {
+                        todos: vec![
+                            Todo {
+                                content: "a".into(),
+                                status: "completed".into()
+                            },
+                            Todo {
+                                content: "b".into(),
+                                status: "pending".into()
+                            },
+                            Todo {
+                                content: "c".into(),
+                                status: "pending".into()
+                            },
+                        ]
+                    }
+                )
             }
             other => panic!("unexpected {other:?}"),
         }

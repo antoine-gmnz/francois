@@ -49,6 +49,39 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       } else if (scenario === 'question') {
         pending = '41';
         write({ id: pending, method: 'item/tool/requestUserInput', params: { threadId: thread, turnId: turn, itemId: 'question-item', isBlocking: false, questions: [{ id: 'opaque-secret', header: 'Secret', question: 'Fixture secret', isOther: false, isSecret: true, options: null }] } });
+      } else if (scenario === 'failed' || scenario === 'error') {
+        // failed: a retried error is not terminal; the turn's own error is.
+        // error: a non-retried `error` notification ends the turn itself.
+        const retry = scenario === 'failed';
+        note('error', { threadId: thread, turnId: turn, willRetry: retry, error: retry
+          ? { message: 'Reconnecting... 1/5', codexErrorInfo: null, additionalDetails: null }
+          : { message: 'stream disconnected before completion', codexErrorInfo: 'other', additionalDetails: null } });
+        note('turn/completed', { threadId: thread, turn: { id: turn, status: 'failed', items: [], error: retry
+          ? { message: 'Rate limit reached for gpt-fixture', codexErrorInfo: 'rateLimitExceeded', additionalDetails: 'Try again in 20s.' }
+          : { message: 'stream disconnected before completion', codexErrorInfo: 'other', additionalDetails: 'responseStreamDisconnected' } } });
+      } else if (scenario === 'live-plan') {
+        // Params verbatim from a live 0.155.1 capture (gpt-6-astra, update_plan on).
+        note('turn/plan/updated', { threadId: thread, turnId: turn, explanation: null, plan: [
+          { step: 'Prepare the text for hello.txt.', status: 'inProgress' }, { step: 'Write the text to hello.txt.', status: 'pending' },
+          { step: 'Verify the contents of hello.txt.', status: 'pending' }] });
+        finish();
+      } else if (scenario === 'plan' || scenario === 'edit' || scenario === 'mcp') {
+        // Shapes verbatim from live 0.155.1 captures (fileChange) and the
+        // generated v2 schema (turn/plan/updated, mcpToolCall).
+        if (scenario === 'plan') note('turn/plan/updated', { threadId: thread, turnId: turn, explanation: null, plan: [
+          { step: 'Read the code', status: 'completed' }, { step: 'Fix the bug', status: 'inProgress' }, { step: 'Run the tests', status: 'pending' }] });
+        const item = scenario === 'edit'
+          ? { type: 'fileChange', id: 'edit-item', status: 'completed', changes: [
+            { path: require('node:path').join(process.cwd(), 'existing.txt'), kind: { type: 'update', move_path: null }, diff: '@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n' },
+            { path: 'new.txt', kind: { type: 'add' }, diff: 'one\ntwo\n' }] }
+          : { type: 'mcpToolCall', id: 'mcp-item', server: 'docs', tool: 'search', status: 'completed', arguments: { query: 'tauri events' },
+            result: { content: [{ type: 'text', text: 'found 2 pages' }], structuredContent: null }, error: null, durationMs: 12 };
+        if (scenario !== 'plan') {
+          note('item/started', { threadId: thread, turnId: turn, item: { ...item, status: 'inProgress', result: null } });
+          note('item/completed', { threadId: thread, turnId: turn, item });
+        }
+        message('done');
+        finish();
       } else {
         note('item/agentMessage/delta', { threadId: thread, turnId: turn, itemId: 'message-' + count, delta: 'hello ' });
         // usage: the App Server's per-request (last) vs thread-cumulative (total) figures.

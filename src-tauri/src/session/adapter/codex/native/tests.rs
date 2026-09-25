@@ -464,3 +464,69 @@ fn secret_options_restrict_choices_and_redact_accepted_value() {
     let resolution = ledger.resolve(&scope(), &RequestId::Integer(1)).unwrap();
     assert!(!format!("{resolution:?}").contains("SENTINEL"));
 }
+
+/// Verbatim from a live `codex app-server --enable default_mode_request_user_input`
+/// run (0.155.1): the request id is numeric `0`, `isOther` is on, and every option
+/// carries a description — all of which the QuestionCard renders.
+#[test]
+fn a_live_request_user_input_becomes_a_claude_shaped_question() {
+    let frame = json!({"method":"item/tool/requestUserInput","id":0,"params":{"threadId":"thread","turnId":"turn","itemId":"call_3YocNkyaK6q6GqSswhh2nlYy","questions":[{"id":"preferred_color","header":"Color","question":"Which color do you prefer?","isOther":true,"isSecret":false,"options":[{"label":"Red","description":"Choose red as your preferred color."},{"label":"Blue","description":"Choose blue as your preferred color."}]}],"isBlocking":false,"autoResolutionMs":null}});
+    let request = insert(&mut ledger(), frame);
+    let crate::session::application::RuntimeEvent::QuestionAsked {
+        questions,
+        blocking,
+        ..
+    } = super::events::asked(&request, "/repo")
+    else {
+        panic!("question")
+    };
+    assert_eq!(blocking, Some(false));
+    let q = &questions[0];
+    assert_eq!(q.id.as_deref(), Some("preferred_color"));
+    assert_eq!(
+        (q.header.as_str(), q.question.as_str()),
+        ("Color", "Which color do you prefer?")
+    );
+    assert!(!q.multi_select, "Codex questions are single-choice");
+    assert_eq!((q.is_other, q.is_secret), (Some(true), Some(false)));
+    let options: Vec<_> = q
+        .options
+        .iter()
+        .map(|o| (o.label.as_str(), o.description.as_str()))
+        .collect();
+    assert_eq!(
+        options,
+        [
+            ("Red", "Choose red as your preferred color."),
+            ("Blue", "Choose blue as your preferred color.")
+        ]
+    );
+}
+
+/// The schema defaults `isOther`/`isSecret` to false; a question omitting them
+/// must still reach the user rather than be refused as malformed.
+#[test]
+fn a_question_omitting_its_defaulted_flags_is_still_asked() {
+    let frame = json!({"method":"item/tool/requestUserInput","id":5,"params":{"threadId":"thread","turnId":"turn","itemId":"q","isBlocking":true,"questions":[{"id":"a","header":"H","question":"Q?","options":[{"label":"Yes","description":"ok"}]}]}});
+    let request = insert(&mut ledger(), frame);
+    let crate::session::application::RuntimeEvent::QuestionAsked { questions, .. } =
+        super::events::asked(&request, "/repo")
+    else {
+        panic!("question")
+    };
+    assert_eq!(
+        (questions[0].is_other, questions[0].is_secret),
+        (Some(false), Some(false))
+    );
+}
+
+/// Under WSL the session cwd is a UNC path but Codex reports Linux paths, so
+/// both spellings are roots for the Edit row title.
+#[test]
+fn a_wsl_session_relativizes_against_its_linux_cwd_too() {
+    let mut ctx = super::integration_tests::context(1, None);
+    ctx.cwd = "//wsl.localhost/Ubuntu/home/me/repo".into();
+    let roots = super::events::roots(&ctx);
+    assert_eq!(roots.len(), 2, "{roots:?}");
+    assert_eq!(roots[1], "/home/me/repo");
+}

@@ -96,8 +96,12 @@ pub(super) struct Question {
     pub id: String,
     pub header: String,
     pub question: String,
+    // Schema defaults (0.155.1): absent flags are false, absent options null.
+    #[serde(default)]
     pub is_other: bool,
+    #[serde(default)]
     pub is_secret: bool,
+    #[serde(default)]
     pub options: Option<Vec<QuestionOption>>,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]

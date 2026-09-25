@@ -1,3 +1,5 @@
+import { diffRows, editHunks, parseInput, str, type DiffRowKind } from '../../lib/edit-diff';
+
 // command-inspect: syntax colour for the unfolded step record (StepDetailPanel).
 // Two lexers — a shell command line (bash and PowerShell share enough surface
 // for one pass) and the generic tool input's pretty-printed JSON.
@@ -182,4 +184,82 @@ export function highlightJson(src: string): SyntaxToken[] {
   }
   if (last < src.length) push(out, 'plain', src.slice(last));
   return out;
+}
+
+// ---------- unified diff ----------
+//
+// A Codex Edit step's output is a real unified diff (`git diff`-shaped), unlike
+// Claude Code's Edit/Write, which report old/new strings instead. Detection is
+// deliberately structural rather than "starts with `-`": a markdown bullet list
+// or a JSON/shell line beginning with `-` must never be classed as a diff, so
+// a bare `--- ` needs BOTH a `+++ ` file header and an `@@ ` hunk header nearby
+// before it counts.
+
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
+
+/** Structural sniff — cheap enough to run on every generic step's output. */
+export function isUnifiedDiff(text: string): boolean {
+  if (text === '') return false;
+  const lines = text.split('\n');
+  const first = lines[0] ?? '';
+  if (first.startsWith('diff --git ')) return true;
+  if (!first.startsWith('--- ')) return false;
+  return lines.some((l) => l.startsWith('+++ ')) && lines.some((l) => HUNK_HEADER.test(l));
+}
+
+export type DiffLineKind = 'header' | 'hunk' | 'add' | 'remove' | 'context';
+
+export interface DiffLine {
+  kind: DiffLineKind;
+  text: string;
+}
+
+/** Lossless line classification — call only once `isUnifiedDiff` has agreed. */
+export function tokenizeUnifiedDiff(text: string): DiffLine[] {
+  return text.split('\n').map((line) => {
+    if (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('index ')) {
+      return { kind: 'header', text: line };
+    }
+    if (HUNK_HEADER.test(line)) return { kind: 'hunk', text: line };
+    if (line.startsWith('+')) return { kind: 'add', text: line };
+    if (line.startsWith('-')) return { kind: 'remove', text: line };
+    return { kind: 'context', text: line };
+  });
+}
+
+// ---------- Claude Code Edit/MultiEdit/Write ----------
+//
+// Unlike a Codex Edit's output (a real unified diff, above), Claude Code's
+// Edit/MultiEdit/Write steps report their change as `inputJson` — old/new
+// fragments, not a diff. `lib/edit-diff` (also used by the permission card's
+// diff surface) turns that fragment into hunks; this just relabels its rows
+// onto the SAME DiffLine kinds tokenizeUnifiedDiff produces, so both paths
+// render through the one `DiffText` component and the one set of classes.
+
+const CLAUDE_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write']);
+
+const ROW_KIND: Record<DiffRowKind, DiffLineKind> = {
+  context: 'context',
+  add: 'add',
+  del: 'remove',
+  // An elided run is a note about the diff, not a line of it — the same
+  // faint, non-code treatment as a `--- `/`+++ ` file header reads right here.
+  elision: 'header',
+};
+
+/**
+ * Diff lines for a Claude Code Edit/MultiEdit/Write step's tool input, headed
+ * by the file path. `null` when the tool isn't one of the three, the input
+ * doesn't parse, it carries no file path, or the edit is a no-op — the caller
+ * falls back to the plain JSON rendering in every one of those cases.
+ */
+export function claudeEditDiffLines(toolName: string, inputJson: string): DiffLine[] | null {
+  if (!CLAUDE_EDIT_TOOLS.has(toolName)) return null;
+  const input = parseInput(inputJson);
+  const path = str(input, 'file_path');
+  if (path === '') return null;
+  const hunks = editHunks(toolName, input);
+  if (hunks.length === 0) return null;
+  const rows = diffRows(hunks);
+  return [{ kind: 'header', text: path }, ...rows.map((r) => ({ kind: ROW_KIND[r.kind], text: r.text }))];
 }

@@ -1483,6 +1483,30 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* command-inspect: a Codex Edit's output is a real unified diff — coloured
+   with the SAME tokens the DIFF tab uses (diff.css), so a Codex edit's output
+   band and a `git diff` never disagree about what red and green mean. */
+.step-detail__diff-line {
+  white-space: pre;
+}
+.step-detail__diff-line--header {
+  color: var(--text-faint);
+}
+.step-detail__diff-line--hunk {
+  background: var(--tint-info);
+  color: var(--state-info);
+}
+.step-detail__diff-line--add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add-text);
+}
+.step-detail__diff-line--remove {
+  background: var(--diff-remove-bg);
+  color: var(--diff-remove-text);
+}
+.step-detail__diff-line--context {
+  color: var(--diff-context-text);
+}
 .step-detail__fold {
   display: flex;
   align-items: center;

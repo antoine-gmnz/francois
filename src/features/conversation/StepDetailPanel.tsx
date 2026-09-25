@@ -19,7 +19,15 @@ import {
   type StepHeaderSegment,
   visibleStepOutputLines,
 } from './step-detail';
-import { highlightJson, highlightShell, type SyntaxToken } from './step-syntax';
+import {
+  claudeEditDiffLines,
+  highlightJson,
+  highlightShell,
+  isUnifiedDiff,
+  tokenizeUnifiedDiff,
+  type DiffLine,
+  type SyntaxToken,
+} from './step-syntax';
 
 export interface StepDetailPanelProps {
   detail: StepDetail;
@@ -40,7 +48,7 @@ export default function StepDetailPanel({ detail, sessionId, onOpenShell }: Step
           onOpenShell={onOpenShell}
         />
       ) : (
-        <JsonInput json={detail.body.inputJson} />
+        <GenericInput tool={detail.tool} inputJson={detail.body.inputJson} />
       )}
       <OutputBand output={detail.body.output} />
     </div>
@@ -100,6 +108,19 @@ function JsonInput({ json }: { json: string }) {
       <SyntaxText tokens={tokens} />
     </pre>
   );
+}
+
+/**
+ * A Claude Code Edit/MultiEdit/Write step's input carries old/new fragments,
+ * not the JSON a reader wants to inspect — render the SAME diff colouring the
+ * output band uses for a Codex Edit (step-syntax's claudeEditDiffLines turns
+ * the fragment into the identical DiffLine shape), and fall back to the
+ * pretty-printed JSON when the input doesn't parse or isn't one of those tools.
+ */
+function GenericInput({ tool, inputJson }: { tool: string; inputJson: string }) {
+  const diffLines = useMemo(() => claudeEditDiffLines(tool, inputJson), [tool, inputJson]);
+  if (diffLines !== null) return <DiffText lines={diffLines} />;
+  return <JsonInput json={inputJson} />;
 }
 
 function CommandLine({
@@ -206,18 +227,43 @@ function AnsiText({ text }: { text: string }) {
   );
 }
 
+/**
+ * A Codex `Edit` step's output is a real unified diff (`git diff`-shaped) —
+ * ./step-syntax's isUnifiedDiff sniffs the WHOLE capture (the tail-biased
+ * `show all` slice can drop the `--- `/`+++ ` headers off the top), then this
+ * colours each visible line the same tokens the DIFF tab uses, so a Codex edit
+ * and a `git diff` in the DIFF tab never disagree about what red and green mean.
+ */
+function DiffText({ lines }: { lines: DiffLine[] }) {
+  return (
+    <pre className="step-detail__output-body step-detail__diff">
+      {lines.map((l, i) => (
+        <div key={i} className={`step-detail__diff-line step-detail__diff-line--${l.kind}`}>
+          {l.text}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function OutputDiff({ text }: { text: string }) {
+  const lines = useMemo(() => tokenizeUnifiedDiff(text), [text]);
+  return <DiffText lines={lines} />;
+}
+
 function OutputBand({ output }: { output: StepOutput }) {
   const [showAll, setShowAll] = useState(false);
   if (output.text === '') return null;
   const footer = stepOutputFooter(output, showAll);
   const lines = visibleStepOutputLines(output, showAll);
+  const isDiff = isUnifiedDiff(output.text);
   return (
     <div className="step-detail__output">
       <div className="step-detail__output-strip">
         <span className="step-detail__label">output</span>
         <span>{stepOutputTotals(output)}</span>
       </div>
-      <AnsiText text={lines.join('\n')} />
+      {isDiff ? <OutputDiff text={lines.join('\n')} /> : <AnsiText text={lines.join('\n')} />}
       {footer && (
         <div className="step-detail__fold">
           <span>{footer.kind === 'folded' ? `${footer.count} earlier lines folded` : `${footer.count} lines dropped at capture`}</span>

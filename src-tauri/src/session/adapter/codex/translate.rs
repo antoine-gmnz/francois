@@ -7,7 +7,7 @@
 //! produces, in what order, addressed by which id — is on this side, and
 //! needs no `AppHandle`, so every test of this adapter lives here.
 
-use super::wire::{CodexEvent, ItemKind};
+use super::wire::{CodexEvent, ItemKind, PatchChange, Todo};
 use crate::ids::now_ms;
 
 use serde_json::{json, Value};
@@ -45,7 +45,7 @@ pub(super) enum Effect {
 /// How one Codex item renders as a Francois tool block (FR-14). `None` for the
 /// item kinds that produce no block at all (`agent_message` has its own effect,
 /// `reasoning` is dropped, unknown kinds are ignored).
-fn tool_view(kind: &ItemKind) -> Option<(String, String)> {
+fn tool_view(kind: &ItemKind, roots: &[String]) -> Option<(String, String)> {
     match kind {
         ItemKind::CommandExecution { command, .. } => {
             Some(("Bash".to_string(), shell_summary(command)))
@@ -53,7 +53,10 @@ fn tool_view(kind: &ItemKind) -> Option<(String, String)> {
         // Named `Edit` rather than `FileChange` so it reaches the SAME
         // downstream behaviour a Claude edit does — `finish_tool_block` keys the
         // diff-view recompute off this exact name (FR-14).
-        ItemKind::FileChange { paths } => Some(("Edit".to_string(), summarize_paths(paths))),
+        ItemKind::FileChange { changes, .. } => {
+            let paths: Vec<String> = changes.iter().map(|c| relative(&c.path, roots)).collect();
+            Some(("Edit".to_string(), summarize_paths(&paths)))
+        }
         ItemKind::McpToolCall { server, tool, .. } => Some((
             format!("mcp__{server}__{tool}"),
             if tool.is_empty() {
@@ -63,9 +66,13 @@ fn tool_view(kind: &ItemKind) -> Option<(String, String)> {
             },
         )),
         ItemKind::WebSearch { query } => Some(("WebSearch".to_string(), query.clone())),
-        ItemKind::TodoList { count } => Some((
+        ItemKind::TodoList { todos } => Some((
             "TodoWrite".to_string(),
-            format!("{count} item{}", if *count == 1 { "" } else { "s" }),
+            format!(
+                "{} item{}",
+                todos.len(),
+                if todos.len() == 1 { "" } else { "s" }
+            ),
         )),
         ItemKind::AgentMessage { .. } | ItemKind::Reasoning | ItemKind::Unknown => None,
     }
@@ -93,16 +100,21 @@ fn tool_meta(kind: &ItemKind) -> String {
                 }
             }
         },
-        ItemKind::FileChange { paths } => match paths.len() {
-            0 => "done".to_string(),
-            1 => "1 file".to_string(),
-            n => format!("{n} files"),
-        },
-        ItemKind::McpToolCall { status, .. } => {
-            if status.is_empty() {
-                "done".to_string()
+        // Claude's `meta_edit` convention: `+added −removed`, summed over files.
+        ItemKind::FileChange { status, .. } if failed_patch(status) => status.clone(),
+        ItemKind::FileChange { changes, .. } if changes.is_empty() => "done".to_string(),
+        ItemKind::FileChange { changes, .. } => {
+            let (added, removed) = changes.iter().fold((0, 0), |(a, r), change| {
+                let (add, rem) = change_counts(change);
+                (a + add, r + rem)
+            });
+            format!("+{added} \u{2212}{removed}")
+        }
+        ItemKind::McpToolCall { status, error, .. } => {
+            if status == "failed" || error.is_some() {
+                "failed".to_string()
             } else {
-                status.clone()
+                "done".to_string()
             }
         }
         _ => "done".to_string(),
@@ -143,19 +155,41 @@ fn capture_for(kind: &ItemKind) -> (Value, String, Option<i64>, bool) {
             *exit_code,
             exit_code.is_some_and(|c| c != 0),
         ),
-        ItemKind::FileChange { paths } => (json!({ "paths": paths }), String::new(), None, false),
+        // The files as the input, their unified diff as the output — the diff
+        // is what the expanded row shows.
+        ItemKind::FileChange { changes, status } => (
+            json!({ "changes": changes.iter().map(|c| match &c.move_path {
+                Some(to) => json!({ "path": c.path, "kind": c.kind, "movePath": to }),
+                None => json!({ "path": c.path, "kind": c.kind }),
+            }).collect::<Vec<_>>() }),
+            changes.iter().map(unified_diff).collect(),
+            None,
+            failed_patch(status),
+        ),
         ItemKind::McpToolCall {
             server,
             tool,
             status,
+            arguments,
+            result,
+            error,
         } => (
-            json!({ "server": server, "tool": tool, "status": status }),
-            String::new(),
+            json!({ "server": server, "tool": tool, "arguments": arguments }),
+            error.clone().unwrap_or_else(|| mcp_result_text(result)),
             None,
-            status == "failed",
+            status == "failed" || error.is_some(),
         ),
         ItemKind::WebSearch { query } => (json!({ "query": query }), String::new(), None, false),
-        ItemKind::TodoList { count } => (json!({ "count": count }), String::new(), None, false),
+        // Claude's `TodoWrite` input verbatim; Codex has no present-continuous
+        // form, so `activeForm` repeats the step.
+        ItemKind::TodoList { todos } => (
+            json!({ "todos": todos.iter().map(|Todo { content, status }| json!({
+                "content": content, "status": status, "activeForm": content,
+            })).collect::<Vec<_>>() }),
+            String::new(),
+            None,
+            false,
+        ),
         ItemKind::AgentMessage { .. } | ItemKind::Reasoning | ItemKind::Unknown => {
             (Value::Null, String::new(), None, false)
         }
@@ -204,6 +238,101 @@ fn unquote(s: &str) -> &str {
     s
 }
 
+fn failed_patch(status: &str) -> bool {
+    matches!(status, "failed" | "declined")
+}
+
+/// Lines added/removed by one change. An `update` diff is unified hunks
+/// (header lines skipped); `add`/`delete` carry the whole file.
+fn change_counts(change: &PatchChange) -> (usize, usize) {
+    let lines = change.diff.lines().count();
+    match change.kind.as_str() {
+        "add" => (lines, 0),
+        "delete" => (0, lines),
+        _ => change
+            .diff
+            .lines()
+            .filter(|l| !l.starts_with("+++") && !l.starts_with("---"))
+            .fold((0, 0), |(a, r), l| match l.as_bytes().first() {
+                Some(b'+') => (a + 1, r),
+                Some(b'-') => (a, r + 1),
+                _ => (a, r),
+            }),
+    }
+}
+
+/// One change as a standard unified diff, so the expanded row reads like
+/// `git diff` whatever the change kind.
+fn unified_diff(change: &PatchChange) -> String {
+    let body = |prefix: char| -> String {
+        change
+            .diff
+            .lines()
+            .map(|l| format!("{prefix}{l}\n"))
+            .collect()
+    };
+    let n = change.diff.lines().count();
+    match change.kind.as_str() {
+        "add" => format!(
+            "--- /dev/null\n+++ {}\n@@ -0,0 +1,{n} @@\n{}",
+            change.path,
+            body('+')
+        ),
+        "delete" => format!(
+            "--- {}\n+++ /dev/null\n@@ -1,{n} +0,0 @@\n{}",
+            change.path,
+            body('-')
+        ),
+        _ => {
+            let mut diff = change.diff.clone();
+            if !diff.is_empty() && !diff.ends_with('\n') {
+                diff.push('\n');
+            }
+            format!(
+                "--- {}\n+++ {}\n{diff}",
+                change.path,
+                change.move_path.as_deref().unwrap_or(&change.path)
+            )
+        }
+    }
+}
+
+/// An MCP result's text: its text content blocks, else the structured
+/// content, else nothing.
+fn mcp_result_text(result: &Value) -> String {
+    let blocks: Vec<String> = result["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|b| match b["text"].as_str() {
+            Some(text) if b["type"] == "text" => text.to_string(),
+            _ => b.to_string(),
+        })
+        .collect();
+    if !blocks.is_empty() {
+        return blocks.join("\n");
+    }
+    match &result["structuredContent"] {
+        Value::Null => String::new(),
+        structured => structured.to_string(),
+    }
+}
+
+/// `path` relative to the first root it sits under (on a separator boundary,
+/// so `/repo2/x` is not under `/repo`); untouched when under none.
+fn relative(path: &str, roots: &[String]) -> String {
+    roots
+        .iter()
+        .map(|root| root.trim_end_matches(['/', '\\']))
+        .filter(|root| !root.is_empty())
+        .find_map(|root| {
+            let rest = path.strip_prefix(root)?;
+            let rest = rest.strip_prefix(['/', '\\'])?;
+            (!rest.is_empty()).then(|| rest.to_string())
+        })
+        .unwrap_or_else(|| path.to_string())
+}
+
 fn summarize_paths(paths: &[String]) -> String {
     match paths.len() {
         0 => "files".to_string(),
@@ -226,6 +355,9 @@ pub(super) struct Translator<F: FnMut() -> String> {
     /// yet claimed by `take_capture` — a side channel, not a field on
     /// `Effect` (see `ToolCapture`'s doc comment for why).
     captures: Vec<(String, ToolCapture)>,
+    /// The session cwd, as every path spelling Codex may report it in (host
+    /// and, under WSL, Linux) — row titles are relative to it, like Claude's.
+    roots: Vec<String>,
 }
 
 impl<F: FnMut() -> String> Translator<F> {
@@ -234,11 +366,16 @@ impl<F: FnMut() -> String> Translator<F> {
             new_id,
             open: HashMap::new(),
             captures: Vec::new(),
+            roots: Vec::new(),
         }
     }
 
     /// command-inspect: claim the capture stashed for `block_id`, if any —
     /// called once per `ToolDone` effect, so a capture is never applied twice.
+    pub(super) fn set_roots(&mut self, roots: Vec<String>) {
+        self.roots = roots;
+    }
+
     pub(super) fn take_capture(&mut self, block_id: &str) -> Option<ToolCapture> {
         let idx = self.captures.iter().position(|(id, _)| id == block_id)?;
         Some(self.captures.remove(idx).1)
@@ -248,7 +385,7 @@ impl<F: FnMut() -> String> Translator<F> {
         match event {
             CodexEvent::ThreadStarted { thread_id } => vec![Effect::Anchor(thread_id)],
             CodexEvent::ItemStarted { item } | CodexEvent::ItemUpdated { item } => {
-                match tool_view(&item.kind) {
+                match tool_view(&item.kind, &self.roots) {
                     // Opening is idempotent: `item.updated` for an item already
                     // live must not produce a second card.
                     Some((tool, summary)) if !self.open.contains_key(&item.id) => {
@@ -271,7 +408,7 @@ impl<F: FnMut() -> String> Translator<F> {
                     }]
                 }
                 kind => {
-                    let Some((tool, summary)) = tool_view(kind) else {
+                    let Some((tool, summary)) = tool_view(kind, &self.roots) else {
                         return Vec::new();
                     };
                     let mut effects = Vec::new();
@@ -427,7 +564,7 @@ mod tests {
                 Effect::ToolDone {
                     block_id: "b1".into(),
                     tool: "Edit".into(),
-                    meta: "1 file".into()
+                    meta: "+0 \u{2212}0".into()
                 },
             ]
         );
@@ -444,7 +581,7 @@ mod tests {
         match &effects[1] {
             Effect::ToolDone { tool, meta, .. } => {
                 assert_eq!(tool, "Edit");
-                assert_eq!(meta, "3 files");
+                assert_eq!(meta, "+0 \u{2212}0");
             }
             other => panic!("expected ToolDone, got {other:?}"),
         }
@@ -619,19 +756,32 @@ not json at all
     #[test]
     fn capture_for_non_command_kinds_is_generic_with_no_raw_output() {
         let (input, output, exit_code, is_error) = capture_for(&ItemKind::FileChange {
-            paths: vec!["a.ts".into()],
+            changes: vec![PatchChange {
+                path: "a.ts".into(),
+                kind: "update".into(),
+                move_path: None,
+                diff: String::new(),
+            }],
+            status: String::new(),
         });
-        assert_eq!(input, json!({ "paths": ["a.ts"] }));
-        assert_eq!(output, "");
+        assert_eq!(
+            input,
+            json!({ "changes": [{"path": "a.ts", "kind": "update"}] })
+        );
+        assert_eq!(output, "--- a.ts\n+++ a.ts\n");
         assert_eq!(exit_code, None);
         assert!(!is_error);
 
-        let (_, _, _, is_error) = capture_for(&ItemKind::McpToolCall {
+        let (_, output, _, is_error) = capture_for(&ItemKind::McpToolCall {
             server: "s".into(),
             tool: "t".into(),
             status: "failed".into(),
+            arguments: json!({}),
+            result: Value::Null,
+            error: Some("tool exploded".into()),
         });
         assert!(is_error);
+        assert_eq!(output, "tool exploded");
     }
 
     #[test]
@@ -666,5 +816,68 @@ not json at all
             other => panic!("expected ToolDone, got {other:?}"),
         };
         assert!(t.take_capture(&block_id).is_none());
+    }
+
+    #[test]
+    fn a_delete_and_a_move_render_as_unified_diffs_with_claude_counts() {
+        let kind = ItemKind::FileChange {
+            changes: vec![
+                PatchChange {
+                    path: "old.txt".into(),
+                    kind: "delete".into(),
+                    move_path: None,
+                    diff: "a\nb\n".into(),
+                },
+                PatchChange {
+                    path: "from.rs".into(),
+                    kind: "update".into(),
+                    move_path: Some("to.rs".into()),
+                    diff: "@@ -1 +1 @@\n-x\n+y".into(),
+                },
+            ],
+            status: "completed".into(),
+        };
+        assert_eq!(tool_meta(&kind), "+1 \u{2212}3");
+        let (input, output, _, is_error) = capture_for(&kind);
+        assert!(!is_error);
+        assert_eq!(input["changes"][1]["movePath"], "to.rs");
+        assert_eq!(
+            output,
+            "--- old.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n--- from.rs\n+++ to.rs\n@@ -1 +1 @@\n-x\n+y\n"
+        );
+    }
+
+    #[test]
+    fn edit_titles_are_relative_to_the_session_cwd_in_either_path_spelling() {
+        let roots = vec![
+            r"\\wsl.localhost\Ubuntu\home\me\repo".to_string(),
+            "/home/me/repo/".to_string(),
+        ];
+        assert_eq!(relative("/home/me/repo/src/a.rs", &roots), "src/a.rs");
+        assert_eq!(
+            relative(r"\\wsl.localhost\Ubuntu\home\me\repo\src\a.rs", &roots),
+            r"src\a.rs"
+        );
+        // A sibling that merely shares the prefix, and the root itself, stay whole.
+        assert_eq!(
+            relative("/home/me/repo2/a.rs", &roots),
+            "/home/me/repo2/a.rs"
+        );
+        assert_eq!(relative("/home/me/repo", &roots), "/home/me/repo");
+        assert_eq!(relative(r"C:\repo\a.rs", &[r"C:\repo\".into()]), "a.rs");
+    }
+
+    #[test]
+    fn a_declined_file_change_says_so_and_mcp_structured_content_is_kept() {
+        let declined = ItemKind::FileChange {
+            changes: vec![],
+            status: "declined".into(),
+        };
+        assert_eq!(tool_meta(&declined), "declined");
+        assert!(capture_for(&declined).3);
+        assert_eq!(
+            mcp_result_text(&json!({"content": [], "structuredContent": {"n": 2}})),
+            r#"{"n":2}"#
+        );
     }
 }
