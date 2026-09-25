@@ -3,6 +3,7 @@ import { isBusyStatus } from '../../../contract/fleet-board';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
 import { CohorteInlineGate } from '../cohorte/CohorteSessionBits';
+import { CohorteActionResultCards } from '../cohorte/CohorteActionResultCard';
 import { Stitch } from '../../ui/Loaders';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { hasPendingQuestionBlock } from '../questions/question-card';
@@ -235,6 +236,8 @@ export default function ConversationView({
               {/* cohorte-integration FR-61: a pending Cohorte gate, in the trailing
                   slot after the last turn — never persisted into the transcript. */}
               <CohorteInlineGate sessionId={sessionId} keysActive={visible && !inert} />
+              {/* cohorte-actions FR-51: intake result cards, same trailing slot, after the gate. */}
+              <CohorteActionResultCards sessionId={sessionId} keysActive={visible && !inert} />
             </>
           )}
         </div>

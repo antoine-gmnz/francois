@@ -10,6 +10,9 @@
 import { useEffect, useState } from 'react';
 import { startDelayedFlag } from './useDelayedFlag';
 
+/** Exit length for the composer's floating menus — matches `popoverOut` on --dur-base. */
+export const POPOVER_EXIT_MS = 120;
+
 export interface Presence {
   /** Render the thing at all. */
   present: boolean;

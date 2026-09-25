@@ -5,8 +5,8 @@
 // api.ts `onShellEvent` seam in shell-event-routing.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ShellInfo } from '../../../contract/shell-terminal';
-import { useShellStore } from './shellStore';
+import type { ShellInfo } from '../../contract/shell-terminal';
+import { useShellStore } from '../lib/shellStore';
 
 function shell(id: string, patch: Partial<ShellInfo> = {}): ShellInfo {
   return { id, owner: { kind: 'session', sessionId: 's1' }, name: `zsh ${id}`, shellName: 'zsh', cwd: '/tmp', alive: true, ...patch };

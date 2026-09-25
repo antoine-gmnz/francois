@@ -4,7 +4,7 @@ import type { ShellEnsureData, ShellId } from '../../contract/shell-terminal';
 import ShellHint from '../features/shell/ShellHint';
 import ShellStrip from '../features/shell/ShellStrip';
 import ShellTerminal from '../features/shell/ShellTerminal';
-import { useActiveShellId, useShellsFor, useShellStore } from '../features/shell/shellStore';
+import { useActiveShellId, useShellsFor, useShellStore } from '../lib/shellStore';
 import { useShellShortcuts } from '../features/shell/useShellShortcuts';
 import { shellEnsure } from '../lib/api';
 import { useStore } from '../lib/store';

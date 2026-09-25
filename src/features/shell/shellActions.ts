@@ -10,7 +10,7 @@ import type { ShellId } from '../../../contract/shell-terminal';
 import { shellCreate, shellDispose, shellRename } from '../../lib/api';
 import { showToast } from '../palette/palette';
 import { atShellCap, neighborAfterClose, cycleShellId, type ShellShortcut } from './shell';
-import { useShellStore } from './shellStore';
+import { useShellStore } from '../../lib/shellStore';
 
 /** FR-2/FR-19: creates a shell and activates it (flow 2). No-op at the cap —
  * the strip's disabled `+` is the only feedback, per FR-19. */

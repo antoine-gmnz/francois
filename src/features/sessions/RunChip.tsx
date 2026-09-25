@@ -8,6 +8,7 @@
 // row's context menu all open it (it also carries response mode and git).
 
 import { useLayoutEffect, useRef, useState } from 'react';
+import { POPOVER_EXIT_MS, usePresence } from '../../lib/hooks/usePresence';
 import type { SessionMeta } from '../../../contract/common';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { Icon } from '../../ui/Icon';
@@ -18,14 +19,17 @@ import './run-chip.css';
 
 export interface RunChipProps {
   session: SessionMeta;
+  /** The borderless 22px variant for the composer's tool strip. */
+  compact?: boolean;
   /** Also run when the chip opens its popover. */
   onOpen?: () => void;
 }
 
-export default function RunChip({ session, onOpen }: RunChipProps) {
+export default function RunChip({ session, onOpen, compact = false }: RunChipProps) {
   const parts = runChipParts(session);
   const metricsTitle = runChipMetricsTitle(session.metrics);
   const [open, setOpen] = useState(false);
+  const { present, exiting } = usePresence(open, POPOVER_EXIT_MS);
   const [position, setPosition] = useState<{ right: number; top: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
@@ -45,7 +49,8 @@ export default function RunChip({ session, onOpen }: RunChipProps) {
   // first paint, and a taller list must not leave the stale placement running
   // the panel off the bottom of the window).
   useLayoutEffect(() => {
-    if (!open) {
+    // Keep the placement while the popover plays its exit, drop it once gone.
+    if (!present) {
       setPosition(null);
       return;
     }
@@ -66,7 +71,7 @@ export default function RunChip({ session, onOpen }: RunChipProps) {
       window.removeEventListener('resize', place);
       observer.disconnect();
     };
-  }, [open, session.model.id, session.permissionMode]);
+  }, [present, session.model.id, session.permissionMode]);
 
   const toggle = () => {
     setOpen((v) => !v);
@@ -74,7 +79,7 @@ export default function RunChip({ session, onOpen }: RunChipProps) {
   };
 
   return (
-    <div ref={rootRef} className="run-chip">
+    <div ref={rootRef} className={compact ? 'run-chip run-chip--compact' : 'run-chip'}>
       <button
         ref={chipRef}
         type="button"
@@ -92,7 +97,7 @@ export default function RunChip({ session, onOpen }: RunChipProps) {
         {parts.response && <span className="run-chip__response">{parts.response}</span>}
         <Icon name="chevron-down" size={10} className="run-chip__caret" />
       </button>
-      {open && <RunSettingsPopover session={session} position={position} onClose={() => setOpen(false)} />}
+      {present && <RunSettingsPopover session={session} position={position} exiting={exiting} onClose={() => setOpen(false)} />}
     </div>
   );
 }

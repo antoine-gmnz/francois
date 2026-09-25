@@ -17,7 +17,7 @@ import { Button } from '../../ui/Button';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
 import { answerGate, copyCli } from './actions';
-import { showToast } from '../palette/palette';
+import { showToast } from '../../lib/toast';
 import { FindingRow } from './CohorteParts';
 import './cohorte.css';
 import { ACTION_KEYS, ACTION_VARIANT, actionLabel, compactActionLabel, gateHint, gateKindLabel, gateQuestion, gateSummary, runSpecName } from './gate-view';

@@ -72,8 +72,13 @@ export function cohorteSectionVisible(session: { cwd: string }): boolean {
 
 /** FR-80: detect a project root (cached by the core unless `force`). */
 export async function detectProject(root: string, force = false): Promise<CohorteDetection | null> {
+  const store = useCohorteStore.getState();
+  if (force) store.setDetectError(root, null);
   const res = await cohorteDetect({ startDir: root, force });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    useCohorteStore.getState().setDetectError(root, res.error.message);
+    return null;
+  }
   useCohorteStore.getState().setDetection(root, res.data);
   return res.data;
 }

@@ -10,11 +10,11 @@
 // bytes, the exited dim line) stays in ShellTerminal.
 
 import { create } from 'zustand';
-import type { SessionId } from '../../../contract/common';
-import type { ShellId, ShellInfo } from '../../../contract/shell-terminal';
-import { onShellEvent } from '../../lib/api';
-import { isShellVisible } from '../../lib/layoutStore';
-import { useStore } from '../../lib/store';
+import type { SessionId } from '../../contract/common';
+import type { ShellId, ShellInfo } from '../../contract/shell-terminal';
+import { onShellEvent } from './api';
+import { isShellVisible } from './layoutStore';
+import { useStore } from './store';
 
 export interface ShellStoreState {
   /** Core order (FR-1), refreshed by every `shell_ensure` response. */

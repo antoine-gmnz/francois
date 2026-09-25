@@ -17,7 +17,7 @@ import { buttonClassName, Button } from '../../ui/Button';
 import { StateIcon } from '../../ui/StateIcon';
 import { Switch } from '../../ui/Switch';
 import { Tag } from '../../ui/Tag';
-import { showToast } from '../palette/palette';
+import { showToast } from '../../lib/toast';
 import { ensurePolicy } from './actions';
 import './cohorte.css';
 import './cohorte-settings.css';
@@ -57,7 +57,8 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
   const [doctorRunning, setDoctorRunning] = useState(false);
   // R2-9: a doctor timeout leaves an explanation on the page instead of a toast.
   const [doctorNote, setDoctorNote] = useState<string | null>(null);
-  const mode = pageMode(detection);
+  const detectError = useCohorteStore((s) => (root ? (s.detectErrors[root] ?? null) : null));
+  const mode = pageMode(detection, detectError);
   const detected = detection?.state === 'detected';
   const cohorteRoot = detection?.root ?? null;
 
@@ -118,6 +119,16 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
       )}
       {mode === 'not-detected' && detection && <NotDetected detection={detection} root={root} />}
       {mode === 'checking' && <p className="cohorte-settings__foot">Checking the Cohorte service…</p>}
+      {mode === 'error' && (
+        <div className="cohorte-settings__error">
+          <p role="alert" className="cohorte-settings__foot cohorte-settings__foot--danger">
+            Couldn't reach the Cohorte service: {detectError}
+          </p>
+          <Button size="sm" variant="secondary" onClick={() => void detectProject(root, true)}>
+            Check again
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

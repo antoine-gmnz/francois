@@ -40,6 +40,8 @@ export interface CohorteResolution {
 /** Everything the reducer reads and writes — the store minus its actions. */
 export interface CohorteData {
   detections: Record<string, CohorteDetection>;
+  /** why the last detection for a start dir failed; cleared when one lands. */
+  detectErrors: Record<string, string>;
   runs: Record<string, CohorteRun>;
   logs: Record<string, CohorteLogEntry[]>;
   busy: Record<string, CohorteBusy | null>;
@@ -285,6 +287,7 @@ export interface CohorteState extends CohorteData {
   apply: (e: CohorteEvent) => void;
   /** `key` is the start dir the caller asked about; the detection's own is stored too. */
   setDetection: (key: string, detection: CohorteDetection) => void;
+  setDetectError: (key: string, message: string | null) => void;
   /** FR-52: `cohorte_list_runs` after a root is first watched. */
   hydrateRuns: (runs: readonly CohorteRun[]) => void;
   upsertRun: (run: CohorteRun) => void;
@@ -309,6 +312,7 @@ export interface CohorteState extends CohorteData {
 export function initialCohorteData(): CohorteData {
   return {
     detections: {},
+    detectErrors: {},
     runs: {},
     logs: {},
     busy: {},
@@ -330,7 +334,19 @@ export const useCohorteStore = create<CohorteState>((set) => ({
   ...initialCohorteData(),
   apply: (e) => set((s) => applyCohorteEvent(s, e)),
   setDetection: (key, detection) =>
-    set((s) => ({ detections: { ...s.detections, [key]: detection, [detection.startDir]: detection } })),
+    set((s) => {
+      const detectErrors = { ...s.detectErrors };
+      delete detectErrors[key];
+      delete detectErrors[detection.startDir];
+      return { detections: { ...s.detections, [key]: detection, [detection.startDir]: detection }, detectErrors };
+    }),
+  setDetectError: (key, message) =>
+    set((s) => {
+      const detectErrors = { ...s.detectErrors };
+      if (message) detectErrors[key] = message;
+      else delete detectErrors[key];
+      return { detectErrors };
+    }),
   hydrateRuns: (runs) =>
     set((s) => {
       const next = { ...s.runs };

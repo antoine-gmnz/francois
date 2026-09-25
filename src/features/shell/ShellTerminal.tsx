@@ -7,7 +7,7 @@ import type { ShellEnsureData, ShellId, ShellOwner } from '../../../contract/she
 import { onShellEvent, shellEnsure, shellResize, shellRestart, shellWrite } from '../../lib/api';
 import { controlCharFor, shellShortcutFor } from './shell';
 import { dispatchShellShortcut } from './shellActions';
-import { useShellStore } from './shellStore';
+import { useShellStore } from '../../lib/shellStore';
 import { buildTheme } from './xterm-theme';
 import { useStore } from '../../lib/store';
 import './shell.css';

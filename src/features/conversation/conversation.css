@@ -611,6 +611,22 @@
 .composer-hint__key {
   color: var(--text-muted);
 }
+/* The prompt's settings (Cohorte, run chip) lead the row and never shrink; the
+   key hints give way first on a narrow pane. */
+.composer-tools {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: calc(-1 * var(--space-6));
+}
+.composer-hint__keys {
+  display: flex;
+  gap: var(--space-14);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
 /* The context readout closes the row, right-aligned — the one figure worth
    carrying at the bottom edge, since it is what decides when to /compact. */
 .composer-hint__ctx {

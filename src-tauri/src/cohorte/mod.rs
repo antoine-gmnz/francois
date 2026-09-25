@@ -18,6 +18,9 @@
 //  * projection.rs — FR-24/25/29: the run reducer → `CohorteRun`.
 //  * gate.rs       — FR-39..FR-41: gate, finding labels, the offered actions.
 //  * cli.rs        — FR-1a/FR-45/FR-47: argv builders, the one runner, exit mapping.
+//  * actions_cli.rs — cohorte-actions §4.1: the `intake` action (argv/display,
+//    validation, spawn) over the Python CLI's flag dialect — NOT cli.rs's
+//    `positional-3.0` one. Executable resolution mirrors `python_rpc::cli()`.
 //  * detect.rs     — FR-2..FR-7: detection + the CLI probe, both cached.
 //  * actions.rs    — FR-42..FR-46: approve / send-to-fix / deny / pause / resume / cancel.
 //  * watcher.rs    — FR-15..FR-23, FR-26: scheduler, tail dedupe/HWM, log ring, emission.
@@ -28,6 +31,7 @@
 // reverse; a `RootWatch` lock is never held across a CLI spawn.
 
 mod actions;
+pub mod actions_cli;
 mod catalogue;
 mod cli;
 mod commands;

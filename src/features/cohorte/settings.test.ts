@@ -26,6 +26,8 @@ describe('Settings · Cohorte (FR-80..FR-82)', () => {
 
   it('draws frame 27 for any found .cohorte/, frame 28 otherwise', () => {
     expect(pageMode(null)).toBe('checking');
+    expect(pageMode(null, 'Cannot reach the service')).toBe('error');
+    expect(pageMode(detection(), 'stale error')).toBe('detected');
     expect(pageMode(detection())).toBe('detected');
     expect(pageMode(detection({ state: 'cli-missing' }))).toBe('detected');
     expect(pageMode(detection({ state: 'not-initialised' }))).toBe('not-detected');

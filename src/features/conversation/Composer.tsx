@@ -95,6 +95,13 @@ export interface ComposerProps {
   pending: readonly PendingPrompt[];
   /** A row's `✕` (FR-17/18). Inert on an unfocused pane (no control renders at all). */
   onRetractPending: (blockId: string, text: string) => void;
+  /**
+   * cohorte-actions FR-33: the composer chip that opens the actions menu —
+   * undefined when the session's cwd has no Cohorte detection (no chip at all).
+   */
+  cohorteChip?: ReactNode;
+  /** cohorte-actions FR-32: the actions popover, anchored above the bar like the slash menu. */
+  cohorteMenu?: ReactNode;
 }
 
 export default function Composer({
@@ -125,6 +132,8 @@ export default function Composer({
   onInertClick,
   pending,
   onRetractPending,
+  cohorteChip,
+  cohorteMenu,
 }: ComposerProps) {
   const banners = composerErrorBanners(sendError, attachError);
   // One gate for every interactive part of the bar: while inert the pane does
@@ -150,6 +159,9 @@ export default function Composer({
             unavailableReason={popupUnavailableReason}
           />
         )}
+        {/* cohorte-actions FR-32: same anchoring as the slash menu above — never
+            both at once (the composer chip/⌘⇧C/palette all close the slash popup first). */}
+        {cohorteMenu && !inert && cohorteMenu}
         {/* One line per failing source, stacked above the bar (the wrapper is what
             is positioned, so a second line pushes the first up instead of
             overlapping it). pi-turn-controls FR-8: compaction/retry progress
@@ -243,7 +255,6 @@ export default function Composer({
             rows={1}
             className="composer-input"
           />
-          {runChip}
           {/* design-refresh FR-8: a visible Send button alongside Enter-to-send. */}
           <button
             type="button"
@@ -279,6 +290,15 @@ export default function Composer({
             key below is really bound: ⌃C in onInputKey, `@`/`/` by the
             attachment + slash-menu tokens, ⌘K by the global capture listener. */}
         <span className="composer-hint">
+          {/* The prompt's two settings live here, under the bar, so the bar
+              itself stays attach · text · send. */}
+          {(cohorteChip || runChip) && (
+            <span className="composer-tools">
+              {cohorteChip}
+              {runChip}
+            </span>
+          )}
+          <span className="composer-hint__keys">
           {/* the mock's copy reads "esc interrupt", but the real binding here is
               ⌃C (ComposerPane.onInputKey) — the hint names the hotkey that
               actually fires, not the mock's label; see the handoff. */}
@@ -301,6 +321,7 @@ export default function Composer({
           </span>
           <span>
             <span className="composer-hint__key">⇧⏎</span> newline
+          </span>
           </span>
           {/* session-switch-loader FR-9: while the skeleton is up this replaces
               the context readout — the real figure is not yet meaningful for a

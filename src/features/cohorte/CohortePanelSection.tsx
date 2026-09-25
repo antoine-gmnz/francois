@@ -2,10 +2,15 @@
 // `153:14818`): the run this session belongs to — header, compact gate, phases,
 // footer — or, with no linked run, the root's most recent runs. "Tail logs"
 // swaps the body for the run's activity log.
+//
+// cohorte-actions FR-60: a `This run | Pipeline` toggle now sits above the
+// body — Pipeline replaces the old NoRun feature-select start UI.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CohorteRun } from '../../../contract/cohorte-integration';
-import { cohorteFeatures, cohorteStart, type CohorteFeatureChoice } from '../../lib/api';
+import type { CohorteFeatureChoice } from '../../../contract/cohorte-actions';
+import { cohorteFeatures } from '../../lib/api';
+import { useCohorteActionsStore } from '../../lib/cohorteActionsStore';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { Button } from '../../ui/Button';
 import { EmptyPane } from '../../ui/EmptyPane';
@@ -18,7 +23,11 @@ import './cohorte.css';
 import { AnsweredBy, CohorteMark } from './CohorteParts';
 import { GateCard } from './GateCard';
 import { detectionFor } from './linkage';
+import { derivePipeline, type PipelineCard } from './pipeline';
 import { PhasesList } from './PhasesList';
+import { openCohorteTerminal, openPlumbingTerminal } from './terminal';
+import { cohorteBrainstormDisplay, cohortePlumbingLine, cohorteSpecDisplay } from './command-display';
+import { PipelineEmpty } from './PipelineEmpty';
 import { RunLog } from './RunLog';
 import { authHint, hostDead, panelSummary, runControls, runtimeLine, shortDigest, shortRunId } from './run-view';
 import { CASE_INSENSITIVE_FS, useSessionRun } from './useCohorte';
@@ -34,9 +43,34 @@ export default function CohortePanelSection({ session }: SessionPanelSectionProp
   const setPanelLog = useCohorteStore((s) => s.setPanelLog);
   const setLog = (runId: string | null) => setPanelLog(session.id, runId);
   const logRun = useCohorteStore((s) => (logRunId ? (s.runs[logRunId] ?? null) : null));
+  // FR-60: default to Pipeline with no linked run, This run otherwise. Reset
+  // when the session (hence its run) changes, via the key on the tab body below.
+  const [tab, setTab] = useState<'run' | 'pipeline'>(run ? 'run' : 'pipeline');
+
   if (logRun) return <RunLog run={logRun} onBack={() => setLog(null)} />;
-  if (!run) return <NoRun cwd={session.cwd} />;
-  return <RunPanel run={run} onTail={() => setLog(run.runId)} />;
+
+  return (
+    <div className="cohorte-panel-wrap" key={session.id}>
+      <div className="cohorte-panel__toggle" role="tablist" aria-label="Cohorte view">
+        {/* Frame 38: with no run linked to this session there is nothing to show. */}
+        <button type="button" role="tab" aria-selected={tab === 'run'} disabled={!run} title={run ? undefined : 'No Cohorte run for this session yet'} className={tab === 'run' ? 'cohorte-panel__toggle-btn cohorte-panel__toggle-btn--sel' : 'cohorte-panel__toggle-btn'} onClick={() => setTab('run')}>
+          This run
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'pipeline'} className={tab === 'pipeline' ? 'cohorte-panel__toggle-btn cohorte-panel__toggle-btn--sel' : 'cohorte-panel__toggle-btn'} onClick={() => setTab('pipeline')}>
+          Pipeline
+        </button>
+      </div>
+      {tab === 'run' && run ? (
+        <RunPanel run={run} onTail={() => setLog(run.runId)} />
+      ) : tab === 'run' ? (
+        <SidePanelBody className="cohorte-panel">
+          <EmptyPane className="cohorte-panel__empty">No Cohorte run for this session</EmptyPane>
+        </SidePanelBody>
+      ) : (
+        <PipelineView cwd={session.cwd} sessionId={session.id} />
+      )}
+    </div>
+  );
 }
 
 function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
@@ -118,80 +152,139 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
   );
 }
 
-function NoRun({ cwd }: { cwd: string }) {
+const PIPELINE_STAGE_SEGMENTS = 6;
+
+/** cohorte-actions FR-61..FR-64 — the Pipeline view: one card per feature. */
+function PipelineView({ cwd, sessionId }: { cwd: string; sessionId: string }) {
   const root = useCohorteStore((s) => detectionFor(s.detections, cwd, CASE_INSENSITIVE_FS)?.root ?? null);
+  // Select the stable map, filter in useMemo: a selector that builds a new
+  // array on every read makes useSyncExternalStore re-render forever.
   const runs = useCohorteStore((s) => s.runs);
+  const runsForRoot = useMemo(() => Object.values(runs).filter((r) => r.projectRoot === root), [runs, root]);
+  const newFeatureIds = useCohorteActionsStore((s) => s.newFeatureIds);
   const [features, setFeatures] = useState<CohorteFeatureChoice[]>([]);
-  const [selected, setSelected] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => {
-    setFeatures([]);
-    setSelected('');
-    setError('');
+  const [loaded, setLoaded] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
     if (!root) return;
-    let current = true;
     void cohorteFeatures(root).then((result) => {
-      if (!current) return;
+      setLoaded(true);
       if (result.ok) {
         setFeatures(result.data);
-        setSelected(result.data[0]?.id || '');
+        setError('');
       } else setError(result.error.message);
     });
-    return () => { current = false; };
-  }, [root]);
-  const start = async () => {
-    if (!root || !selected || busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await cohorteStart({ root, featureId: selected });
-      if (result.ok) {
-        useCohorteStore.getState().upsertRun(result.data);
-        openCohorteRun(result.data.runId);
-      } else setError(result.error.message);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
   };
-  const recent = Object.values(runs)
-    .filter((r) => r.projectRoot === root)
-    .sort((a, b) => b.startedAt - a.startedAt)
-    .slice(0, 3);
+
+  // FR-64: on mount / root change, and whenever intake mints a new feature.
+  useEffect(() => {
+    setFeatures([]);
+    setLoaded(false);
+    setError('');
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [root]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (loaded) load(); }, [newFeatureIds.size]);
+
+  // FR-64: debounced 1s refetch whenever a run for this root is upserted.
+  const runsSignature = runsForRoot.map((r) => `${r.runId}:${r.refreshedAt}`).join(',');
+  useEffect(() => {
+    if (!loaded) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(load, 1000);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runsSignature]);
+
+  if (!root) return <SidePanelBody className="cohorte-panel"><EmptyPane className="cohorte-panel__empty">No Cohorte project detected here</EmptyPane></SidePanelBody>;
+
+  const cards = derivePipeline(features, runsForRoot);
+  // Frame 38: before the first feature, the empty state owns the whole body —
+  // the Project block and the footer's own "New feature…" would only repeat it.
+  if (loaded && !error && cards.length === 0) {
+    return (
+      <SidePanelBody className="cohorte-panel cohorte-pipeline">
+        <PipelineEmpty sessionId={sessionId} />
+      </SidePanelBody>
+    );
+  }
   return (
-    <SidePanelBody className="cohorte-panel">
-      <EmptyPane className="cohorte-panel__empty">No Cohorte run for this session</EmptyPane>
-      {root && features.length > 0 && (
-        <div className="cohorte-panel__recent">
-          <label className="cohorte-phases__label" htmlFor="cohorte-feature-select">FEATURE</label>
-          <select id="cohorte-feature-select" value={selected} onChange={(event) => setSelected(event.target.value)}>
-            {features.map((feature) => <option key={feature.id} value={feature.id}>{feature.title}</option>)}
-          </select>
-          <Button size="sm" variant="secondary" disabled={busy || !selected} onClick={() => void start()}>
-            {busy ? 'Starting…' : 'Start run'}
-          </Button>
-        </div>
-      )}
+    <SidePanelBody className="cohorte-panel cohorte-pipeline">
       {error && <p role="alert" className="cohorte-panel__note cohorte-panel__note--danger">{error}</p>}
-      {recent.length > 0 && (
-        <div className="cohorte-panel__recent">
-          <div className="cohorte-phases__label">
-            <span>RECENT RUNS</span>
+      {cards.map((card) => (
+        <PipelineCardRow key={card.featureId} card={card} sessionId={sessionId} isNew={newFeatureIds.has(card.featureId)} />
+      ))}
+      <div className="cohorte-pipeline__project">
+        <div className="cohorte-phases__label">PROJECT</div>
+        {(['audit', 'retro'] as const).map((verb) => (
+          <div key={verb} className="cohorte-panel__recent-row">
+            <span className="cohorte-panel__recent-name">{verb === 'audit' ? 'Audit' : 'Retro'}</span>
+            {/* FR-21: typed into a terminal, never executed. */}
+            <Button size="sm" variant="ghost" onClick={() => openPlumbingTerminal(sessionId, verb, cohortePlumbingLine(verb))}>
+              Run
+            </Button>
           </div>
-          {recent.map((r) => {
-            const s = panelSummary(r);
-            return (
-              <button key={r.runId} type="button" className="cohorte-panel__recent-row" onClick={() => openCohorteRun(r.runId)}>
-                <StateIcon kind={s.glyph} size={12} />
-                <span className="cohorte-panel__recent-name truncate">{r.specId || r.title}</span>
-                <span className="cohorte-panel__id">{shortRunId(r.runId)}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+        ))}
+      </div>
+      <div className="cohorte-pipeline__footer">
+        <Button size="sm" variant="ghost" onClick={() => useCohorteActionsStore.getState().openSheet({ action: 'intake', sessionId })}>
+          New feature…
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => useCohorteActionsStore.getState().openMenu(sessionId)}>
+          All actions
+        </Button>
+      </div>
     </SidePanelBody>
+  );
+}
+
+function PipelineCardRow({ card, sessionId, isNew }: { card: PipelineCard; sessionId: string; isNew: boolean }) {
+  const onAction = () => {
+    if (card.action.id === 'answer-gate' || card.action.id === 'open-run') {
+      if (card.runId) openCohorteRun(card.runId);
+      return;
+    }
+    if (card.action.id === 'start') {
+      useCohorteActionsStore.getState().openSheet({ action: 'start', sessionId, featureId: card.featureId });
+      return;
+    }
+    if (card.action.id === 'brainstorm') {
+      void openCohorteTerminal(sessionId, cohorteBrainstormDisplay(card.featureId), { execute: true });
+      return;
+    }
+    void openCohorteTerminal(sessionId, cohorteSpecDisplay(card.featureId), { execute: true });
+  };
+  return (
+    <div className={`cohorte-pipeline-card cohorte-pipeline-card--${card.tone}`}>
+      <div className="cohorte-pipeline-card__head">
+        <span className="cohorte-pipeline-card__id truncate">{card.featureId}</span>
+        {isNew && <Tag tone="new">NEW</Tag>}
+        <span className="cohorte-spacer" />
+        <span className="cohorte-pipeline-card__stage">{card.stageLabel}</span>
+      </div>
+      <div className="cohorte-pipeline-card__track">
+        {Array.from({ length: PIPELINE_STAGE_SEGMENTS }, (_, i) => (
+          <span
+            key={i}
+            className={
+              i < card.stage
+                ? 'cohorte-pipeline-card__seg cohorte-pipeline-card__seg--done'
+                : i === card.stage
+                  ? `cohorte-pipeline-card__seg cohorte-pipeline-card__seg--current cohorte-pipeline-card__seg--${card.tone}`
+                  : 'cohorte-pipeline-card__seg'
+            }
+          />
+        ))}
+      </div>
+      <div className="cohorte-pipeline-card__foot">
+        <span className="cohorte-pipeline-card__title truncate">{card.title}</span>
+        <Button size="sm" variant={card.action.ghost ? 'ghost' : 'secondary'} onClick={onAction}>
+          {card.action.label}
+        </Button>
+      </div>
+    </div>
   );
 }
