@@ -6,6 +6,7 @@ use super::{
     runtime::Inner,
     transport,
 };
+use crate::ipc::{AppError, ErrorCode};
 use crate::session::application::RuntimeEvent;
 use serde_json::Value;
 use std::sync::Arc;
@@ -181,6 +182,10 @@ impl Inner {
                             }
                         }
                     }
+                    "turn/plan/updated" => {
+                        let turn = state.turn.as_mut().unwrap();
+                        output.extend(turn.items.plan(params, &turn.context));
+                    }
                     "thread/tokenUsage/updated" => {
                         let usage = &params["tokenUsage"];
                         output.push(RuntimeEvent::Usage {
@@ -199,14 +204,24 @@ impl Inner {
                             output.extend(ledger.drain().into_iter().map(events::resolved));
                         }
                         state.completed_turns.insert(scope.turn_id);
-                        output.push(if params["turn"]["status"] == "failed" {
-                            RuntimeEvent::TurnFailed(transport::protocol_error())
+                        let turn = state.turn.as_mut().unwrap();
+                        let held = turn.failure.take();
+                        output.push(if params["turn"]["status"] == "failed" || held.is_some() {
+                            let message = more_informative(held, failure(&params["turn"]["error"]))
+                                .unwrap_or_else(|| {
+                                    "Codex reported an error with no message".into()
+                                });
+                            RuntimeEvent::TurnFailed(AppError::new(ErrorCode::Internal, message))
                         } else {
                             RuntimeEvent::TurnFinished
                         });
                     }
+                    // Terminal, but `turn/completed` (status failed) follows: hold
+                    // it so the turn fails exactly once.
                     "error" if params["willRetry"] != true => {
-                        output.push(RuntimeEvent::TurnFailed(transport::protocol_error()));
+                        let turn = state.turn.as_mut().unwrap();
+                        turn.failure =
+                            more_informative(turn.failure.take(), failure(&params["error"]));
                     }
                     _ => {}
                 }
@@ -222,5 +237,33 @@ impl Inner {
         if let Some((scope, connection)) = interrupt {
             Self::send_interrupt(self, scope, connection);
         }
+    }
+}
+
+/// A native `TurnError` as the failure the user reads — Codex's own message,
+/// plus its `additionalDetails` on the next line when it sent any, like
+/// Claude's result error. `None` when it carried no message at all.
+fn failure(error: &Value) -> Option<String> {
+    let message = error["message"]
+        .as_str()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())?;
+    Some(
+        match error["additionalDetails"]
+            .as_str()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
+            Some(details) => format!("{message}\n{details}"),
+            None => message.into(),
+        },
+    )
+}
+
+/// Of the `error` notification and the turn's own error, the one that says more.
+fn more_informative(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if b.len() > a.len() { b } else { a }),
+        (a, b) => a.or(b),
     }
 }

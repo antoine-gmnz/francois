@@ -9,8 +9,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
-struct Sink {
-    events: Mutex<Vec<RuntimeEventEnvelope>>,
+pub(super) struct Sink {
+    pub(super) events: Mutex<Vec<RuntimeEventEnvelope>>,
     ready: Condvar,
     fail_anchor: bool,
 }
@@ -28,7 +28,7 @@ impl RuntimeEventSink for Sink {
     }
 }
 impl Sink {
-    fn wait(&self, predicate: impl Fn(&RuntimeEvent) -> bool) -> RuntimeEvent {
+    pub(super) fn wait(&self, predicate: impl Fn(&RuntimeEvent) -> bool) -> RuntimeEvent {
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut events = self.events.lock().unwrap();
         loop {
@@ -44,7 +44,7 @@ impl Sink {
             events = self.ready.wait_timeout(events, remaining).unwrap().0;
         }
     }
-    fn terminal(&self) {
+    pub(super) fn terminal(&self) {
         self.wait(|event| {
             matches!(
                 event,
@@ -53,7 +53,7 @@ impl Sink {
         });
     }
 }
-fn context(generation: u64, resume: Option<&str>) -> TurnContext {
+pub(super) fn context(generation: u64, resume: Option<&str>) -> TurnContext {
     TurnContext {
         scope: RuntimeScope {
             session_id: "fixture-session".into(),

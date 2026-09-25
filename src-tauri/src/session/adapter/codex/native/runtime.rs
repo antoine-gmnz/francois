@@ -41,6 +41,9 @@ pub(super) struct Turn {
     pub finished: bool,
     pub retired: bool,
     pub start_sent: bool,
+    /// A terminal `error` notification's message, held until `turn/completed`
+    /// so the turn fails once, with the more informative of the two.
+    pub failure: Option<String>,
 }
 pub(super) struct Emitter {
     context: TurnContext,
@@ -154,6 +157,7 @@ impl RuntimePort for NativeRuntime {
                 finished: false,
                 retired: false,
                 start_sent: false,
+                failure: None,
             });
         }
         let inner = self.inner.clone();

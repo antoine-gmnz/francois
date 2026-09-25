@@ -24,3 +24,5 @@ mod integration_tests;
 mod product_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcript_tests;
