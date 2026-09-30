@@ -19,10 +19,16 @@ pub(super) fn invocation(ctx: &TurnContext) -> (String, Vec<String>) {
     // Codex only offers `request_user_input` in Plan collaboration mode unless
     // this (under-development, verified on 0.155.1) feature is on — without it
     // a Codex session could never ask a question the way Claude Code does.
+    //
+    // Set through `-c features.…`, NOT `--enable`: `--enable` hard-fails on a
+    // feature name the installed Codex does not know ("Error: Unknown feature
+    // flag", exit 1 — verified on 0.155.1), which turned every turn on an
+    // older or newer Codex into "connection unavailable". `-c` is ignored by a
+    // version that lacks the key; that Codex just never asks questions.
     let native = vec![
         "app-server".into(),
-        "--enable".into(),
-        "default_mode_request_user_input".into(),
+        "-c".into(),
+        "features.default_mode_request_user_input=true".into(),
         // …which otherwise raises an "under-development features enabled"
         // warning on every thread (key named in that warning; verified live).
         "-c".into(),
@@ -96,8 +102,9 @@ mod tests {
     use super::*;
 
     /// Codex only offers `request_user_input` outside Plan mode behind this
-    /// feature; without it a Codex session can never ask a question.
-    const FEATURE: [&str; 2] = ["--enable", "default_mode_request_user_input"];
+    /// feature; without it a Codex session can never ask a question. As a
+    /// config override, so a Codex that lacks the feature still starts.
+    const FEATURE: [&str; 2] = ["-c", "features.default_mode_request_user_input=true"];
 
     /// ...and the "under-development features enabled" warning that feature
     /// would otherwise raise on every thread is silenced.
@@ -112,6 +119,14 @@ mod tests {
         [FEATURE, QUIET, PLAN]
             .iter()
             .all(|flag| args.windows(2).any(|pair| pair == flag))
+    }
+
+    /// `--enable <name>` exits 1 on any name the installed Codex does not
+    /// know; no version-specific name may be passed that way.
+    #[test]
+    fn no_feature_is_enabled_through_the_version_fragile_flag() {
+        let (_, args) = invocation(&super::super::integration_tests::context(1, None));
+        assert!(!args.iter().any(|a| a == "--enable"), "{args:?}");
     }
 
     #[test]

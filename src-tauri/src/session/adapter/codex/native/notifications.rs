@@ -247,7 +247,8 @@ fn failure(error: &Value) -> Option<String> {
     let message = error["message"]
         .as_str()
         .map(str::trim)
-        .filter(|m| !m.is_empty())?;
+        .filter(|m| !m.is_empty())
+        .map(protocol::readable_message)?;
     Some(
         match error["additionalDetails"]
             .as_str()
@@ -255,7 +256,7 @@ fn failure(error: &Value) -> Option<String> {
             .filter(|d| !d.is_empty())
         {
             Some(details) => format!("{message}\n{details}"),
-            None => message.into(),
+            None => message,
         },
     )
 }

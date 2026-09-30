@@ -232,7 +232,7 @@ impl Inner {
             }
             state.transport = Some(connection.clone());
         }
-        let deadline = Transport::deadline();
+        let deadline = Transport::startup_deadline();
         connection.call(deadline, |id| {
             Ok(protocol::initialize(id, env!("CARGO_PKG_VERSION")))
         })?;
@@ -251,17 +251,18 @@ impl Inner {
             effort: ctx.effort.as_deref(),
             permission_mode: &ctx.permission_mode,
         };
-        let thread = self.state.lock().unwrap().thread_id.clone();
-        let thread = if let Some(thread) = thread {
-            if ctx.resume.as_deref() != Some(thread.as_str()) {
-                return Err(AppError::new(
-                    ErrorCode::RuntimeUnavailable,
-                    "Codex saved thread changed; reconnect explicitly",
-                ));
-            }
+        let live = self.state.lock().unwrap().thread_id.clone();
+        let thread = if let Some(thread) = live
+            .clone()
+            .filter(|live| ctx.resume.as_deref() == Some(live.as_str()))
+        {
             thread
         } else {
-            let result = connection.call(Transport::deadline(), |id| {
+            // No live thread yet, or the session's anchor moved off it — `/clear`
+            // drops the anchor, so the next turn asks for a fresh thread. Open
+            // (or resume) exactly what the session names, on this connection;
+            // a failed resume still never falls back to a new thread.
+            let result = connection.call(Transport::startup_deadline(), |id| {
                 settings
                     .thread_request(id, ctx.resume.as_deref())
                     .map_err(|_| transport::protocol_error())
@@ -273,6 +274,11 @@ impl Inner {
             let mut state = self.state.lock().unwrap();
             if state.closed {
                 return Err(transport::unavailable());
+            }
+            if live.is_some_and(|live| live != thread) {
+                if let Some(ledger) = &mut state.ledger {
+                    ledger.change_thread(&thread);
+                }
             }
             state.thread_id = Some(thread.clone());
             thread
@@ -301,7 +307,7 @@ impl Inner {
             .iter()
             .map(|path| super::invocation::native_path(ctx, path))
             .collect::<Result<Vec<_>, _>>()?;
-        let result = connection.call(Transport::deadline(), |id| {
+        let result = connection.call(Transport::startup_deadline(), |id| {
             settings
                 .turn_request(id, &thread, &prompt, &images)
                 .map_err(|_| transport::protocol_error())
