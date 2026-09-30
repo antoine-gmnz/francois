@@ -4,9 +4,10 @@
 // after a Retry / Detach, whose outcome arrives as a status the core resolves.
 
 import { useCallback, useEffect, useState } from 'react';
-import type { AppError, McpServerInfo, SessionEvent } from '../../../contract/common';
+import type { AppError, McpServerInfo } from '../../../contract/common';
 import { mcpList } from '../../lib/api';
 import { subscribeSessionEvents } from '../../lib/session-events';
+import { startMcpFeed } from './mcp-feed';
 
 export function useSessionMcp(sessionId: string) {
   const [servers, setServers] = useState<McpServerInfo[]>([]);
@@ -16,36 +17,17 @@ export function useSessionMcp(sessionId: string) {
   const reload = useCallback(() => setReloads((n) => n + 1), []);
 
   useEffect(() => {
-    let mounted = true;
-    let unlisten: (() => void) | undefined;
+    setServers([]);
     setError(null);
-
-    void subscribeSessionEvents(sessionId, (e: SessionEvent) => {
-      if (e.type !== 'mcp.update' || e.sessionId !== sessionId) return;
-      setServers((prev) => {
-        const i = prev.findIndex((s) => s.name === e.server.name);
-        if (i === -1) return [...prev, e.server];
-        const next = prev.slice();
-        // runtime updates carry no scope — keep the one mcp_list resolved.
-        next[i] = { ...e.server, scope: e.server.scope ?? prev[i].scope };
-        return next;
-      });
-    }).then((unsub) => {
-      if (!mounted) unsub();
-      else unlisten = unsub;
+    setLoaded(false);
+    return startMcpFeed({
+      sessionId,
+      subscribe: callback => subscribeSessionEvents(sessionId, callback),
+      fetch: () => mcpList(sessionId),
+      setServers,
+      onError: setError,
+      onLoaded: () => setLoaded(true),
     });
-
-    void mcpList(sessionId).then((res) => {
-      if (!mounted) return;
-      setLoaded(true);
-      if (res.ok) setServers(res.data);
-      else setError(res.error);
-    });
-
-    return () => {
-      mounted = false;
-      if (unlisten) unlisten();
-    };
   }, [sessionId, reloads]);
 
   return { servers, error, loaded, reload };

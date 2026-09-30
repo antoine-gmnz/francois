@@ -4,10 +4,11 @@
 
 import { COHORTE_FROZEN_STATUSES, type CohorteFeatureChoice } from '../../../contract/cohorte-actions';
 import type { CohorteRun } from '../../../contract/cohorte-integration';
+import { brainstormSource } from './command-display';
 
 export type PipelineTone = 'neutral' | 'attention' | 'success' | 'danger' | 'running';
 
-export type PipelineActionId = 'answer-gate' | 'open-run' | 'start' | 'brainstorm' | 'write-spec';
+export type PipelineActionId = 'answer-gate' | 'open-run' | 'start' | 'brainstorm' | 'write-spec' | 'continue-intake';
 
 export interface PipelineAction {
   id: PipelineActionId;
@@ -56,9 +57,15 @@ function cardForFeature(feature: CohorteFeatureChoice): PipelineCard {
   if (COHORTE_FROZEN_STATUSES.includes(feature.status)) {
     return { ...base, stage: 3, stageLabel: 'frozen', tone: 'neutral', action: { id: 'start', label: 'Start run', ghost: false } };
   }
+  if (feature.kind === 'questions') {
+    return { ...base, stage: 0, stageLabel: 'intake · questions', tone: 'attention', action: { id: 'continue-intake', label: 'Continue intake', ghost: false } };
+  }
   if (feature.status === 'draft') {
     if (feature.kind === 'patch') {
       return { ...base, stage: 2, stageLabel: 'spec · draft', tone: 'neutral', action: { id: 'write-spec', label: 'Write spec', ghost: false } };
+    }
+    if (brainstormSource(feature) === 'brainstorm') {
+      return { ...base, stage: 1, stageLabel: 'brainstorm', tone: 'neutral', action: { id: 'brainstorm', label: 'Continue brainstorm', ghost: false } };
     }
     return { ...base, stage: 0, stageLabel: 'intake', tone: 'neutral', action: { id: 'brainstorm', label: 'Brainstorm', ghost: false } };
   }

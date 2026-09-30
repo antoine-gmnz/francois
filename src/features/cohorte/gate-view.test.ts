@@ -17,8 +17,8 @@ const approve = { id: 'approve' as const, stopsRun: false, cli: [] };
 
 describe('FR-62 kind copy (AC-22)', () => {
   const table: [string, string, string, string][] = [
-    ['ship', 'SHIP APPROVAL', 'Ship auth-retry?', 'Approve · ship'],
-    ['review-leftovers', 'REVIEW VERDICT', 'Ship auth-retry, or send it back to fix?', 'Approve · ship'],
+    ['ship', 'SHIP APPROVAL', 'Ship auth-retry?', 'Approve'],
+    ['review-leftovers', 'REVIEW VERDICT', 'Ship auth-retry, or send it back to fix?', 'Approve'],
     ['contract-change', 'CONTRACT CHANGE', 'A fix touches the contract. Allow it?', 'Approve'],
     ['loop-stalled', 'LOOP STALLED', 'The fix loop stopped making progress. Continue?', 'Approve · continue'],
     ['budget', 'BUDGET', 'The run hit a budget limit. Raise it and continue?', 'Approve · continue'],

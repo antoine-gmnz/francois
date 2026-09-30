@@ -8,6 +8,8 @@
 //! `session::<name>` paths main.rs's `generate_handler!` list depends on.
 
 mod decisions;
+mod request_url;
+pub use request_url::*;
 mod lifecycle;
 /// pi-migration-rollout FR-2/FR-3/FR-5: `session_create`'s whole
 /// `piProfile`/`profileId` decision, pure and testable without an

@@ -20,7 +20,7 @@ import {
   otherTier,
 } from './permissions-editor';
 import { tierChip } from './permission-card';
-import { sessionCapability } from '../../lib/runtimeCapability';
+import { permissionRulesCapability } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import './permissions.css';
@@ -33,12 +33,9 @@ export default function PermissionsModal({ sessionId, onClose }: { sessionId: st
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // multi-provider-codex FR-11: on a runtime whose tool calls these rules do not
-  // govern, the editor says so instead of listing rules that decide nothing. A
-  // Codex session is sandboxed by Codex itself (FR-9), so the rules here would
-  // be read by no one — and an editor that silently governs nothing is worse
-  // than one that is honestly switched off.
-  const capability = sessionCapability(meta, 'permissions');
+  // Native request replies and persisted Claude rules have distinct support.
+  // Only the Claude runtime reads the files this editor manages.
+  const capability = permissionRulesCapability(meta);
 
   // FR-26: read-on-open. v1 does not watch the settings files, so opening the
   // modal IS the refresh — three processes write them (§7 #7).

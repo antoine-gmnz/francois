@@ -247,15 +247,19 @@ export function isTerminalView(view: CohorteRun['view']): boolean {
 }
 
 /** FR-67/FR-71 — which run controls a view offers. */
-export function runControls(view: CohorteRun['view']): { pause: boolean; resume: boolean; cancel: boolean } {
+export function runControls(view: CohorteRun['view'], hostAlive?: boolean | null): { pause: boolean; resume: boolean; cancel: boolean } {
   if (isTerminalView(view)) return { pause: false, resume: false, cancel: false };
-  const resume = view === 'paused' || view === 'failed' || view === 'blocked' || view === 'auth' || view === 'quota';
+  const resume = view === 'paused' || view === 'failed' || (view === 'running' && hostAlive === false);
   return { pause: !resume, resume, cancel: true };
 }
 
 /** FR-76: a live run whose host is gone. */
 export function hostDead(run: Pick<CohorteRun, 'view' | 'host'>): boolean {
-  return !isTerminalView(run.view) && !run.host.alive;
+  return !isTerminalView(run.view) && run.host.alive === false;
+}
+
+export function canShipRun(run: Pick<CohorteRun, 'shipReady' | 'gate' | 'view'>): boolean {
+  return run.shipReady === true && run.gate === null && !isTerminalView(run.view);
 }
 
 /** FR-67 footer: `<runtime> runtime · snapshot pinned`, or null with no pinned runtime. */

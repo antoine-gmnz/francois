@@ -86,6 +86,15 @@ pub(super) struct FileApproval {
     pub grant_root: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PermissionsApproval {
+    #[serde(flatten)]
+    pub context: RequestContext,
+    pub cwd: String,
+    pub reason: Option<String>,
+    pub permissions: Value,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub(super) struct QuestionOption {
     pub label: String,
     pub description: String,
@@ -164,6 +173,9 @@ pub(super) enum RequestKind {
     Command(CommandApproval),
     File(FileApproval),
     Questions(UserInput),
+    Permissions(PermissionsApproval),
+    Elicitation(super::elicitation::Form),
+    ElicitationUrl(super::elicitation::UrlRequest),
     Mcp(McpApproval),
 }
 impl RequestKind {
@@ -172,7 +184,17 @@ impl RequestKind {
             Self::Command(r) => &r.context,
             Self::File(r) => &r.context,
             Self::Questions(r) => &r.context,
+            Self::Permissions(r) => &r.context,
+            Self::Elicitation(r) => &r.input.context,
+            Self::ElicitationUrl(r) => &r.context,
             Self::Mcp(r) => &r.context,
+        }
+    }
+    pub(super) fn questions(&self) -> Option<&UserInput> {
+        match self {
+            Self::Questions(input) => Some(input),
+            Self::Elicitation(form) => Some(&form.input),
+            _ => None,
         }
     }
 }
@@ -216,6 +238,13 @@ impl PendingRequest {
                 NativeDecision::Cancel,
             ],
             RequestKind::Questions(_) => Vec::new(),
+            RequestKind::Elicitation(_) => Vec::new(),
+            RequestKind::Permissions(_) => vec![NativeDecision::Accept, NativeDecision::Decline],
+            RequestKind::ElicitationUrl(_) => vec![
+                NativeDecision::Accept,
+                NativeDecision::Decline,
+                NativeDecision::Cancel,
+            ],
         }
     }
     pub(super) fn file_changes(&self) -> Option<&[Value]> {
@@ -299,7 +328,7 @@ impl RequestLedger {
             .pending
             .drain()
             .map(|(_, entry)| Resolution {
-                is_question: matches!(entry.request.kind, RequestKind::Questions(_)),
+                is_question: entry.request.kind.questions().is_some(),
                 block_id: entry.request.block_id,
                 outcome: ResolutionOutcome::Cancelled,
             })
@@ -371,7 +400,15 @@ impl RequestLedger {
             "item/tool/requestUserInput" => RequestKind::Questions(
                 serde_json::from_value(params).map_err(|_| RequestError::InvalidParams)?,
             ),
-            "mcpServer/elicitation/request" => RequestKind::Mcp(McpApproval::parse(params, scope)?),
+            "item/permissions/requestApproval" => RequestKind::Permissions(
+                serde_json::from_value(params).map_err(|_| RequestError::InvalidParams)?,
+            ),
+            "mcpServer/elicitation/request"
+                if params["_meta"]["codex_approval_kind"] == "mcp_tool_call" =>
+            {
+                RequestKind::Mcp(McpApproval::parse(params, scope)?)
+            }
+            "mcpServer/elicitation/request" => super::elicitation::parse(params, scope)?,
             _ => return Err(RequestError::UnsupportedMethod),
         };
         let context = kind.context();
@@ -438,13 +475,31 @@ impl RequestLedger {
         // resolved may arrive before the writer returns. A failed/ambiguous
         // write closes the ledger once; it never reopens a claim for replay.
         entry.outcome = Some(ResolutionOutcome::Permission(decision));
-        // An elicitation answers with an MCP `action`; accepting an approval
-        // form (whose schema has no fields) carries empty content.
-        let result = if matches!(entry.request.kind, RequestKind::Mcp(_)) {
-            let content = (decision == NativeDecision::Accept).then(|| json!({}));
-            json!({"action":decision.as_str(),"content":content})
-        } else {
-            json!({"decision":decision.as_str()})
+        let result = match &entry.request.kind {
+            RequestKind::Permissions(request) => {
+                let mut permissions = serde_json::Map::new();
+                if decision == NativeDecision::Accept {
+                    for key in ["network", "fileSystem"] {
+                        if let Some(value) = request
+                            .permissions
+                            .get(key)
+                            .filter(|value| !value.is_null())
+                        {
+                            permissions.insert(key.into(), value.clone());
+                        }
+                    }
+                }
+                json!({"permissions":permissions,"scope":"turn"})
+            }
+            RequestKind::ElicitationUrl(_) => {
+                json!({"action":decision.as_str(),"content":null,"_meta":null})
+            }
+            // MCP tool approval is an elicitation with an empty form.
+            RequestKind::Mcp(_) => {
+                let content = (decision == NativeDecision::Accept).then(|| json!({}));
+                json!({"action":decision.as_str(),"content":content})
+            }
+            _ => json!({"decision":decision.as_str()}),
         };
         Ok(PreparedReply {
             wire: response(id, result),
@@ -460,9 +515,11 @@ impl RequestLedger {
         if entry.outcome.is_some() {
             return Err(RequestError::AlreadyClaimed);
         }
-        let RequestKind::Questions(input) = &entry.request.kind else {
-            return Err(RequestError::InvalidAnswer);
-        };
+        let input = entry
+            .request
+            .kind
+            .questions()
+            .ok_or(RequestError::InvalidAnswer)?;
         if answers.len() != input.questions.len() {
             return Err(RequestError::InvalidAnswer);
         }
@@ -490,16 +547,21 @@ impl RequestLedger {
             );
             wire_answers.insert(question.id.clone(), json!({"answers":[answer]}));
         }
+        let result = if let RequestKind::Elicitation(form) = &entry.request.kind {
+            json!({"action":"accept","content":form.content(&answers)?,"_meta":null})
+        } else {
+            json!({"answers":wire_answers})
+        };
         entry.outcome = Some(ResolutionOutcome::Answers(redacted));
         Ok(PreparedReply {
-            wire: response(id, json!({"answers":wire_answers})),
+            wire: response(id, result),
         })
     }
     pub(super) fn resolve(&mut self, scope: &NativeScope, id: &RequestId) -> Option<Resolution> {
         self.check_scope(scope).ok()?;
         let entry = self.pending.remove(id)?;
         Some(Resolution {
-            is_question: matches!(entry.request.kind, RequestKind::Questions(_)),
+            is_question: entry.request.kind.questions().is_some(),
             block_id: entry.request.block_id,
             outcome: entry.outcome.unwrap_or(ResolutionOutcome::Cancelled),
         })
@@ -516,7 +578,7 @@ impl RequestLedger {
         self.pending
             .drain()
             .map(|(_, entry)| Resolution {
-                is_question: matches!(entry.request.kind, RequestKind::Questions(_)),
+                is_question: entry.request.kind.questions().is_some(),
                 block_id: entry.request.block_id,
                 outcome: ResolutionOutcome::Cancelled,
             })

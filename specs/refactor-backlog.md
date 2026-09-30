@@ -1,3 +1,40 @@
+# Codex and Cohorte integration audit — 2026-09-30
+
+User authorized a complete Codex feature audit and fixes, followed by Cohorte qualification against ../cohorte. Preserve native account isolation, actual protocol behavior, and distinguish deterministic from live validation.
+
+## frontend
+
+- [x] CRITICAL · src/lib/runtimeCapability.ts:69 · bug · Reconcile Codex capabilities with the native supported ceiling and add tests for enabled native features and disconnected requests.
+- [x] CRITICAL · src/features/permissions/PermissionsModal.tsx:41 · bug · Separate native approval replies from Claude persistent rules editing; gate the palette and Git auto-approval setting on actual support.
+- [x] HIGH · src/features/mcp/useMcpServers.ts:46 · bug · Prevent hydration from overwriting newer live MCP events; fix the same race in useSessionMcp.ts.
+- [x] HIGH · src/features/profiles/profiles.ts:271 · bug · Explain replacement prompts and runtime-specific arguments accurately for Codex profiles.
+- [x] HIGH · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:159 · bug · Select an eligible Claude account explicitly and preserve the same account across list, resolve and adopt.
+
+## core — resources and accounts
+
+- [x] CRITICAL · src-tauri/src/session/mcp.rs:264 · bug · Discover Codex MCP from its effective account/project native config, not Claude files; route detail/attach/detach/reconnect to native configuration and real reload.
+- [x] CRITICAL · src-tauri/src/account/codex.rs:35 · bug · Safely inherit shared Codex configuration/resources while retaining isolated authentication and sessions and preserving account overrides; restrict registry.rs Claude mirror to ClaudeCodeOauth.
+- [x] HIGH · src-tauri/src/session/skills.rs:309 · bug · Discover native Codex skills, preserve enabled/path/scope/plugin metadata and invoke them through Codex skill syntax; enable disabled skills through native configuration.
+- [x] HIGH · src-tauri/src/account/commands.rs:846 · bug · Atomically reserve Codex login and release reservation on all exits; kill/reap timed-out children and emit login failures.
+
+## core — native session adapter
+
+- [x] CRITICAL · src-tauri/src/session/adapter/codex/native/runtime.rs:248 · bug · Apply profile replacement prompts and support vetted Codex config arguments or reject explicitly; select actual plan collaboration mode.
+- [x] HIGH · src-tauri/src/session/adapter/codex/native/events.rs:212 · bug · Project collaboration agents, child transcripts, command progress, reasoning and compaction items using real lifecycle states.
+- [x] HIGH · src-tauri/src/session/adapter/codex/native/notifications.rs:165 · bug · Use native context window and token breakdown for metrics, retaining unknown cost and preventing double counts.
+- [x] HIGH · src-tauri/src/session/commands/turn.rs:224 · bug · Route native compaction, preserve clear/reconnect/resume continuity, qualify stop and questions with deterministic native peer.
+- [x] HIGH · src-tauri/src/session/adapter/codex/native/events.rs:279 · bug · Normalize canonical macOS cwd aliases; existing Rust test fails on /var versus /private/var.
+
+## shared
+
+- [x] CRITICAL · contract/multi-provider-seam.ts:101 · bug · Update stale exec capability baseline and synchronized backend matrix only for features actually integrated.
+
+## Cohorte
+
+- [x] HIGH · src-tauri/src/cohorte/python_rpc.rs:1 · bug · Audit protocol/version/CLI/actions/events/questions/gates/cancel/resume against ../cohorte and fix every verified integration mismatch after Codex.
+
+## Backlog antérieur conservé
+
 # Refactor backlog
 
 Deferred, non-blocking findings parked at a SHIP verdict. Each entry is tagged

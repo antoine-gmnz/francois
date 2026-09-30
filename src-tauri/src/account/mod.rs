@@ -34,6 +34,8 @@
 /// but the only surface that asks is the Accounts modal.
 mod cli_tools;
 mod codex;
+mod codex_config;
+pub(crate) use codex_config::{codex_server_inherited, inherit_codex_resources};
 mod commands;
 /// multi-provider-endpoint FR-1..FR-10: the `openai-compatible` account's
 /// storage half — base-URL validation, the sidecar key file, and the

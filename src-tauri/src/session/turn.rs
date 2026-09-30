@@ -285,7 +285,11 @@ fn finish_turn_with_error(
     )> = engine.with_session_mut(session_id, |s| {
         s.current = None;
         let at = now_ms();
-        let agent_ems = finalize_agents(s, errored, at);
+        let agent_ems = if s.agent_runtime == AgentRuntime::Codex {
+            Vec::new()
+        } else {
+            finalize_agents(s, errored, at)
+        };
         let workflow_runs = finalize_workflows(s, errored, at);
         let next = if errored {
             s.status = end_status.into();

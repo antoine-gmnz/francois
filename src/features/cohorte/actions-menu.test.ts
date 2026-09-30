@@ -4,7 +4,7 @@ import type { CohorteRun } from '../../../contract/cohorte-integration';
 import { buildSuggestions, COHORTE_MENU_GROUPS, flattenMenu, moveMenuSelection, withCohorteSlashEntry } from './actions-menu';
 
 function feature(over: Partial<CohorteFeatureChoice> & { id: string }): CohorteFeatureChoice {
-  return { title: over.id, status: 'draft', kind: 'feature', updatedAt: 0, ...over };
+  return { title: over.id, status: 'draft', kind: 'feature', phase: 'intake', updatedAt: 0, ...over };
 }
 
 function run(over: Partial<CohorteRun> & { runId: string; specId: string }): CohorteRun {
@@ -60,7 +60,7 @@ describe('buildSuggestions (FR-31)', () => {
     const suggestions = buildSuggestions({ linkedRun: gatedRun, features: [], runsForRoot: [gatedRun] });
     expect(suggestions[0]).toEqual({
       id: 'suggest-gate',
-      label: 'Approve & ship auth-retry',
+      label: 'Approve auth-retry',
       description: 'Review gate on r1 · 0 findings',
       icon: 'check',
       commandHint: 'cohorte approve r1 apr_1',

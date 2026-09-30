@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { McpServerInfo, SkillInfo } from '../../../contract/common';
+
+it('exposes a native pending server as an actionable sign-in banner', () => {
+  const server = { name: 'docs', status: 'pending' as const };
+  expect(downServers([server], true)).toEqual([server]);
+  expect(mcpNote(server, true).text).toBe('needs sign-in');
+  expect(downMessage(server, true)).toContain('Sign in');
+});
 import {
   accountProfileLine,
   downMessage,

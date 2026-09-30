@@ -14,6 +14,7 @@ import {
   remoteSessionHandle,
   remoteStateOf,
   remoteUrlOf,
+  remotePairingAction,
   type RemoteMap,
 } from './remote-control';
 
@@ -267,5 +268,25 @@ describe('selectors', () => {
     const map: RemoteMap = { s1: active, s2: starting, s3: failed };
     expect(liveRemoteSessionIds(map).sort()).toEqual(['s1', 's2']);
     expect(liveRemoteSessionIds({})).toEqual([]);
+  });
+});
+
+describe('Codex native remote control', () => {
+  it('offers pairing renewal even while an expired code is displayed', () => {
+    const pairing: RemoteControlState = { phase: 'pairing', name: 'Codex', startedAt: 10, pairingCode: 'EXPIRED', environmentId: 'env', expiresAt: 1 };
+    expect(remotePairingAction(pairing)).toBe('refresh pairing code');
+    expect(remotePairingAction({ phase: 'enabled', name: 'Codex', startedAt: 10 })).toBe('get pairing code');
+    expect(remotePairingAction(active)).toBeNull();
+  });
+  it('shows enabled service and pairing without inventing a Claude URL', () => {
+    const enabled: RemoteControlState = { phase: 'enabled', name: 'Codex', startedAt: 10 };
+    const paired: RemoteControlState = { phase: 'pairing', name: 'Codex', startedAt: 10, pairingCode: 'MANUAL', environmentId: 'env', expiresAt: 1000 };
+    for (const state of [enabled, paired]) {
+      expect(isRemoteLive(state)).toBe(true);
+      expect(remoteUrlOf(state)).toBeNull();
+      expect(remoteDotTone(state)).toBe('ok');
+      expect(remoteLabel(state)).toBe('Codex remote control enabled');
+      expect(applyRemoteResult({ s: state }, { sessionId: 's', state: { phase: 'starting', name: 'Codex', startedAt: 9, provider: 'codex' } })).toEqual({ s: state });
+    }
   });
 });

@@ -3,6 +3,13 @@
 import { describe, expect, it } from 'vitest';
 import type { McpServerInfo } from '../../../contract/common';
 import type { McpApprovalState, McpRegistryEntry } from '../../../contract/mcp-panel';
+
+it('offers native OAuth connection for pending Codex servers without a Claude rule decision', () => {
+  expect(canReconnect('pending', true)).toBe(true);
+  expect(canReconnect('pending')).toBe(false);
+  expect(isApprovable('pending', true)).toBe(false);
+  expect(detailText({ name: 'docs', status: 'pending' }, true).text).toBe('sign-in required');
+});
 import {
   approvalSummary,
   approveAllDecision,

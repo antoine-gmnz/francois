@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppError, McpServerInfo } from '../../../contract/common';
 import type { McpApprovalState, McpDecision, McpRegistryEntry, McpServerDetail } from '../../../contract/mcp-panel';
 import { mcpDetach, mcpDetail, mcpReconnect } from '../../lib/api';
-import { sessionCapability } from '../../lib/runtimeCapability';
+import { sessionCapability, sessionUsesNativeMcpAuth } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { useDismiss } from '../../lib/hooks/useDismiss';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
@@ -30,6 +30,7 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
   // multi-provider-openai FR-20: mcp's capability for this session's runtime.
   const meta = useSessionMeta(sessionId);
   const capability = sessionCapability(meta, 'mcp');
+  const nativeAuth = sessionUsesNativeMcpAuth(meta);
   const [selected, setSelected] = useState(0);
   const [popover, setPopover] = useState<{ name: string; top: number; left: number } | null>(null);
   const focused = focusedPane === 'mcp';
@@ -134,6 +135,7 @@ export default function McpPanel({ sessionId }: { sessionId: string | null }) {
               <ServerRow
                 key={server.name}
                 server={server}
+                nativeAuth={nativeAuth}
                 selected={i === selected}
                 onClick={() => {
                   setFocusedPane('mcp');
@@ -218,8 +220,8 @@ function ApprovalBanner({
 
 // ---------- server row ----------
 
-function ServerRow({ server, selected, onClick }: { server: McpServerInfo; selected: boolean; onClick: () => void }) {
-  const detail = detailText(server);
+function ServerRow({ server, nativeAuth, selected, onClick }: { server: McpServerInfo; nativeAuth: boolean; selected: boolean; onClick: () => void }) {
+  const detail = detailText(server, nativeAuth);
   return (
     <div data-mcp-row onClick={(e) => { e.stopPropagation(); onClick(); }} className={selected ? 'mcp-row mcp-row--selected' : 'mcp-row'}>
       <span className="mcp-status-slot">
@@ -280,6 +282,7 @@ function DetailPopover({
   onReconnected: (name: string) => void;
   onDetached: (name: string) => void;
 }) {
+  const nativeAuth = sessionUsesNativeMcpAuth(useSessionMeta(sessionId));
   const { data, loading, error } = useMcpDetail(sessionId, name);
   const [confirming, setConfirming] = useState(false);
   const [actionError, setActionError] = useState<AppError | null>(null);
@@ -330,8 +333,9 @@ function DetailPopover({
             {data.transport === 'stdio' && data.command && <Field label="COMMAND" value={data.command} mono />}
             {data.transport === 'http' && data.url && <Field label="URL" value={data.url} mono />}
             {data.status === 'connected' && <Field label="TOOLS" value={String(data.toolCount ?? 0)} />}
+            {nativeAuth && data.status === 'pending' && <Field label="AUTHENTICATION" value="Sign in to connect and load tools" />}
             {data.status === 'error' && data.errorMessage && <Field label="ERROR" value={data.errorMessage} color="var(--error)" />}
-            {isApprovable(data.status) && (
+            {isApprovable(data.status, nativeAuth) && (
               <Field
                 label="APPROVAL"
                 value={
@@ -350,7 +354,7 @@ function DetailPopover({
         {actionError && <span className="mcp-popover-action-error">{actionError.message}</span>}
       </div>
 
-      {data && isApprovable(data.status) && (
+      {data && isApprovable(data.status, nativeAuth) && (
         <div className="mcp-popover-footer">
           {data.status !== 'approved' && (
             <span
@@ -375,7 +379,7 @@ function DetailPopover({
         <div className="mcp-popover-footer">
           {confirming ? (
             <>
-              <span className="mcp-popover-confirm-text">detach '{name}' from .mcp.json?</span>
+              <span className="mcp-popover-confirm-text">detach '{name}' from this session’s MCP configuration?</span>
               <span onClick={() => setConfirming(false)} className="mcp-action-link mcp-action-link--dim">
                 Cancel
               </span>
@@ -388,12 +392,12 @@ function DetailPopover({
               {/* Reconnect only re-flags `connecting`, which for a server the session
                   has not started — undecided OR merely approved — would paint the very
                   handshake-that-never-completes this feature exists to remove. */}
-              {canReconnect(data.status) && (
+              {canReconnect(data.status, nativeAuth) && (
                 <span onClick={() => void reconnect()} className="mcp-action-link">
-                  Reconnect
+                  {nativeAuth && data.status === 'pending' ? 'Connect · sign in' : 'Reconnect'}
                 </span>
               )}
-              {(!data.scope || data.scope === 'project') && (
+              {(nativeAuth || !data.scope || data.scope === 'project') && (
                 <span onClick={() => setConfirming(true)} className="mcp-action-link">
                   Detach
                 </span>

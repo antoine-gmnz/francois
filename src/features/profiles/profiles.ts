@@ -14,9 +14,10 @@
 // other New Session control exactly as the project left it.
 
 import type { AppError, ProfileId } from '../../../contract/common';
+import type { Account } from '../../../contract/multi-account';
 import { MAX_PROFILE_NAME, type SessionProfile } from '../../../contract/session-profiles';
 import { profilesList } from '../../lib/api';
-import { profileIsRetired } from '../../lib/runtimeCapability';
+import { accountSupportsClaudeTools, accountUsesCodex, profileIsRetired } from '../../lib/runtimeCapability';
 
 // ---------- resolution (FR-15/FR-16) ----------
 
@@ -196,4 +197,15 @@ export function removeProfileConfirmText(name: string): string {
 
 // §2's accepted consequence, stated where the prompt is authored (FR-23).
 export const REPLACE_MODE_NOTE =
-  'a system prompt here REPLACES Claude Code’s own — CLAUDE.md framing and tool-use doctrine are gone, so slash commands, questions and permission cards may behave differently.';
+  'A system prompt here replaces the selected runtime’s base instructions. Runtime-specific guidance and default tool-use instructions may change.';
+
+export function profilePromptNote(account: Pick<Account, 'kind'> | null): string {
+  if (accountUsesCodex(account)) return 'Replaces Codex base instructions. Project instructions and native approval controls still follow Codex configuration.';
+  if (accountSupportsClaudeTools(account)) return 'Replaces Claude Code’s system prompt, including its default framing and tool-use instructions.';
+  return REPLACE_MODE_NOTE;
+}
+
+export function profileArgsNote(account: Pick<Account, 'kind'> | null): string {
+  if (accountUsesCodex(account)) return 'Codex profiles accept Codex configuration overrides (-c/--config key=value) and feature flags (--enable/--disable). Claude-specific options are rejected.';
+  return 'Extra arguments follow the selected runtime’s configuration rules and are validated when the session starts.';
+}

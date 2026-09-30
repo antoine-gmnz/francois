@@ -110,6 +110,27 @@ fn apply_projected(
                 model: None,
             });
         }
+        RuntimeEvent::ToolSnapshot { block_id, tool } => {
+            let block = engine
+                .with_session_mut(id, |s| {
+                    let block = s
+                        .block_buffer
+                        .iter_mut()
+                        .find(|block| block.block_id == block_id)?;
+                    block.execution = serde_json::to_value(&tool).ok();
+                    block.streaming = tool.status == "running";
+                    Some(block.clone())
+                })
+                .flatten();
+            if let Some(block) = block {
+                env.append_transcript(id, &block);
+            }
+            env.emit_session(SessionEvent::ToolUpdate {
+                session_id: id.clone(),
+                block_id,
+                tool,
+            });
+        }
         RuntimeEvent::ToolCompleted {
             block_id,
             meta,
@@ -135,6 +156,32 @@ fn apply_projected(
                 meta,
                 has_detail: has_detail.then_some(true),
             });
+        }
+        RuntimeEvent::Metrics(metrics) => {
+            let context = engine
+                .with_session_mut(id, |s| {
+                    if let Some(window) = metrics.context_window.filter(|window| *window > 0) {
+                        s.context_limit_tokens = window;
+                    }
+                    if let Some(used) = metrics.context_tokens {
+                        s.context_used_tokens = used;
+                    }
+                    s.last_activity_at = now_ms();
+                    let context = metrics
+                        .context_tokens
+                        .map(|used| (used, s.context_limit_tokens));
+                    s.metrics = Some(metrics);
+                    context
+                })
+                .flatten();
+            if let Some((used_tokens, limit_tokens)) = context {
+                env.emit_session(SessionEvent::ContextUsage {
+                    session_id: id.clone(),
+                    used_tokens,
+                    limit_tokens,
+                });
+            }
+            env.publish_meta(id);
         }
         RuntimeEvent::Usage {
             context_used_tokens,

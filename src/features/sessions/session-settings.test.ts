@@ -32,8 +32,10 @@ import {
   nextProjectDefaults,
   rebaseDraft,
   timingLine,
+  settingCapability,
   type SettingsDraft,
 } from './session-settings';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 
 function session(over: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -57,6 +59,13 @@ function session(over: Partial<SessionMeta> = {}): SessionMeta {
     ...over,
   } as SessionMeta;
 }
+
+it('never enables Claude Git auto-approval for a live Codex session', () => {
+  const codex = session({ agentRuntime: 'codex', runtimeGeneration: 'connected', effectiveCapabilities: { ...runtimeCapabilities('codex'), permissions: { available: true } } });
+  expect(settingCapability(codex, 'allowGit').available).toBe(false);
+  expect(settingCapability(codex, 'permissionMode').available).toBe(true);
+  expect(settingCapability(session(), 'allowGit').available).toBe(true);
+});
 
 describe('draftFromSession / dirtyKeys', () => {
   it('starts with no dirty keys', () => {

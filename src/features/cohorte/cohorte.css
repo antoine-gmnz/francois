@@ -1341,3 +1341,30 @@
   font-size: 11px;
   color: var(--text-muted);
 }
+.cohorte-intake-answers {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.cohorte-intake-answers__field {
+  display: grid;
+  gap: 6px;
+}
+
+.cohorte-preparation {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.cohorte-preparation__card {
+  padding: 16px;
+}
+
+.cohorte-preparation__preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+}

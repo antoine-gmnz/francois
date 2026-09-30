@@ -32,9 +32,37 @@ export function cohorteIntakeDisplay(req: CohorteIntakeRequest): string {
   return ['cohorte', ...args.map(quoteArg)].join(' ');
 }
 
-/** FR-42: `cohorte brainstorm --feature-id <id>` or `cohorte brainstorm` (new idea). */
-export function cohorteBrainstormDisplay(featureId: string | null): string {
-  return featureId ? `cohorte brainstorm --feature-id ${featureId}` : 'cohorte brainstorm';
+export type BrainstormSource = 'intake' | 'brainstorm';
+
+/** Existing draft ids must resume their saved source, never create a new id. */
+export function brainstormSource(feature: { phase?: string; artifacts?: string[] } | undefined): BrainstormSource | null {
+  if (feature?.phase === 'brainstorm' || feature?.artifacts?.includes('brief')) return 'brainstorm';
+  if (feature?.phase === 'intake' || feature?.artifacts?.includes('intake-report')) return 'intake';
+  return null;
+}
+
+export function cohorteBrainstormDisplay(featureId: string | null, source?: BrainstormSource | null): string | null {
+  if (!featureId) return 'cohorte brainstorm';
+  if (!source) return null;
+  return `cohorte brainstorm ${source === 'intake' ? '--from-intake' : '--continue'} ${featureId}`;
+}
+
+/** Structured argv keep user answers literal when written to a terminal. */
+export function cohorteIntakeContinueArgs(featureId: string, answers: string[], route: 'feature' | 'patch' | ''): string[] {
+  const args = ['intake', '--continue', featureId];
+  answers.forEach((answer, index) => {
+    if (answer.trim()) args.push('--answer', `${index + 1}=${answer.trim()}`);
+  });
+  if (route) args.push('--route', route);
+  return args;
+}
+
+export function cohorteShipDisplay(runId: string): string {
+  return `cohorte ship ${runId} --live`;
+}
+
+export function cohorteRefreshDisplay(runId: string): string {
+  return `cohorte --json run ${runId}`;
 }
 
 /** FR-42: `cohorte spec <id>` — positional, unlike brainstorm's flag. */

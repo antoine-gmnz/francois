@@ -1,5 +1,6 @@
 //! MCP server discovery, attach/detach, and the mcp-panel commands.
 
+use super::application::ResourceRequest;
 use super::*;
 use crate::ipc::ErrorCode;
 
@@ -246,6 +247,24 @@ pub fn mcp_list(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<Vec<Value>> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::McpList,
+        ) {
+            Ok(value) => match serde_json::from_value(value) {
+                Ok(rows) => ok(rows),
+                Err(_) => err(
+                    ErrorCode::RuntimeProtocolError,
+                    "Invalid Codex MCP inventory",
+                ),
+            },
+            Err(error) => error.into(),
+        };
+    }
+
     let Some((cwd, claude_runtime, account_id, runtime)) = engine.with_session(&session_id, |s| {
         (
             s.cwd.clone(),
@@ -289,6 +308,18 @@ pub fn mcp_detail(
     session_id: String,
     name: String,
 ) -> IpcResult<Value> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::McpDetail(name.clone()),
+        ) {
+            Ok(value) => ok(value),
+            Err(error) => error.into(),
+        };
+    }
+
     let Some((cwd, claude_runtime, account_id, runtime)) = engine.with_session(&session_id, |s| {
         (
             s.cwd.clone(),
@@ -339,6 +370,18 @@ pub fn mcp_reconnect(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::McpReconnect(name.clone()),
+        ) {
+            Ok(_) => ok(None),
+            Err(error) => error.into(),
+        };
+    }
+
     if let Err((code, msg)) = engine.require_capability(&session_id, "mcp") {
         return err(code, msg);
     }
@@ -361,10 +404,23 @@ pub fn mcp_reconnect(
 
 #[tauri::command(async)]
 pub fn mcp_detach(
+    app: AppHandle,
     engine: State<'_, Engine>,
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::McpDetach(name.clone()),
+        ) {
+            Ok(_) => ok(None),
+            Err(error) => error.into(),
+        };
+    }
+
     if let Err((code, msg)) = engine.require_capability(&session_id, "mcp") {
         return err(code, msg);
     }
@@ -404,6 +460,18 @@ pub fn mcp_attach(
     session_id: String,
     entry: Value,
 ) -> IpcResult<Option<()>> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::McpAttach(entry.clone()),
+        ) {
+            Ok(_) => ok(None),
+            Err(error) => error.into(),
+        };
+    }
+
     if let Err((code, msg)) = engine.require_capability(&session_id, "mcp") {
         return err(code, msg);
     }

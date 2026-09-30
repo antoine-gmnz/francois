@@ -16,7 +16,8 @@ import { EmptyPane } from '../../ui/EmptyPane';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
-import { answerGate, closeCohorteRun, controlRun, copyCli, ensurePolicy } from './actions';
+import { answerGate, closeCohorteRun, controlRun, copyCli, ensurePolicy, shipRun } from './actions';
+import { cohorteRefreshDisplay } from './command-display';
 import './cohorte.css';
 import './cohorte-run.css';
 import { AnsweredBy, CohorteStateChip, FindingRow } from './CohorteParts';
@@ -25,6 +26,7 @@ import { sessionAtPath } from './linkage';
 import { stepLine } from './outcome';
 import {
   formatDuration,
+  canShipRun,
   hostDead,
   isGatePhase,
   orderedSteps,
@@ -90,7 +92,7 @@ function RunBody({ run }: { run: CohorteRun }) {
   const live = run.view !== 'completed' && run.view !== 'cancelled';
   const now = useElapsedClock(live);
   const chip = runViewChip(run);
-  const controls = runControls(run.view);
+  const controls = runControls(run.view, run.host.alive);
   const gate = run.gate;
   const deny = gate ? gateAction(gate, 'deny') : null;
   const project = projects.find((p) => p.root === run.projectRoot)?.name ?? basename(run.projectRoot);
@@ -151,6 +153,11 @@ function RunBody({ run }: { run: CohorteRun }) {
             Pause
           </Button>
         )}
+        {canShipRun(run) && (
+          <Button variant="primary" disabled={busy !== null} onClick={() => void shipRun(run, focusedSessionId(useStore.getState()))}>
+            Ship in terminal
+          </Button>
+        )}
         {controls.resume && (
           <Button variant="ghost" disabled={busy !== null} onClick={() => void controlRun(run, 'resume')}>
             Resume
@@ -169,7 +176,7 @@ function RunBody({ run }: { run: CohorteRun }) {
         </div>
       )}
       <AnsweredBy runId={run.runId} className="cohorte-run__strip" />
-      {hostDead(run) && <div className="cohorte-run__strip cohorte-run__strip--warning">Run host is not running — Cohorte restarts it on the next command.</div>}
+      {hostDead(run) && <div className="cohorte-run__strip cohorte-run__strip--warning">Run host is not running.{controls.resume && ' Resume this run to restart its execution.'}</div>}
       {run.lastError && (run.view === 'failed' || run.view === 'blocked') && (
         <div className="cohorte-run__strip cohorte-run__strip--danger">
           {run.lastError.message}
@@ -327,7 +334,7 @@ function StepsTable({ run, now }: { run: CohorteRun; now: number }) {
 function ReviewCard({ run }: { run: CohorteRun }) {
   const review = run.review;
   if (!review) return null;
-  const footer = run.gate ? 'Verdict pending — approve to ship, or send back to fix.' : review.clean ? 'Review clean.' : review.verdict ? `Verdict: ${review.verdict}` : null;
+  const footer = run.gate ? 'Verdict pending — approve the candidate, or send back to fix. Shipment is a separate action.' : review.clean ? 'Review clean.' : review.verdict ? `Verdict: ${review.verdict}` : null;
   return (
     <div className="cohorte-card">
       <div className="cohorte-label">
@@ -416,7 +423,7 @@ function SnapshotCard({ run, gatedSteps }: { run: CohorteRun; gatedSteps?: strin
 }
 
 function CommandBar({ runId }: { runId: string }) {
-  const cli = `cohorte status ${runId} --json`;
+  const cli = cohorteRefreshDisplay(runId);
   return (
     <div className="cohorte-command-bar">
       <SquareTerminal size={14} className="cohorte-command-bar__icon" />

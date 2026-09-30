@@ -527,6 +527,16 @@ pub fn mcp_approvals(
     engine: State<'_, Engine>,
     session_id: String,
 ) -> IpcResult<McpApprovalState> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return ok(McpApprovalState {
+            pending: vec![],
+            approved: vec![],
+            rejected: vec![],
+            trust_required: false,
+            enable_all_project_mcp_servers: false,
+        });
+    }
+
     let Some((cwd, runtime, config_dir)) = target_of(&app, &engine, &session_id) else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };
@@ -549,6 +559,13 @@ pub fn mcp_decide(
     reject: Vec<String>,
     trust: bool,
 ) -> IpcResult<McpApprovalState> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return err(
+            ErrorCode::RuntimeUnsupported,
+            "Codex MCP authentication and project trust are managed by native Codex configuration",
+        );
+    }
+
     let Some((cwd, runtime, config_dir)) = target_of(&app, &engine, &session_id) else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };

@@ -3,9 +3,10 @@
 use super::*;
 use crate::ipc::ErrorCode;
 
+use super::application::ResourceRequest;
 use crate::ipc::{err, ok, IpcResult};
 use crate::session::retired_pi;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
@@ -19,7 +20,7 @@ use tauri::{AppHandle, Emitter, State};
 // which is how Claude Code turns a plugin skill on. Effects apply on the next turn.
 // No fs watcher: the panel refetches on install + session switch (FR-7 own flows).
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SkillInfo {
     pub(crate) name: String,
     pub(crate) description: String,
@@ -295,7 +296,29 @@ pub fn scan_skills(dir: &std::path::Path) -> Vec<(String, String)> {
 }
 
 #[tauri::command(async)]
-pub fn skills_list(engine: State<'_, Engine>, session_id: String) -> IpcResult<Vec<SkillInfo>> {
+pub fn skills_list(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+) -> IpcResult<Vec<SkillInfo>> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::SkillsList,
+        ) {
+            Ok(value) => match serde_json::from_value(value) {
+                Ok(rows) => ok(rows),
+                Err(_) => err(
+                    ErrorCode::RuntimeProtocolError,
+                    "Invalid Codex skill inventory",
+                ),
+            },
+            Err(error) => error.into(),
+        };
+    }
+
     let Some((cwd, agent_runtime)) =
         engine.with_session(&session_id, |s| (s.cwd.clone(), s.agent_runtime))
     else {
@@ -319,6 +342,24 @@ pub fn skills_install(
     session_id: String,
     name: String,
 ) -> IpcResult<Option<()>> {
+    if engine.with_session(&session_id, |s| s.agent_runtime == AgentRuntime::Codex) == Some(true) {
+        return match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::SkillEnable(name),
+        ) {
+            Ok(_) => {
+                let _ = app.emit(
+                    "francois://skills/event",
+                    serde_json::json!({"type":"skills.changed","sessionId":session_id}),
+                );
+                ok(None)
+            }
+            Err(error) => error.into(),
+        };
+    }
+
     if let Err((code, msg)) = engine.require_capability(&session_id, "skillsInstall") {
         return err(code, msg);
     }
@@ -433,18 +474,44 @@ pub fn skills_run(
     let Some(cwd) = engine.with_session(&session_id, |s| s.cwd.clone()) else {
         return err(ErrorCode::SessionNotFound, "no such session");
     };
-    if !discover_skills(&cwd)
-        .iter()
-        .any(|s| s.installed && s.name == name)
-    {
-        return err(
-            ErrorCode::InvalidInput,
-            format!("'{name}' is not installed"),
-        );
-    }
-    let text = match args {
-        Some(a) if !a.trim().is_empty() => format!("/{} {}", name, a.trim()),
-        _ => format!("/{name}"),
+    let text = if agent_runtime == AgentRuntime::Codex {
+        let rows = match crate::session::codex_resources::dispatch(
+            &app,
+            &engine,
+            &session_id,
+            ResourceRequest::SkillsList,
+        ) {
+            Ok(value) => value.as_array().cloned().unwrap_or_default(),
+            Err(error) => return error.into(),
+        };
+        let count = rows
+            .iter()
+            .filter(|s| s["installed"] == true && s["name"] == name)
+            .count();
+        if count != 1 {
+            return err(
+                ErrorCode::SkillError,
+                "Select one enabled, unambiguous Codex skill",
+            );
+        }
+        match args {
+            Some(a) if !a.trim().is_empty() => format!("${name} {}", a.trim()),
+            _ => format!("${name}"),
+        }
+    } else {
+        if !discover_skills(&cwd)
+            .iter()
+            .any(|s| s.installed && s.name == name)
+        {
+            return err(
+                ErrorCode::InvalidInput,
+                format!("'{name}' is not installed"),
+            );
+        }
+        match args {
+            Some(a) if !a.trim().is_empty() => format!("/{name} {}", a.trim()),
+            _ => format!("/{name}"),
+        }
     };
     // interactive-commands §2 non-goal: skills pass through byte-for-byte — a
     // skill named usage/cost/model/status/help must still run as a real turn.

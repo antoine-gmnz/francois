@@ -338,6 +338,19 @@ pub fn remote_start(
     session_id: String,
     name: Option<String>,
 ) -> IpcResult<RemoteStatus> {
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        if let Err((code, msg)) = engine.require_capability(&session_id, "remoteControl") {
+            return err(code, msg);
+        }
+        let name = engine
+            .with_session(&session_id, |s| resolve_host_name(name, &s.name))
+            .unwrap_or_else(|| "Codex".into());
+        return super::codex::command(
+            &engine,
+            &session_id,
+            crate::session::application::ResourceRequest::RemoteStart(name),
+        );
+    }
     if let Err((code, msg)) = engine.require_capability(&session_id, "remoteControl") {
         return err(code, msg);
     }
@@ -423,6 +436,7 @@ pub fn remote_start(
 
     let started_at = now_ms();
     let state = Arc::new(Mutex::new(RemoteState::Starting {
+        provider: None,
         name: name.clone(),
         started_at,
     }));

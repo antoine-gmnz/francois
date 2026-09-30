@@ -85,7 +85,7 @@ fn codex_permissions_require_valid_live_snapshot_and_keep_supported_ceiling() {
     assert!(!adapter::resolve_capability(
         AgentRuntime::Codex,
         Some(&caps),
-        "subagents"
+        "workflows"
     ));
     assert!(!adapter::resolve_capability(
         AgentRuntime::Pi,

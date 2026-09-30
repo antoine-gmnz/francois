@@ -9,26 +9,29 @@
 
 import { useEffect, useState } from 'react';
 import { cloudList } from '../../lib/api';
-import { useMounted } from '../../lib/hooks/useMounted';
 import { cloudListView, type CloudListState } from './cloud-sessions';
 
 const LOADING: CloudListState = { sessions: [], degraded: false, error: null, loading: true };
 
-export function useCloudList(): CloudListState {
-  const [state, setState] = useState<CloudListState>(LOADING);
-  const mounted = useMounted();
+export function useCloudList(accountId: string | null): CloudListState {
+  const [result, setResult] = useState<{ accountId: string | null; state: CloudListState }>({ accountId, state: LOADING });
 
   useEffect(() => {
-    void cloudList()
+    if (!accountId) return;
+    let live = true;
+    const apply = (state: CloudListState) => { if (live) setResult({ accountId, state }); };
+    void cloudList(accountId)
       .then((res) => {
-        if (mounted.current) setState({ ...cloudListView(res), loading: false });
+        apply({ ...cloudListView(res), loading: false });
       })
       .catch(() => {
         // The IPC layer itself refused. Same treatment as a bad response: the
         // list is gone, the feature is not.
-        if (mounted.current) setState({ sessions: [], degraded: true, error: null, loading: false });
+        apply({ sessions: [], degraded: true, error: null, loading: false });
       });
-  }, [mounted]);
+    return () => { live = false; };
+  }, [accountId]);
 
-  return state;
+  if (!accountId) return { sessions: [], degraded: false, error: null, loading: false };
+  return result.accountId === accountId ? result.state : LOADING;
 }

@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaletteContext } from '../../../contract/command-palette';
 import type { SessionMeta } from '../../../contract/common';
+import { runtimeCapabilities } from '../../../contract/multi-provider-seam';
 
 vi.mock('../../lib/api', () => ({
   agentsKill: vi.fn(),
@@ -110,6 +111,23 @@ describe('panel-tab palette commands (design 7a)', () => {
     byId('open-agents-panel').run(ctx);
     byId('open-skills-panel').run(ctx);
     expect(useStore.getState().mainTab).toBe('skills');
+  });
+
+  it('keeps Claude rules unavailable for Codex even when native approval replies are live', async () => {
+    const { useStore, byId } = await freshModules();
+    const active = { ...ctx, activeSessionId: 'native' };
+    const meta = { id: 'native', agentRuntime: 'codex', runtimeGeneration: 'connected', effectiveCapabilities: { ...runtimeCapabilities('codex'), permissions: { available: true } } } as SessionMeta;
+    useStore.getState().setSessions([meta]);
+    useStore.getState().setActiveSessionId(meta.id);
+    const command = byId('manage-permissions');
+    expect(command.enabled?.(active)).toBe(false);
+    command.run(active);
+    expect(useStore.getState().permissionsOpen).toBe(false);
+    expect(command.hint?.()).toContain('Claude Code');
+    useStore.getState().setSessions([{ ...meta, agentRuntime: 'claude-code' }]);
+    expect(command.enabled?.(active)).toBe(true);
+    command.run(active);
+    expect(useStore.getState().permissionsOpen).toBe(true);
   });
 });
 

@@ -628,7 +628,7 @@ impl RunProjection {
             last_error: self.last_error.clone(),
             iteration: self.iteration.clone(),
             host: RunHost {
-                alive,
+                alive: Some(alive),
                 heartbeat_at: self.heartbeat_at,
                 pid: self.pid,
             },
@@ -637,6 +637,7 @@ impl RunProjection {
             snapshot_digest: self.snapshot_digest.clone(),
             cohorte_version: self.cohorte_version.clone(),
             unattended: self.unattended,
+            ship_ready: None,
             phases,
             worktrees: self.worktrees.clone(),
             gate,
@@ -739,12 +740,12 @@ mod tests {
     fn host_liveness_prefers_snapshot_then_events_then_record_heartbeat() {
         let mut p = RunProjection::new("/r", "run_a");
         p.record_heartbeat = Some(1_000);
-        assert!(p.to_run(40_000).host.alive);
-        assert!(!p.to_run(50_000).host.alive);
+        assert_eq!(p.to_run(40_000).host.alive, Some(true));
+        assert_eq!(p.to_run(50_000).host.alive, Some(false));
         p.host_event = Some(false);
-        assert!(!p.to_run(1_000).host.alive);
+        assert_eq!(p.to_run(1_000).host.alive, Some(false));
         p.host_snapshot = Some(true);
-        assert!(p.to_run(1_000).host.alive);
+        assert_eq!(p.to_run(1_000).host.alive, Some(true));
     }
 
     #[test]

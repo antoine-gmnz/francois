@@ -447,7 +447,7 @@ pub struct RunIteration {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RunHost {
-    pub alive: bool,
+    pub alive: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -518,6 +518,8 @@ pub struct CohorteRun {
     pub cohorte_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattended: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ship_ready: Option<bool>,
     pub phases: Vec<Phase>,
     pub worktrees: Vec<Worktree>,
     pub gate: Option<Gate>,
@@ -580,7 +582,24 @@ pub struct CohorteDetection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
     pub cli: CliInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_executable: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_data_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization: Option<Initialization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_requests: Option<Vec<Gate>>,
     pub checked_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Initialization {
+    pub questions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<serde_json::Value>,
+    pub needs_review: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -726,7 +745,7 @@ pub struct CommandStep {
     pub cli: String,
     /// completed | pending | rejected | skipped
     pub outcome: String,
-    pub exit_code: i32,
+    pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -877,6 +896,10 @@ mod tests {
                 supported_range: SUPPORTED_RANGE.into(),
                 compatible: false,
             },
+            cli_executable: None,
+            cli_data_dir: None,
+            initialization: None,
+            pending_requests: None,
             checked_at: 1,
         };
         let json = serde_json::to_value(&det).unwrap();
@@ -911,7 +934,7 @@ mod tests {
             steps: vec![CommandStep {
                 cli: "cohorte deny run_a apr_b".into(),
                 outcome: "rejected".into(),
-                exit_code: 3,
+                exit_code: Some(3),
                 message: Some("nope".into()),
                 error_code: Some("conflict/unexpected".into()),
             }],

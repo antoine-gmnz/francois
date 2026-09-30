@@ -61,6 +61,7 @@ pub(super) fn apply(
                 server,
             });
         }
+        RuntimeEvent::RemoteObserved(state) => env.emit_remote(id, &state),
         RuntimeEvent::CommandsObserved(names) => {
             if engine
                 .with_session_mut(id, |s| capture_cli_commands(s, names.clone()))
@@ -79,6 +80,24 @@ pub(super) fn apply(
                 s.insert_agent(agent.clone());
             });
             env.emit_session(SessionEvent::AgentUpdate { agent });
+        }
+        RuntimeEvent::SubagentState {
+            agent_id,
+            status,
+            at,
+        } => {
+            let agent = engine
+                .with_session_mut(id, |s| {
+                    let agent = s.agents.get_mut(&agent_id)?;
+                    agent.status = status;
+                    agent.ended_at =
+                        matches!(agent.status.as_str(), "done" | "error").then_some(at);
+                    Some(agent.clone())
+                })
+                .flatten();
+            if let Some(agent) = agent {
+                env.emit_session(SessionEvent::AgentUpdate { agent });
+            }
         }
         RuntimeEvent::SubagentInput {
             agent_id,

@@ -124,7 +124,7 @@ fn later(runner: &dyn Runner, root: &str, args: &[String]) -> CommandStep {
     run_step(runner, root, args).unwrap_or_else(|e| CommandStep {
         cli: cli::display(args),
         outcome: "rejected".into(),
-        exit_code: -1,
+        exit_code: Some(-1),
         message: Some(e.message),
         error_code: Some(e.code.as_str().to_string()),
     })
@@ -205,7 +205,7 @@ pub(crate) fn send_to_fix(
         CommandStep {
             cli: cli::display(&fix),
             outcome: "skipped".into(),
-            exit_code: 0,
+            exit_code: Some(0),
             message: Some("Cohorte routes the findings after the denial".into()),
             error_code: None,
         }

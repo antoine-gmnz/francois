@@ -73,7 +73,7 @@ describe('runtimeCapabilities', () => {
   });
 
   it('preserves model and image actions while disabling unimplemented added capabilities', () => {
-    for (const runtime of RUNTIMES.filter((runtime) => runtime !== 'pi')) {
+    for (const runtime of RUNTIMES.filter((runtime) => runtime !== 'pi' && runtime !== 'codex')) {
       const caps = runtimeCapabilities(runtime);
       for (const capability of ADDED_CAPABILITIES) {
         expect(caps[capability].available).toBe(capability === 'modelSwitching' || capability === 'images');
@@ -111,25 +111,28 @@ describe('runtimeCapabilities', () => {
     expect(caps.skillsInstall.available).toBe(false);
   });
 
-  it('exposes local slash commands, usage, model, and image actions on codex', () => {
+  it('exposes Codex native resources, agents, context, compaction and resume actions', () => {
     const caps = runtimeCapabilities('codex');
     for (const capability of CAPABILITIES) {
       expect(caps[capability].available).toBe(
         capability === 'interactiveCommands'
           || capability === 'usageBar'
           || capability === 'modelSwitching'
-          || capability === 'images',
+          || capability === 'images'
+          || capability === 'mcp'
+          || capability === 'skills'
+          || capability === 'skillsInstall'
+          || capability === 'subagents'
+          || capability === 'compaction'
+          || capability === 'resumableSessions'
+          || capability === 'contextMetrics',
       );
     }
   });
 
-  it("states codex's sandbox rather than calling permissions an unbuilt gap (FR-16)", () => {
-    // The wording carries a real distinction: every other false on this row is
-    // something we have not built ("yet"), but Codex tool calls ARE governed —
-    // by an OS sandbox chosen from permissionMode (FR-9). A "not available yet"
-    // here would imply they run ungoverned, which is the opposite of the truth.
+  it('requires a live Codex connection for native approval cards', () => {
     const reason = runtimeCapabilities('codex').permissions.reason!;
-    expect(reason).toBe('Codex enforces permissions with its own sandbox.');
+    expect(reason).toBe('Native approvals require a live Codex connection.');
     expect(reason).not.toMatch(/yet/);
   });
 

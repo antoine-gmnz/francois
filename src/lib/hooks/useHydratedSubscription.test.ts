@@ -118,11 +118,13 @@ describe('startHydratedSubscription', () => {
     let emit: (e: string) => void = () => {};
     let resolveSubscribe: () => void = () => {};
     let resolveFetch: (res: Result<string[]>) => void = () => {};
+    let rejectFetch: (error: Error) => void = () => {};
     const unlisten = vi.fn();
     const fetchInitial = vi.fn(
       () =>
-        new Promise<Result<string[]>>((r) => {
+        new Promise<Result<string[]>>((r, reject) => {
           resolveFetch = r;
+          rejectFetch = reject;
         }),
     );
     const stop = startHydratedSubscription<string, string[]>({
@@ -148,6 +150,7 @@ describe('startHydratedSubscription', () => {
       resolveSubscribe: () => resolveSubscribe(),
       resolveFetch: (data: string[]) => resolveFetch({ ok: true, data }),
       failFetch: (message: string) => resolveFetch({ ok: false, error: { code: 'INTERNAL', message } }),
+      rejectFetch: () => rejectFetch(new Error('transport failure')),
     };
   }
 
@@ -204,5 +207,15 @@ describe('startHydratedSubscription', () => {
     await Promise.resolve();
     expect(h.errors).toEqual(['no such session']);
     expect(h.seeded).toEqual([]);
+  });
+
+  it('keeps live events flowing after a rejected snapshot', async () => {
+    const h = harness();
+    h.resolveSubscribe(); await Promise.resolve(); await Promise.resolve();
+    h.emit('buffered'); h.rejectFetch();
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(h.errors).toHaveLength(1);
+    h.emit('live');
+    expect(h.applied).toEqual(['buffered', 'live']);
   });
 });

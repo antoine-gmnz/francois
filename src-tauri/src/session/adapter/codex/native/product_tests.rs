@@ -395,24 +395,17 @@ fn connection_loss_clears_live_capabilities_and_leaves_the_pending_card_inert() 
         SessionEvent::PermissionAsked { block_id, .. } => Some(block_id.clone()),
         _ => None,
     });
-    // Live scope: the negotiated control is authorized; unproven parity is not,
-    // even with the native server connected.
+    // Live approvals and resource controls are authorized; orchestration and
+    // remote service controls remain separate integrations.
     assert_eq!(env.engine.require_capability("s1", "permissions"), Ok(()));
-    for key in [
-        "mcp",
-        "subagents",
-        "skills",
-        "skillsInstall",
-        "workflows",
-        "remoteControl",
-        "compaction",
-    ] {
-        assert_eq!(
-            env.engine.require_capability("s1", key).unwrap_err().0,
-            ErrorCode::RuntimeUnsupported,
-            "{key}"
-        );
-    }
+    assert_eq!(
+        env.engine
+            .require_capability("s1", "workflows")
+            .unwrap_err()
+            .0,
+        ErrorCode::RuntimeUnsupported
+    );
+
     wait(|| {
         effects
             .terminals

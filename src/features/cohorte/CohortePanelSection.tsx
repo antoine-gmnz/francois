@@ -26,7 +26,7 @@ import { detectionFor } from './linkage';
 import { derivePipeline, type PipelineCard } from './pipeline';
 import { PhasesList } from './PhasesList';
 import { openCohorteTerminal, openPlumbingTerminal } from './terminal';
-import { cohorteBrainstormDisplay, cohortePlumbingLine, cohorteSpecDisplay } from './command-display';
+import { cohortePlumbingLine, cohorteSpecDisplay } from './command-display';
 import { PipelineEmpty } from './PipelineEmpty';
 import { RunLog } from './RunLog';
 import { authHint, hostDead, panelSummary, runControls, runtimeLine, shortDigest, shortRunId } from './run-view';
@@ -78,7 +78,7 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
   const busy = useCohorteStore((s) => s.busy[run.runId] ?? null);
   const health = useCohorteStore((s) => s.watchHealth[run.projectRoot]);
   const authCli = useCohorteStore((s) => s.authCli[run.runId]);
-  const controls = runControls(run.view);
+  const controls = runControls(run.view, run.host.alive);
   const runtime = runtimeLine(run);
   const digest = shortDigest(run.snapshotDigest);
   return (
@@ -98,7 +98,7 @@ function RunPanel({ run, onTail }: { run: CohorteRun; onTail: () => void }) {
             </span>
           </div>
           <AnsweredBy runId={run.runId} className="cohorte-panel__note" />
-          {hostDead(run) && <div className="cohorte-panel__note cohorte-panel__note--warning">Run host is not running — Cohorte restarts it on the next command.</div>}
+          {hostDead(run) && <div className="cohorte-panel__note cohorte-panel__note--warning">Run host is not running.{controls.resume && ' Resume this run to restart its execution.'}</div>}
           {health && !health.healthy && (
             <div className="cohorte-panel__note">Cohorte not responding — retrying in {Math.ceil(health.nextPollInMs / 1000)}s</div>
           )}
@@ -252,7 +252,11 @@ function PipelineCardRow({ card, sessionId, isNew }: { card: PipelineCard; sessi
       return;
     }
     if (card.action.id === 'brainstorm') {
-      void openCohorteTerminal(sessionId, cohorteBrainstormDisplay(card.featureId), { execute: true });
+      useCohorteActionsStore.getState().openSheet({ action: 'brainstorm', sessionId, featureId: card.featureId });
+      return;
+    }
+    if (card.action.id === 'continue-intake') {
+      void openCohorteTerminal(sessionId, `cohorte intake --continue ${card.featureId}`, { execute: true, argv: ['intake', '--continue', card.featureId] });
       return;
     }
     void openCohorteTerminal(sessionId, cohorteSpecDisplay(card.featureId), { execute: true });

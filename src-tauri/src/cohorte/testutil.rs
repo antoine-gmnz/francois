@@ -648,6 +648,10 @@ pub(crate) fn sample_detection() -> CohorteDetection {
             supported_range: SUPPORTED_RANGE.into(),
             compatible: true,
         },
+        cli_executable: None,
+        cli_data_dir: None,
+        initialization: None,
+        pending_requests: None,
         checked_at: BASE_MS,
     }
 }

@@ -62,6 +62,7 @@ pub(crate) fn close_session(app: &AppHandle, engine: &Engine, id: &str) -> Resul
     )?;
     if let Some(resource) = state.take_session_runtime(id)? {
         resource.close();
+        crate::session::remote::emit_status(app, id, &crate::session::remote::RemoteState::Off);
     }
     Ok(())
 }

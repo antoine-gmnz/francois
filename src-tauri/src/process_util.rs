@@ -880,3 +880,53 @@ fn login_shell_output_collection_obeys_deadline_and_drains_verbose_startup() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Open a native OAuth page through the system browser. The launcher is reaped
+/// independently of the browser it asks the desktop to open.
+pub(crate) fn open_http_url(value: &str) -> std::io::Result<()> {
+    validate_http_url(value)?;
+    #[cfg(target_os = "macos")]
+    let command = spawn("open").arg(value);
+    #[cfg(target_os = "windows")]
+    let command = spawn("rundll32.exe").args(["url.dll,FileProtocolHandler", value]);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let command = spawn("xdg-open").arg(value);
+    let mut child = command.start()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+fn validate_http_url(value: &str) -> std::io::Result<()> {
+    let url = tauri::Url::parse(value).map_err(std::io::Error::other)?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || value.chars().any(char::is_control)
+    {
+        return Err(std::io::Error::other("Invalid OAuth browser URL"));
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod browser_tests {
+    use super::*;
+    #[test]
+    fn oauth_browser_urls_require_web_scheme_and_host() {
+        for url in [
+            "https://oauth.example/authorize?state=fixture",
+            "http://localhost:1455/auth",
+        ] {
+            assert!(validate_http_url(url).is_ok());
+        }
+        for url in [
+            "javascript:alert(1)",
+            "file:///tmp/auth",
+            "https://user:secret@host/auth",
+            "https://host/\nunsafe",
+        ] {
+            assert!(validate_http_url(url).is_err());
+        }
+    }
+}

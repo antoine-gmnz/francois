@@ -12,6 +12,12 @@ import type { StateKind } from '../../ui/state-kind';
 
 export type McpScopeFilter = 'all' | McpScope;
 
+export function mcpConfigurationNote(nativeAuth: boolean): string {
+  return nativeAuth
+    ? 'Servers come from the active Codex account and project config.toml files.'
+    : 'Project servers come from .mcp.json; user servers from your Claude config.';
+}
+
 export function mcpScopeCounts(servers: McpServerInfo[]): Record<McpScopeFilter, number> {
   const counts: Record<McpScopeFilter, number> = { all: servers.length, project: 0, user: 0, local: 0 };
   for (const server of servers) if (server.scope) counts[server.scope] += 1;
@@ -29,7 +35,8 @@ export interface McpStatusView {
 }
 
 /** The STATUS cell: a state glyph and a sentence. */
-export function mcpStatusView(server: McpServerInfo): McpStatusView {
+export function mcpStatusView(server: McpServerInfo, nativeAuth = false): McpStatusView {
+  if (nativeAuth && server.status === 'pending') return { kind: 'approval', text: 'Sign-in required', tone: 'attention' };
   switch (server.status) {
     case 'connected':
       return { kind: 'done', text: 'Healthy', tone: 'default' };
@@ -48,7 +55,7 @@ export function mcpStatusView(server: McpServerInfo): McpStatusView {
 }
 
 /** "3 healthy · 1 failing · 1 off" — only the buckets that are present. */
-export function mcpHealthSummary(servers: McpServerInfo[]): { text: string; failing: boolean } {
+export function mcpHealthSummary(servers: McpServerInfo[], nativeAuth = false): { text: string; failing: boolean } {
   const count = (pred: (s: McpServerInfo) => boolean) => servers.filter(pred).length;
   const healthy = count((s) => s.status === 'connected');
   const failing = count((s) => s.status === 'error');
@@ -59,7 +66,7 @@ export function mcpHealthSummary(servers: McpServerInfo[]): { text: string; fail
     healthy ? `${healthy} healthy` : null,
     failing ? `${failing} failing` : null,
     starting ? `${starting} starting` : null,
-    pending ? `${pending} ${pending === 1 ? 'needs' : 'need'} approval` : null,
+    pending ? `${pending} ${pending === 1 ? 'needs' : 'need'} ${nativeAuth ? 'sign-in' : 'approval'}` : null,
     off ? `${off} off` : null,
   ].filter(Boolean);
   return { text: parts.join(' · '), failing: failing > 0 };

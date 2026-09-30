@@ -248,6 +248,9 @@ pub(crate) fn start_runtime(
         return application::start(&state, &adapter::ClaudeCodeAdapter, effects, ctx).map(|_| ());
     }
     if runtime == AgentRuntime::Codex {
+        if let Some(home) = ctx.execution.identity.home.as_deref() {
+            crate::account::inherit_codex_resources(home)?;
+        }
         let resource = state.session_runtime(
             &ctx.session_id,
             &ctx.execution.identity,

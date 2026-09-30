@@ -1,3 +1,4 @@
+import type { RuntimeToolCall } from './runtime-tool-call';
 // contract/common.ts — shared vocabulary for all Francois feature contracts.
 // Feature contracts (contract/<feature-id>.ts) import from this file and never redefine these types.
 // Specs reference these names verbatim.
@@ -388,19 +389,8 @@ export interface RuntimeFailure {
  * pi-transcript-events: a normalized generic tool-call lifecycle, sanitized in the
  * adapter before it crosses IPC — never the raw Pi RPC input/output object.
  */
-export interface RuntimeToolCall {
-  id: string;
-  name: string;
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
-  inputText: string;
-  outputText: string;
-  /** true ⇒ `inputText` was cut at the 64 KiB preview bound (pi-transcript-events FR-4). */
-  inputTruncated: boolean;
-  /** true ⇒ `outputText` was cut at the 64 KiB preview bound (pi-transcript-events FR-4). */
-  outputTruncated: boolean;
-  startedAt?: number;
-  completedAt?: number;
-}
+export type { RuntimeToolCall } from './runtime-tool-call';
+
 
 /** pi-transcript-events FR-7: a user-attached file/image, resolved against the
  *  existing attachment ingest/asset scopes — never a base64 payload over IPC. */
@@ -981,6 +971,7 @@ export type SessionEvent =
   // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
   // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
+  | { type: 'tool.update'; sessionId: SessionId; blockId: BlockId; tool: RuntimeToolCall }
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)

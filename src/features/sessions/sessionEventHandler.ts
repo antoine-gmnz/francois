@@ -83,6 +83,7 @@ export function handleSessionEvent(e: SessionEvent, ctx: SessionEventContext): v
     // instead of silently landing here.
     case 'assistant.delta':
     case 'assistant.done':
+    case 'tool.update':
     case 'tool.done':
     case 'command.started':
     case 'command.output':

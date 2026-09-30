@@ -117,6 +117,14 @@ pub enum SessionEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
     },
+    #[serde(rename = "tool.update")]
+    ToolUpdate {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        tool: super::runtime_events::RuntimeToolCall,
+    },
     #[serde(rename = "tool.done")]
     ToolDone {
         #[serde(rename = "sessionId")]

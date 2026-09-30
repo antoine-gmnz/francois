@@ -12,7 +12,9 @@
 //    it — every CLOUD_* code below therefore gets Francois' own wording, and
 //    anything else is scrubbed on the way out.
 
-import type { AppError, CloudProvenance, ErrorCode, ProjectId, Result, SessionId } from '../../../contract/common';
+import type { AccountId, AppError, CloudProvenance, ErrorCode, ProjectId, Result, SessionId } from '../../../contract/common';
+import type { Account } from '../../../contract/multi-account';
+import { accountSupportsClaudeTools } from '../../lib/runtimeCapability';
 import { formatRelativeTime } from '../../../contract/fleet-board';
 import {
   CLOUD_ADOPT_STEPS,
@@ -24,6 +26,19 @@ import {
   type CloudSession,
   type CloudSessionId,
 } from '../../../contract/cloud-sessions';
+
+export function cloudAccounts(accounts: Account[]): Account[] {
+  return accounts.filter(accountSupportsClaudeTools);
+}
+
+/** Never route Claude cloud calls through a different provider's app default. */
+export function cloudAccountId(accounts: Account[], selectedId: AccountId | null): AccountId | null {
+  const eligible = cloudAccounts(accounts);
+  return eligible.find(account => account.id === selectedId)?.id
+    ?? eligible.find(account => account.isDefault)?.id
+    ?? eligible[0]?.id
+    ?? null;
+}
 
 // ---------- FR-3: reading the ref the user pasted ----------
 

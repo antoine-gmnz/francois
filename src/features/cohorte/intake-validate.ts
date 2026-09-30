@@ -3,7 +3,12 @@
 // rules (src-tauri/src/cohorte/actions_cli.rs); the core is still the source
 // of truth for what it actually accepts (INVALID_INPUT stays possible).
 
-import { COHORTE_ACTION_LIMITS } from '../../../contract/cohorte-actions';
+import { COHORTE_ACTION_LIMITS, type CohorteIntakeResult } from '../../../contract/cohorte-actions';
+
+export function intakeNextAction(result: Pick<CohorteIntakeResult, 'triage' | 'questions'>): 'brainstorm' | 'spec' | null {
+  if (result.questions.length > 0) return null;
+  return result.triage === 'patch' ? 'spec' : result.triage === 'feature' ? 'brainstorm' : null;
+}
 
 export interface IntakeFields {
   title: string;

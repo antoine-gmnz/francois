@@ -59,7 +59,7 @@ export function applySeedStatus(map: RemoteMap, status: RemoteControlStatus): Re
 export function applyRemoteResult(map: RemoteMap, status: RemoteControlStatus): RemoteMap {
   const current = map[status.sessionId];
   if (
-    current?.phase === 'active' &&
+    (current?.phase === 'active' || current?.phase === 'pairing' || current?.phase === 'enabled') &&
     status.state.phase === 'starting' &&
     current.startedAt >= status.state.startedAt
   ) {
@@ -84,9 +84,16 @@ export const remoteStateOf = (map: RemoteMap, sessionId: SessionId): RemoteContr
 export const remoteUrlOf = (state: RemoteControlState): string | null =>
   state.phase === 'active' ? state.url : null;
 
+/** A displayed code can expire before the native status refresh arrives. */
+export function remotePairingAction(state: RemoteControlState): string | null {
+  if (state.phase === 'enabled') return 'get pairing code';
+  if (state.phase === 'pairing') return 'refresh pairing code';
+  return null;
+}
+
 /** True while a host exists — `starting` counts, so the toggle reads as ON at once. */
 export const isRemoteLive = (state: RemoteControlState): boolean =>
-  state.phase === 'starting' || state.phase === 'active';
+  state.phase === 'starting' || state.phase === 'active' || state.phase === 'pairing' || state.phase === 'enabled';
 
 /**
  * The claude.ai session id (`session_01AB…`) for a compact display, or null. Kept
@@ -108,6 +115,9 @@ export function remoteLabel(state: RemoteControlState): string {
       return 'remote control connecting…';
     case 'active':
       return 'remote control active';
+    case 'enabled':
+    case 'pairing':
+      return 'Codex remote control enabled';
     case 'failed':
       return `remote control failed — ${state.error.message}`;
   }
@@ -121,6 +131,9 @@ export function remoteDotTone(state: RemoteControlState): 'idle' | 'pending' | '
     case 'starting':
       return 'pending';
     case 'active':
+      return 'ok';
+    case 'enabled':
+    case 'pairing':
       return 'ok';
     case 'failed':
       return 'error';

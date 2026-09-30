@@ -263,7 +263,7 @@ if (p.kind === 'legacy') setDraft(draftFromProfile(p));
                         value={draft.systemPrompt}
                         onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))}
                         rows={6}
-                        placeholder="replaces Claude Code's own system prompt — leave blank to keep it"
+                        placeholder="replaces the selected runtime's base instructions — leave blank to keep them"
                       />
                       {draft.systemPrompt.trim() !== '' && <div className="pj-footer-note">{REPLACE_MODE_NOTE}</div>}
                     </div>
@@ -280,7 +280,7 @@ if (p.kind === 'legacy') setDraft(draftFromProfile(p));
                           model gets a quiet advisory beside it, never a block. */}
                       {advisory.length > 0 && (
                         <div className="pj-footer-note">
-                          not modelled by Francois — passed through verbatim: {advisory.join(', ')}
+                          validated against the selected runtime when the session starts: {advisory.join(', ')}
                         </div>
                       )}
                       {/* FR-9: refused inline, NAMING the flag and the reason. */}

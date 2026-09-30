@@ -34,7 +34,29 @@ pub(crate) struct ExecutionIdentity {
     pub runtime: String,
     pub worktree_distro: Option<String>,
 }
+/// Resource commands carry application-domain payloads, never vendor RPC names.
+#[derive(Clone)]
+pub(crate) enum ResourceRequest {
+    RemoteStart(String),
+    RemoteStop,
+    RemoteGet,
+    RequestUrl(String),
+    McpList,
+    McpDetail(String),
+    McpAttach(Value),
+    McpDetach(String),
+    McpReconnect(String),
+    SkillsList,
+    SkillEnable(String),
+    AgentStop(String),
+}
 pub(crate) trait SessionRuntime: RuntimePort + Send + Sync {
+    fn resource(&self, _request: ResourceRequest) -> Result<Value, AppError> {
+        Err(AppError::new(
+            ErrorCode::RuntimeUnsupported,
+            "Runtime resources are unavailable",
+        ))
+    }
     fn close(&self);
 }
 pub(crate) struct SessionRuntimeBinding {
@@ -142,10 +164,16 @@ pub(crate) enum RuntimeEvent {
         card: CommandCard,
     },
     McpObserved(McpServerInfo),
+    RemoteObserved(super::remote::RemoteState),
     CommandsObserved(Vec<String>),
     SubagentStarted {
         tool_use_id: String,
         agent: AgentInfo,
+    },
+    SubagentState {
+        agent_id: String,
+        status: String,
+        at: u64,
     },
     SubagentInput {
         agent_id: String,
@@ -206,12 +234,17 @@ pub(crate) enum RuntimeEvent {
         tool: String,
         summary: String,
     },
+    ToolSnapshot {
+        block_id: String,
+        tool: super::runtime_events::RuntimeToolCall,
+    },
     ToolCompleted {
         block_id: String,
         meta: String,
         detail: Option<StepDetail>,
         affects_workspace: bool,
     },
+    Metrics(super::events::RuntimeMetrics),
     Usage {
         context_used_tokens: Option<u64>,
         input_tokens: Option<u64>,
@@ -378,7 +411,15 @@ pub(crate) fn apply_event(
         return Ok(ApplyOutcome::Duplicate);
     }
     let disconnect = matches!(&envelope.event, RuntimeEvent::ConnectionClosed(_));
-    if state.closed && !disconnect || state.disconnected {
+    let observation = matches!(
+        &envelope.event,
+        RuntimeEvent::SubagentStarted { .. }
+            | RuntimeEvent::SubagentState { .. }
+            | RuntimeEvent::SubagentObserved { .. }
+            | RuntimeEvent::McpObserved(_)
+            | RuntimeEvent::RemoteObserved(_)
+    );
+    if state.closed && !disconnect && !observation || state.disconnected {
         return Ok(ApplyOutcome::Closed);
     }
     if disconnect {

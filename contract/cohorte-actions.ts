@@ -50,6 +50,9 @@ export interface CohorteFeatureChoice {
   kind: string;
   /** epoch ms from `updated_at`; 0 when missing */
   updatedAt: number;
+  /** Native preparation phase; determines the CLI continuation command. */
+  phase?: string;
+  artifacts?: string[];
 }
 
 export type CohorteActionId =

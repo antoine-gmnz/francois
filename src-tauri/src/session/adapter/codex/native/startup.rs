@@ -7,6 +7,7 @@ pub(super) struct NativeSettings<'a> {
     pub cwd: &'a str,
     pub model: &'a str,
     pub effort: Option<&'a str>,
+    pub system_prompt: Option<&'a str>,
     pub permission_mode: &'a str,
 }
 impl NativeSettings<'_> {
@@ -32,6 +33,9 @@ impl NativeSettings<'_> {
         resume: Option<&str>,
     ) -> Result<Value, ProtocolError> {
         let mut params = json!({"cwd":self.cwd,"model":self.model,"sandbox":sandbox_for(self.permission_mode).as_str(),"approvalPolicy":self.approval_policy(),"approvalsReviewer":"user"});
+        if let Some(prompt) = self.system_prompt {
+            params["baseInstructions"] = json!(prompt);
+        }
         let method = match resume {
             Some(anchor) => {
                 if anchor.is_empty() {
@@ -54,6 +58,7 @@ impl NativeSettings<'_> {
         thread: &str,
         text: &str,
         local_images: &[String],
+        additional_inputs: &[Value],
     ) -> Result<Value, ProtocolError> {
         if thread.is_empty() {
             return Err(ProtocolError::MalformedEnvelope);
@@ -64,7 +69,9 @@ impl NativeSettings<'_> {
                 .iter()
                 .map(|path| json!({"type":"localImage","path":path})),
         );
+        input.extend_from_slice(additional_inputs);
         let mut params = json!({"threadId":thread,"input":input,"cwd":self.cwd,"model":self.model,"sandboxPolicy":self.sandbox_policy(),"approvalPolicy":self.approval_policy(),"approvalsReviewer":"user"});
+        params["collaborationMode"] = json!({"mode":if self.permission_mode == "plan" { "plan" } else { "default" }, "settings":{"model":self.model,"reasoning_effort":self.effort,"developer_instructions":null}});
         if let Some(effort) = self.effort {
             params["effort"] = json!(effort);
         }
@@ -99,6 +106,7 @@ mod tests {
             model: "chosen-model",
             effort: Some("low"),
             permission_mode: mode,
+            system_prompt: None,
         }
     }
     #[test]
@@ -149,6 +157,7 @@ mod tests {
                     "thread",
                     "literal $() prompt",
                     &["/repo/image.png".into()],
+                    &[],
                 )
                 .unwrap();
             assert_eq!(wire["params"]["sandboxPolicy"]["type"], sandbox);

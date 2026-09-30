@@ -29,7 +29,7 @@ import { sessionCreate, sessionSend } from '../../lib/api';
 import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useMounted } from '../../lib/hooks/useMounted';
 import { IS_WINDOWS } from '../../lib/platform';
-import { profileIsRetired, accountIsRetired } from '../../lib/runtimeCapability';
+import { profileIsRetired, accountIsRetired, accountSupportsClaudeTools } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { ChipGroup } from '../../ui/ChipGroup';
@@ -161,6 +161,7 @@ export function NewTaskDialog({
 
   const profiles = useStore((s) => s.profiles);
   const selectedAccount = accounts.find((a) => a.id === accountId) ?? null;
+  const supportsGitApproval = accountSupportsClaudeTools(selectedAccount);
   const isPiAccount = selectedAccount !== null && accountIsRetired(selectedAccount);
 
   const pendingNewSessionProfileId = useStore((s) => s.pendingNewSessionProfileId);
@@ -257,7 +258,7 @@ export function NewTaskDialog({
       permissionMode: permissionMode !== 'default' ? permissionMode : undefined,
       responseMode: responseMode !== 'default' ? responseMode : undefined,
       runtime: runtime !== 'native' ? runtime : undefined,
-      allowGit: allowGit || undefined,
+      allowGit: (supportsGitApproval && allowGit) || undefined,
       projectId: projectId || undefined,
       worktree: worktreeOpts,
       accountId: accountIdForSessionCreate(accountId),
@@ -490,7 +491,7 @@ export function NewTaskDialog({
                   runtime: IS_WINDOWS ? runtime : null,
                   permissionMode,
                   responseMode,
-                  allowGit,
+                  allowGit: supportsGitApproval ? allowGit : null,
                   baseRef: worktree.mode === 'create' && probe?.isRepo ? worktree.baseRef.trim() || probe.defaultBranch || 'main' : null,
                 }).map((item) => (
                   <span key={item.key} className={item.changed ? 'new-task__recap-item new-task__recap-item--changed' : 'new-task__recap-item'}>
@@ -564,7 +565,7 @@ export function NewTaskDialog({
                 )}
                 <PermissionsRow value={permissionMode} onChange={setPermissionMode} />
                 <ResponseRow value={responseMode} onChange={setResponseMode} />
-                <GitRow value={allowGit} onChange={setAllowGit} />
+                {supportsGitApproval && <GitRow value={allowGit} onChange={setAllowGit} />}
                 {worktree.mode === 'create' && probe?.isRepo && (
                   <div>
                     <label className="new-session-modal__label">BASE REF</label>

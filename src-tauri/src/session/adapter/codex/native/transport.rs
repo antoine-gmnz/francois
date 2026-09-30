@@ -39,6 +39,7 @@ impl Transport {
         ctx: &crate::session::application::TurnContext,
         receive: Receiver,
     ) -> Result<Arc<Self>, AppError> {
+        super::invocation::profile_args(&ctx.extra_args)?;
         let (program, args) = super::invocation::invocation(ctx);
         Self::spawn_program(
             &program,

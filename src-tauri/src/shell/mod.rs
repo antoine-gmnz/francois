@@ -197,6 +197,7 @@ struct ShellEntry {
     /// Some(_) once the user renames the shell (FR-4); None while it wears its
     /// auto name.
     custom_name: Option<String>,
+    runtime_override: Option<String>,
     shell_name: String,
     cwd: String,
     cols: u16,
@@ -366,6 +367,17 @@ impl Registry {
             .map(|e| e.id.clone())
     }
 
+    pub(crate) fn pin_native(&self, shell_id: &str) {
+        if let Some(entry) = self.lock().shells.get_mut(shell_id) {
+            entry.runtime_override = Some("native".into());
+        }
+    }
+    pub(crate) fn runtime_override(&self, shell_id: &str) -> Option<String> {
+        self.lock()
+            .shells
+            .get(shell_id)
+            .and_then(|entry| entry.runtime_override.clone())
+    }
     pub(crate) fn get_info(&self, shell_id: &str) -> Option<ShellInfo> {
         self.lock().shells.get(shell_id).map(|e| e.info())
     }
@@ -419,6 +431,7 @@ impl Registry {
             seq,
             ordinal,
             custom_name: None,
+            runtime_override: None,
             shell_name: pty.shell_name,
             cwd: pty.cwd,
             cols: pty.cols,

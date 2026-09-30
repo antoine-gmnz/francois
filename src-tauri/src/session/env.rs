@@ -25,6 +25,7 @@ pub trait SessionEnv: Send + Sync {
     fn emit_session(&self, ev: SessionEvent);
     fn emit_agent(&self, ev: AgentEvent);
     fn emit_workflow_detail(&self, ev: WorkflowDetailEvent);
+    fn emit_remote(&self, _session_id: &str, _state: &super::remote::RemoteState) {}
     fn persist(&self);
     /// Legacy observation environments never publish native capability snapshots.
     fn publish_meta(&self, _session_id: &str) {}
@@ -55,6 +56,9 @@ pub trait SessionEnv: Send + Sync {
 }
 
 impl SessionEnv for AppHandle {
+    fn emit_remote(&self, session_id: &str, state: &super::remote::RemoteState) {
+        super::remote::emit_status(self, session_id, state);
+    }
     fn publish_meta(&self, session_id: &str) {
         if let Some(meta) = self.engine().with_session(session_id, |s| s.meta(self)) {
             self.emit_session(SessionEvent::Meta { meta });

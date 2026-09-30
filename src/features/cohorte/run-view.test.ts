@@ -130,9 +130,21 @@ describe('controls, host, footer lines', () => {
     expect(runControls('paused')).toEqual({ pause: false, resume: true, cancel: true });
     expect(runControls('completed')).toEqual({ pause: false, resume: false, cancel: false });
   });
+  it('offers resume only for states accepted by native Cohorte execution', () => {
+    expect(runControls('failed')).toEqual({ pause: false, resume: true, cancel: true });
+    for (const view of ['blocked', 'auth', 'quota'] as const) {
+      expect(runControls(view)).toEqual({ pause: true, resume: false, cancel: true });
+    }
+  });
+  it('offers resume for a running native run only when its worker is known to be stopped', () => {
+    expect(runControls('running', false)).toEqual({ pause: false, resume: true, cancel: true });
+    expect(runControls('running', null)).toEqual({ pause: true, resume: false, cancel: true });
+    expect(runControls('running', true)).toEqual({ pause: true, resume: false, cancel: true });
+  });
   it('flags a dead host only on a live run', () => {
     expect(hostDead({ view: 'running', host: { alive: false } })).toBe(true);
     expect(hostDead({ view: 'completed', host: { alive: false } })).toBe(false);
+    expect(hostDead({ view: 'running', host: { alive: null } })).toBe(false);
   });
   it('formats the runtime, digest and policy lines', () => {
     expect(runtimeLine({ runtime: { id: 'Pi', version: '1', pinDigest: 'x' } })).toBe('Pi runtime · snapshot pinned');

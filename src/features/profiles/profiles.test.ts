@@ -14,7 +14,19 @@ import {
     removeProfileConfirmText,
     resolveProfile,
     resolveProjectDefaultProfileId,
+    profilePromptNote,
+    profileArgsNote,
+    REPLACE_MODE_NOTE,
 } from './profiles';
+
+it('describes native Codex profile instructions and rejects Claude argv expectations', () => {
+  expect(profilePromptNote({ kind: 'codex-cli' })).toContain('Codex');
+  expect(profilePromptNote({ kind: 'codex-cli' })).toContain('base instructions');
+  expect(profileArgsNote({ kind: 'codex-cli' })).toContain('configuration overrides');
+  expect(profileArgsNote({ kind: 'codex-cli' })).toContain('Claude-specific options are rejected');
+  expect(profilePromptNote({ kind: 'claude-code-oauth' })).toContain('Claude Code');
+  expect(REPLACE_MODE_NOTE).toContain('selected runtime');
+});
 
 function profile(overrides: Partial<Extract<SessionProfile, { kind: 'legacy' }>> = {}): SessionProfile {
   return {

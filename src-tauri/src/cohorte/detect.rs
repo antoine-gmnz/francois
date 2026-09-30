@@ -154,6 +154,10 @@ pub(crate) fn detect_uncached(
             supported_range: SUPPORTED_RANGE.into(),
             compatible: false,
         },
+        cli_executable: None,
+        cli_data_dir: None,
+        initialization: None,
+        pending_requests: None,
         checked_at: now_ms(),
     };
     if start.is_empty() || !Path::new(&start).is_dir() {
