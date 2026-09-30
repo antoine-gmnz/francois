@@ -5,6 +5,7 @@ const cwd = process.cwd();
 const home = process.env.CODEX_HOME;
 const configFile = `${home}/resource-config.json`;
 let config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+function sameDirectory(path) { return fs.realpathSync.native(path) === fs.realpathSync.native(cwd); }
 function reply(id, result) { process.stdout.write(JSON.stringify({id, result}) + '\n'); }
 readline.createInterface({input:process.stdin}).on('line', line => {
   const message = JSON.parse(line);
@@ -13,7 +14,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     case 'initialize': reply(message.id, {userAgent:'fixture'}); break;
     case 'initialized': break;
     case 'config/read':
-      if (message.params.cwd !== cwd) throw Error('wrong cwd');
+      if (!sameDirectory(message.params.cwd)) throw Error('wrong cwd');
       reply(message.id, {config, layers:[{name:{type:'user',file:`${home}/config.toml`},version:'v1',config,disabledReason:null}]}); break;
     case 'mcpServerStatus/list':
       reply(message.id, {data:Object.keys(config.mcp_servers).map(name => ({name,runtimeStatus:message.params.threadId ? 'connected' : null,tools:{one:{}},toolsError:null})),nextCursor:null}); break;
@@ -22,7 +23,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
       fs.writeFileSync(configFile, JSON.stringify(config)); reply(message.id,{}); break;
     case 'config/mcpServer/reload': reply(message.id,{}); break;
     case 'skills/list':
-      if (message.params.cwds[0] !== cwd) throw Error('wrong skill cwd');
+      if (!sameDirectory(message.params.cwds[0])) throw Error('wrong skill cwd');
       reply(message.id,{data:[{cwd,skills:[{name:'demo',description:'native fixture',path:`${home}/skills/demo/SKILL.md`,scope:'user',enabled:config.skillEnabled,pluginId:null}],errors:[]}]}); break;
     case 'skills/config/write':
       if (message.params.path !== `${home}/skills/demo/SKILL.md`) throw Error('wrong skill path');

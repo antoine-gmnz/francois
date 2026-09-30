@@ -584,7 +584,13 @@ mod tests {
         )
         .unwrap();
         let mut ctx = super::super::integration_tests::context(1, None);
-        ctx.cwd = cwd.canonicalize().unwrap().to_string_lossy().into_owned();
+        // Keep a valid but non-normalized path: the peer may report the same
+        // working directory with a different spelling on Windows.
+        ctx.cwd = cwd
+            .join("..")
+            .join("project")
+            .to_string_lossy()
+            .into_owned();
         let home = home.canonicalize().unwrap();
         ctx.execution.environment =
             vec![("CODEX_HOME".into(), home.to_string_lossy().into_owned())];
