@@ -87,13 +87,27 @@ impl DiagnosticTail {
             self.bytes.extend_from_slice(chunk);
         }
     }
+    /// The last `lines` non-blank lines, lossily decoded — what a CLI prints
+    /// right before it dies ("Error: Unknown feature flag: …").
+    fn last_lines(&self, lines: usize) -> Option<String> {
+        let text = String::from_utf8_lossy(&self.bytes);
+        let mut tail: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .rev()
+            .take(lines)
+            .collect();
+        tail.reverse();
+        (!tail.is_empty()).then(|| tail.join("\n"))
+    }
 }
 pub(crate) struct OwnedChild {
     child: Mutex<Child>,
     tree_stopped: Mutex<bool>,
     stderr: Mutex<Option<std::thread::JoinHandle<()>>>,
-    // Retained for diagnostics consumers; raw native stderr is never published.
-    #[allow(dead_code)]
+    // Only the last few lines ever leave, and only once the child has died
+    // (`exit_diagnostic`): that is the one moment they explain something.
     diagnostic: Arc<Mutex<DiagnosticTail>>,
     #[cfg(windows)]
     job: windows::Job,
@@ -268,6 +282,30 @@ impl OwnedChild {
         self.job.terminate()?;
         *stopped = true;
         Ok(())
+    }
+    /// Why the child died, in its own words: once it has exited (waiting at
+    /// most `grace` for that, and for its stderr to drain), the last few lines
+    /// it wrote to stderr. `None` while it is still running or when it said
+    /// nothing. Does not reap or stop the tree — `wait`/`terminate` still own that.
+    pub fn exit_diagnostic(&self, grace: Duration) -> Option<String> {
+        let deadline = Instant::now() + grace;
+        while !matches!(self.try_wait(), Ok(Some(_))) {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        while self
+            .stderr
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|pump| !pump.is_finished())
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.diagnostic.lock().unwrap().last_lines(3)
     }
     pub fn terminate(&self) -> io::Result<ExitStatus> {
         self.stop_tree()?;

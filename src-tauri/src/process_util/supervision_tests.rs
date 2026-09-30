@@ -45,6 +45,14 @@ fn native_child_fixture() {
                 .unwrap();
         }
         "crash" => std::process::exit(7),
+        "complain" => {
+            use std::io::Write;
+            // Straight to the handle: the test harness captures `eprintln!`.
+            std::io::stderr()
+                .write_all(b"noise one\nnoise two\n\nWARNING: proceeding\nError: Unknown feature flag: nope\n")
+                .unwrap();
+            std::process::exit(1);
+        }
         _ => panic!("unknown fixture"),
     }
 }
@@ -162,4 +170,31 @@ fn owned_children_are_isolated_and_termination_is_idempotent() {
     assert!(one.try_wait().unwrap().is_some());
     assert!(two.try_wait().unwrap().is_none());
     two.terminate().unwrap();
+}
+
+#[test]
+fn a_dead_child_explains_itself_with_its_last_stderr_lines() {
+    let child = fixture("complain");
+    let said = child.exit_diagnostic(Duration::from_secs(8)).unwrap();
+    // The cargo test harness prints its own lines around the fixture; the
+    // fixture's last words are what must survive, in order.
+    assert!(
+        said.ends_with("WARNING: proceeding\nError: Unknown feature flag: nope"),
+        "{said:?}"
+    );
+    assert!(said.lines().count() <= 3);
+    assert!(!child.wait().unwrap().success());
+}
+#[test]
+fn a_running_child_has_no_exit_diagnostic_yet() {
+    let child = fixture("sleep");
+    assert_eq!(child.exit_diagnostic(Duration::from_millis(50)), None);
+    child.terminate().unwrap();
+}
+#[test]
+fn last_lines_skips_blanks_and_keeps_order() {
+    let mut tail = DiagnosticTail::default();
+    tail.push(b"a\r\n\n  b  \nc\n\n");
+    assert_eq!(tail.last_lines(2).as_deref(), Some("b\nc"));
+    assert_eq!(DiagnosticTail::default().last_lines(3), None);
 }

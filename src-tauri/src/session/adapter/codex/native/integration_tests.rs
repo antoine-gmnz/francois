@@ -400,3 +400,118 @@ fn native_usage_separates_occupancy_from_aggregate_and_absent_usage_stays_unknow
         .any(|e| matches!(e.event, RuntimeEvent::Usage { .. })));
     runtime.close();
 }
+
+/// Codex asks before any MCP tool call (elicitation `mcp_tool_call`); the
+/// card must appear under Claude Code's tool name and Allow must reach Codex
+/// as an MCP `accept`, or no MCP tool could ever run outside bypass mode.
+#[test]
+fn mcp_tool_approval_is_asked_and_accepted_as_an_elicitation() {
+    let (runtime, _) = runtime("mcp-approval");
+    let sink = Arc::new(Sink::default());
+    let control = runtime.begin_turn(context(1, None), sink.clone()).unwrap();
+    let (block, ask) =
+        match sink.wait(|event| matches!(event, RuntimeEvent::PermissionAsked { .. })) {
+            RuntimeEvent::PermissionAsked { block_id, ask } => (block_id, ask),
+            _ => unreachable!(),
+        };
+    assert_eq!(ask.tool_name, "mcp__echo__echo");
+    assert_eq!(
+        ask.summary,
+        "Allow the echo MCP server to run tool \"echo\"?"
+    );
+    assert!(ask.input_json.contains("ping"));
+    assert_eq!(control.pending_counts().permissions, 1);
+    assert_eq!(
+        control.decide_permission(&block, PermissionDecision::Allow),
+        ControlAck::AwaitingConfirmation
+    );
+    sink.wait(
+        |event| matches!(event,RuntimeEvent::PermissionDecided{outcome,..} if outcome=="allowed"),
+    );
+    assert_eq!(final_text(&sink), "native response accepted");
+    sink.terminal();
+    assert!(!sink
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e.event, RuntimeEvent::ConnectionClosed(_))));
+    runtime.close();
+}
+/// `/clear` drops the session's anchor. The next turn must open a fresh thread
+/// on the live connection — it used to fail with "saved thread changed;
+/// reconnect explicitly" and tear the connection down.
+#[test]
+fn a_cleared_session_opens_a_fresh_thread_on_the_same_connection() {
+    let (runtime, spawns) = runtime("fresh-threads");
+    let anchor = |sink: &Sink| match sink.wait(|e| matches!(e, RuntimeEvent::ResumeAnchor(_))) {
+        RuntimeEvent::ResumeAnchor(anchor) => anchor,
+        _ => unreachable!(),
+    };
+    let first = Arc::new(Sink::default());
+    runtime.begin_turn(context(1, None), first.clone()).unwrap();
+    first.terminal();
+    assert_eq!(anchor(&first), "fresh-thread-1");
+
+    let cleared = Arc::new(Sink::default());
+    runtime
+        .begin_turn(context(2, None), cleared.clone())
+        .unwrap();
+    assert!(matches!(
+        cleared.wait(|e| matches!(e, RuntimeEvent::TurnFinished | RuntimeEvent::TurnFailed(_))),
+        RuntimeEvent::TurnFinished
+    ));
+    assert_eq!(anchor(&cleared), "fresh-thread-2");
+    assert_eq!(final_text(&cleared), "hello turn 2");
+
+    // …and the fresh thread is the one the following turn continues.
+    let next = Arc::new(Sink::default());
+    runtime
+        .begin_turn(context(3, Some("fresh-thread-2")), next.clone())
+        .unwrap();
+    assert!(matches!(
+        next.wait(|e| matches!(e, RuntimeEvent::TurnFinished | RuntimeEvent::TurnFailed(_))),
+        RuntimeEvent::TurnFinished
+    ));
+    assert_eq!(spawns.load(Ordering::SeqCst), 1);
+    runtime.close();
+}
+/// Whichever reaches the sink first carries the cause: a start failure and the
+/// connection loss race, and the projection turns a running session's
+/// `ConnectionClosed` into the turn's failure.
+fn failed_message(sink: &Sink) -> String {
+    match sink.wait(|e| {
+        matches!(
+            e,
+            RuntimeEvent::TurnFailed(_) | RuntimeEvent::ConnectionClosed(_)
+        )
+    }) {
+        RuntimeEvent::TurnFailed(error) | RuntimeEvent::ConnectionClosed(error) => error.message,
+        _ => unreachable!(),
+    }
+}
+/// A Codex that dies says why on stderr; that sentence is what the user reads.
+#[test]
+fn a_dying_codex_is_reported_in_its_own_words() {
+    let (runtime, _) = runtime("die");
+    let sink = Arc::new(Sink::default());
+    runtime.begin_turn(context(1, None), sink.clone()).unwrap();
+    let message = failed_message(&sink);
+    assert!(message.contains("Error: fixture exploded"), "{message}");
+    assert!(
+        message.starts_with("Codex exited unexpectedly"),
+        "{message}"
+    );
+}
+/// A refused request carries Codex's explanation, not a bare error code.
+#[test]
+fn a_rejected_turn_carries_codex_explanation() {
+    let (runtime, _) = runtime("reject-turn");
+    let sink = Arc::new(Sink::default());
+    runtime.begin_turn(context(1, None), sink.clone()).unwrap();
+    let message = failed_message(&sink);
+    assert!(
+        message.contains("model fixture-model is not available"),
+        "{message}"
+    );
+}
