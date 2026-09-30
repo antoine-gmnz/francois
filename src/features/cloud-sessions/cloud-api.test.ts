@@ -60,6 +60,17 @@ describe('cloud invoke wrappers', () => {
     await cloudAdopt(req);
     expect(invokeMock).toHaveBeenCalledWith('cloud_adopt', req);
   });
+
+  it('keeps one explicit account across cloud list, resolve and adoption', async () => {
+    const accountId = 'claude-account';
+    invokeMock.mockResolvedValue({ ok: true, data: null });
+    await cloudList(accountId);
+    await cloudResolve({ ref: SESSION.id, accountId });
+    await cloudAdopt({ ref: SESSION.id, projectId: 'p1', destination: 'worktree', accountId });
+    expect(invokeMock.mock.calls.map(([command, payload]) => [command, payload.accountId])).toEqual([
+      ['cloud_list', accountId], ['cloud_resolve', accountId], ['cloud_adopt', accountId],
+    ]);
+  });
 });
 
 describe('onCloudEvent', () => {

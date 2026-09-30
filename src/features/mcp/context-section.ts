@@ -28,7 +28,7 @@ export type NoteTone = 'faint' | 'danger' | 'attention';
  * figure the stream reports (it reports no per-server call count); a down one
  * reads `unavailable`, since its reason is in the banner above.
  */
-export function mcpNote(server: Pick<McpServerInfo, 'status' | 'toolCount'>): { text: string; tone: NoteTone } {
+export function mcpNote(server: Pick<McpServerInfo, 'status' | 'toolCount'>, nativeAuth = false): { text: string; tone: NoteTone } {
   switch (server.status) {
     case 'connected': {
       const n = server.toolCount ?? 0;
@@ -37,7 +37,7 @@ export function mcpNote(server: Pick<McpServerInfo, 'status' | 'toolCount'>): { 
     case 'connecting':
       return { text: 'connecting', tone: 'faint' };
     case 'pending':
-      return { text: 'needs approval', tone: 'attention' };
+      return { text: nativeAuth ? 'needs sign-in' : 'needs approval', tone: 'attention' };
     case 'rejected':
       return { text: 'not approved', tone: 'faint' };
     case 'approved':
@@ -47,8 +47,8 @@ export function mcpNote(server: Pick<McpServerInfo, 'status' | 'toolCount'>): { 
   }
 }
 
-export function downServers(servers: readonly McpServerInfo[]): McpServerInfo[] {
-  return servers.filter((s) => s.status === 'error');
+export function downServers(servers: readonly McpServerInfo[], nativeAuth = false): McpServerInfo[] {
+  return servers.filter((s) => s.status === 'error' || (nativeAuth && s.status === 'pending'));
 }
 
 /** "4 · 1 down", or just "4". */
@@ -62,7 +62,8 @@ export function mcpHeading(servers: readonly McpServerInfo[]): string {
  * tool count is only said when the core reported one — a server that never
  * connected has none to lose that we know of.
  */
-export function downMessage(server: Pick<McpServerInfo, 'errorMessage' | 'toolCount'>): string {
+export function downMessage(server: Pick<McpServerInfo, 'errorMessage' | 'toolCount'> & { status?: McpStatus }, nativeAuth = false): string {
+  if (nativeAuth && server.status === 'pending') return 'Sign in to connect this MCP server and load its tools.';
   const raw = server.errorMessage?.trim() || 'It stopped answering';
   const reason = /[.!?]$/.test(raw) ? raw : `${raw}.`;
   const cost =

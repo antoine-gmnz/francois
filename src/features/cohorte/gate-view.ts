@@ -12,11 +12,11 @@ interface KindCopy {
 }
 
 const KINDS: Record<string, KindCopy> = {
-  ship: { label: 'SHIP APPROVAL', question: (spec) => `Ship ${spec}?`, approve: 'Approve · ship' },
+  ship: { label: 'SHIP APPROVAL', question: (spec) => `Ship ${spec}?`, approve: 'Approve' },
   'review-leftovers': {
     label: 'REVIEW VERDICT',
     question: (spec) => `Ship ${spec}, or send it back to fix?`,
-    approve: 'Approve · ship',
+    approve: 'Approve',
   },
   'contract-change': { label: 'CONTRACT CHANGE', question: () => 'A fix touches the contract. Allow it?', approve: 'Approve' },
   'loop-stalled': {

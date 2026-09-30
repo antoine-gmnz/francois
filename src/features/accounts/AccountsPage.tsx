@@ -31,7 +31,6 @@ import type { AccountId, AppError } from '../../../contract/common';
 import type { Account, CliToolId, CliToolStatus } from '../../../contract/multi-account';
 import {
     accountCliTools,
-    accountCodexLogin,
     accountGrokLogin,
     accountInstallCli,
     accountLoginCancel,
@@ -84,6 +83,7 @@ import {
     type ProviderId,
 } from './providers';
 import { accountIsRetired } from '../../lib/runtimeCapability';
+import { startCodexLogin } from './codex-login';
 
 /** Which login this is: a brand-new account, or FR-17's re-login into a row. */
 type LoginTarget = { accountId?: string } | null;
@@ -113,6 +113,8 @@ export default function AccountsPage(): JSX.Element {
   // moment a credential moves between them.
   const [cursorId, setCursorId] = useState<AccountId | null>(null);
   const [login, setLogin] = useState<LoginTarget>(null);
+  const [codexLoginPending, setCodexLoginPending] = useState<AccountId | null>(null);
+  const codexLoginStop = useRef<(() => void) | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -178,7 +180,7 @@ export default function AccountsPage(): JSX.Element {
   // for the vendor rail — providerGroups filters these OUT of that rail (see
   // providers.ts), so this is their only listing anywhere in the modal.
   const piAccounts = useMemo(() => accounts.filter(accountIsRetired), [accounts]);
-  const busy = login !== null || endpointForm !== null || codexForm || grokForm;
+  const busy = login !== null || codexLoginPending !== null || endpointForm !== null || codexForm || grokForm;
 
   // Redesign hangs a reset countdown off every quota gauge. Same granularity
   // rule the usage bar follows: one text tick a minute, not motion — the
@@ -280,22 +282,24 @@ export default function AccountsPage(): JSX.Element {
       });
   };
 
-  // multi-provider-codex FR-25: `codex login` for one card. Nothing to render
-  // and nothing to cancel — the browser is the UI, and the card's `signedIn`
-  // flips when the refreshed account.list arrives (FR-21a). Only a failure to
-  // START it is worth surfacing here.
-  const doCodexLogin = async (account: Account) => {
+  // Subscribe before launching the browser so a fast exit cannot be missed.
+  const doCodexLogin = (account: Account) => {
+    if (codexLoginStop.current) return;
     setError(null);
-    try {
-      const res = await accountCodexLogin({ accountId: account.id });
-      if (alive.current && !res.ok) setError(res.error);
-    } catch {
-      if (alive.current) setError({ code: 'INTERNAL', message: 'Could not reach the core' });
-    }
+    setCodexLoginPending(account.id);
+    codexLoginStop.current = startCodexLogin(account.id, {
+      onError: (error) => { if (alive.current) setError(error); },
+      onSettled: () => {
+        codexLoginStop.current = null;
+        if (alive.current) setCodexLoginPending(null);
+      },
+    });
   };
 
+  useEffect(() => () => { codexLoginStop.current?.(); }, []);
+
   // multi-provider-grok FR-21: `grok login` for one card, same shape as
-  // doCodexLogin above — no PTY, no loginId, only a spawn failure to surface.
+  // the browser flow — no PTY, only a spawn failure to surface.
   const doGrokLogin = async (account: Account) => {
     setError(null);
     try {
@@ -493,7 +497,7 @@ export default function AccountsPage(): JSX.Element {
       // there only needs to swallow the keys, not route them further.
       // `piConfirmId` is deliberately NOT in this guard — its own Enter
       // handler below needs to run.
-      if (login || renamingId || endpointForm || codexForm || grokForm) return;
+      if (login || codexLoginPending || renamingId || endpointForm || codexForm || grokForm) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return;
       // A focused button (the Settings nav, a card action) owns its own Enter.
@@ -564,6 +568,7 @@ export default function AccountsPage(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     login,
+    codexLoginPending,
     renamingId,
     confirmId,
     endpointForm,
@@ -590,6 +595,7 @@ export default function AccountsPage(): JSX.Element {
         />
 
         {error && <div className="acc-error">{error.message}</div>}
+        {codexLoginPending && <p className="acc-note" role="status">Waiting for Codex sign-in to finish in your browser.</p>}
         {confirming && (
           <RemoveAccountConfirm
             view={removeConfirmView(confirming, sessions)}

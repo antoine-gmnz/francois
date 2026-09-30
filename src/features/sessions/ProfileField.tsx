@@ -9,7 +9,7 @@
 import type { AccountId } from '../../../contract/common';
 import type { Account } from '../../../contract/multi-account';
 import type { SessionProfile } from '../../../contract/session-profiles';
-import { newSessionProfileOptions } from '../profiles/profiles';
+import { newSessionProfileOptions, profileArgsNote, profilePromptNote } from '../profiles/profiles';
 import { profileRuntimeMismatch } from './new-session-form';
 import { profileIsRetired } from '../../lib/runtimeCapability';
 
@@ -52,7 +52,10 @@ export function ProfileField({ profiles, profileId, onChange, accounts, accountI
           A Pi profile has no systemPrompt field to read at all: its own
           prompt-mode note lives in the mismatch/hint block below instead. */}
       {selected?.kind === 'legacy' && selected.systemPrompt && selected.systemPrompt.trim() !== '' && (
-        <div className="new-session-modal__hint">replaces the system prompt — the controls below are unaffected</div>
+        <div className="new-session-modal__hint">{profilePromptNote(account)}</div>
+      )}
+      {selected?.kind === 'legacy' && selected.extraArgs?.length !== undefined && selected.extraArgs.length > 0 && (
+        <div className="new-session-modal__hint">{profileArgsNote(account)}</div>
       )}
       {/* §7: a legacy profile on a Pi account (or the reverse) is refused by
           the core as PROFILE_RUNTIME_MISMATCH — named here before the round

@@ -372,17 +372,14 @@ fn native_usage_separates_occupancy_from_aggregate_and_absent_usage_stays_unknow
     let sink = Arc::new(Sink::default());
     runtime.begin_turn(context(1, None), sink.clone()).unwrap();
     sink.terminal();
-    match sink.wait(|event| matches!(event, RuntimeEvent::Usage { .. })) {
-        RuntimeEvent::Usage {
-            context_used_tokens,
-            input_tokens,
-            output_tokens,
-            cost,
-        } => {
-            assert_eq!(context_used_tokens, Some(31000));
-            assert_eq!(input_tokens, Some(80000));
-            assert_eq!(output_tokens, Some(10000));
-            assert_eq!(cost, None);
+    match sink.wait(|event| matches!(event, RuntimeEvent::Metrics(_))) {
+        RuntimeEvent::Metrics(metrics) => {
+            assert_eq!(metrics.context_tokens, Some(31000));
+            assert_eq!(metrics.context_window, Some(272000));
+            assert_eq!(metrics.input_tokens, Some(80000));
+            assert_eq!(metrics.output_tokens, Some(10000));
+            assert_eq!(metrics.cache_read_tokens, Some(50000));
+            assert_eq!(metrics.cost_usd, None);
         }
         _ => unreachable!(),
     }
@@ -397,6 +394,6 @@ fn native_usage_separates_occupancy_from_aggregate_and_absent_usage_stays_unknow
         .lock()
         .unwrap()
         .iter()
-        .any(|e| matches!(e.event, RuntimeEvent::Usage { .. })));
+        .any(|e| matches!(e.event, RuntimeEvent::Metrics(_))));
     runtime.close();
 }

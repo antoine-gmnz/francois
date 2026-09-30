@@ -6,6 +6,10 @@ let count = 0;
 let thread = 'opaque-fixture-thread';
 let turn;
 let pending;
+let baseInstructions;
+let remoteStatus = 'disabled';
+let pairings = 0;
+let remoteReads = 0;
 const write = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const reply = (id, result) => write({ id, result });
 const note = (method, params) => write({ method, params });
@@ -31,14 +35,36 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       write({ id: msg.id, error: { code: -32600, message: 'private-native-error' } });
       return;
     }
+    if (scenario === 'child-subscribe-fail' && msg.params.threadId === 'child-thread') { write({id:msg.id,error:{code:-32600,message:'observation unavailable'}}); return; }
+    if (msg.params.threadId === 'child-thread') { reply(msg.id,{thread:{id:'child-thread',turns:[]}}); return; }
+    baseInstructions = msg.params.baseInstructions;
     thread = msg.params.threadId || thread;
     reply(msg.id, { thread: { id: thread } });
+  } else if (msg.method === 'skills/list') {
+    reply(msg.id, {data:[{cwd:msg.params.cwds[0],errors:[],skills:[{name:'demo',description:'demo',path:'/tmp/demo/SKILL.md',scope:'user',enabled:true}]}]});
+  } else if (msg.method === 'config/mcpServer/reload') {
+    reply(msg.id, {});
   } else if (msg.method === 'turn/start') {
     turn = 'native-turn-' + ++count;
     reply(msg.id, { turn: { id: turn, status: 'inProgress', items: [] } });
     const started = () => {
       note('turn/started', { threadId: thread, turn: { id: turn, status: 'inProgress' } });
       if (scenario === 'stop') return;
+      if (scenario === 'profile' || scenario === 'plan-mode') {
+        message(scenario === 'profile' ? (baseInstructions || 'IGNORED') : (msg.params.collaborationMode?.mode || 'default'));
+        finish();
+        return;
+      }
+      if (scenario === 'skill-prefix') { message(JSON.stringify(msg.params.input)); finish(); return; }
+      if (scenario === 'agents' || scenario === 'child-subscribe-fail') {
+        note('item/completed', { threadId: thread, turnId: turn, item: { type: 'collabAgentToolCall', id: 'spawn-1', tool: 'spawnAgent', status: 'completed', senderThreadId: thread, receiverThreadIds: ['child-thread'], prompt: 'Audit files', model: 'fixture-model', agentsStates: { 'child-thread': { status: 'running', message: null } } } });
+        if (scenario === 'child-subscribe-fail') { finish(); return; }
+        note('turn/started', { threadId: 'child-thread', turn: { id: 'child-turn', status: 'inProgress' } });
+        note('item/completed', { threadId: 'child-thread', turnId: 'child-turn', item: { type: 'agentMessage', id: 'child-message', text: 'child result' } });
+        note('turn/completed', { threadId: 'child-thread', turn: { id: 'child-turn', status: 'completed', items: [], error: null } });
+        finish();
+        return;
+      }
       if (scenario === 'permission' || scenario === 'permission-eof' || scenario === 'file') {
         pending = 41;
         if (scenario === 'file') note('item/started', { threadId: thread, turnId: turn, item: { type: 'fileChange', id: 'unrelated-item', changes: [{ path: 'unrelated.txt', kind: { type: 'add' }, diff: '+other' }], status: 'inProgress' } });
@@ -93,6 +119,25 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       }
     };
     if (scenario === 'stop') setTimeout(started, 80); else started();
+  } else if (msg.method?.startsWith('remoteControl/')) {
+    if (msg.method === 'remoteControl/enable' || msg.method === 'remoteControl/disable') {
+      if (msg.params.ephemeral !== true) process.exit(42);
+      remoteStatus = msg.method.endsWith('/enable') ? (scenario === 'remote-warmup' ? 'connecting' : 'connected') : 'disabled';
+      reply(msg.id, { status: remoteStatus, serverName: 'fixture', installationId: 'fixture-install', environmentId: 'native-environment' });
+    } else if (msg.method === 'remoteControl/status/read') {
+      if (scenario === 'remote-warmup' && ++remoteReads >= 2) remoteStatus = 'connected';
+      reply(msg.id, { status: remoteStatus, serverName: 'fixture', installationId: 'fixture-install', environmentId: 'native-environment' });
+    } else if (msg.method === 'remoteControl/pairing/start') {
+      if (remoteStatus !== 'connected') { write({id:msg.id,error:{code:-32600,message:'enrollment incomplete'}}); return; }
+      if (msg.params.manualCode !== true) { write({ id: msg.id, error: { code: -32600, message: 'manual pairing requested' } }); return; }
+      reply(msg.id, { pairingCode: 'OPAQUE-'+ ++pairings, manualPairingCode: 'MANUAL-'+pairings, environmentId: 'native-environment', expiresAt: Math.floor(Date.now() / 1000) + 600 });
+    }
+  } else if (msg.method === 'thread/compact/start') {
+    turn = 'native-turn-' + ++count;
+    reply(msg.id, {});
+    note('turn/started', { threadId: thread, turn: { id: turn, status: 'inProgress' } });
+    note('item/completed', { threadId: thread, turnId: turn, item: { type: 'contextCompaction', id: 'compact-item' } });
+    finish();
   } else if (msg.method === 'turn/interrupt') {
     reply(msg.id, {});
     finish('interrupted');

@@ -741,6 +741,21 @@ pub fn agents_dispatch(
         return err(ErrorCode::InvalidInput, "task is empty");
     }
     let agent_id = uuid();
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        // Admission runs a real native turn. Only Codex's spawn observation
+        // creates a roster row; queuing never invents a running agent.
+        let prompt = format!("Delegate this task to a new Codex subagent using the native spawn_agent tool, then wait for its actual result.\n\nTask: {task}");
+        return match crate::session::commands::do_send(
+            &app,
+            &session_id,
+            prompt,
+            agent_id.clone(),
+            crate::session::commands::SendSource::Typed,
+        ) {
+            crate::ipc::IpcResult::Ok { .. } => ok(DispatchOutput { agent_id }),
+            crate::ipc::IpcResult::Err { error, .. } => error.into(),
+        };
+    }
     let dispatched = engine.with_session_mut(&session_id, |s| {
         if s.status == "done" || s.status == "error" {
             return None;
@@ -788,6 +803,27 @@ pub fn agents_kill(
     };
     if let Err((code, msg)) = engine.require_capability(&session_id, "subagents") {
         return err(code, msg);
+    }
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        let resource = engine
+            .with_session(&session_id, |s| {
+                s.session_runtime
+                    .as_ref()
+                    .map(|binding| binding.runtime.clone())
+            })
+            .flatten();
+        return match resource {
+            Some(resource) => resource
+                .resource(crate::session::application::ResourceRequest::AgentStop(
+                    agent_id,
+                ))
+                .map(|_| None::<()>)
+                .into(),
+            None => err(
+                ErrorCode::RuntimeUnavailable,
+                "Reconnect this Codex session before stopping its agent",
+            ),
+        };
     }
     // async-agents FR-18: status 'error' + endedAt + a `killed from the panel`
     // notice step. The harness-side background agent is NOT interrupted (v1), so

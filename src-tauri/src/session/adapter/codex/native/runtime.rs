@@ -20,6 +20,7 @@ type Launcher = Arc<
 >;
 pub(super) struct Inner {
     pub(super) state: Mutex<State>,
+    pub remote_gate: Mutex<()>,
     launcher: Launcher,
 }
 #[derive(Default)]
@@ -31,6 +32,10 @@ pub(super) struct State {
     pub turn: Option<Turn>,
     pub ledger: Option<RequestLedger>,
     pub completed_turns: HashSet<String>,
+    pub agents: super::agents::Agents,
+    pub mcp_refreshing: bool,
+    pub mcp_refresh_again: bool,
+    pub remote: crate::session::remote::RemoteState,
 }
 pub(super) struct Turn {
     pub context: TurnContext,
@@ -44,6 +49,7 @@ pub(super) struct Turn {
     /// A terminal `error` notification's message, held until `turn/completed`
     /// so the turn fails once, with the more informative of the two.
     pub failure: Option<String>,
+    pub pending_finish: Option<RuntimeEvent>,
 }
 pub(super) struct Emitter {
     context: TurnContext,
@@ -75,6 +81,7 @@ impl NativeRuntime {
         Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State::default()),
+                remote_gate: Mutex::new(()),
                 launcher,
             }),
         }
@@ -88,10 +95,11 @@ impl RuntimePort for NativeRuntime {
                 "Sign in to this Codex account first",
             ));
         }
-        if ctx.mode != TurnMode::Normal {
+        super::invocation::profile_args(&ctx.extra_args)?;
+        if ctx.mode == TurnMode::Compact && ctx.resume.is_none() {
             return Err(AppError::new(
                 ErrorCode::RuntimeUnsupported,
-                "Codex does not support automatic prompt replay or this turn mode",
+                "Send a first message before compacting this Codex session",
             ));
         }
         if ctx.runtime != "native" && !(cfg!(windows) && ctx.runtime == "wsl") {
@@ -158,6 +166,7 @@ impl RuntimePort for NativeRuntime {
                 retired: false,
                 start_sent: false,
                 failure: None,
+                pending_finish: None,
             });
         }
         let inner = self.inner.clone();
@@ -174,6 +183,45 @@ impl RuntimePort for NativeRuntime {
     }
 }
 impl SessionRuntime for NativeRuntime {
+    fn resource(&self, request: ResourceRequest) -> Result<serde_json::Value, AppError> {
+        if matches!(
+            request,
+            ResourceRequest::RemoteStart(_)
+                | ResourceRequest::RemoteStop
+                | ResourceRequest::RemoteGet
+        ) {
+            return self.inner.remote(request);
+        }
+        match request {
+            ResourceRequest::RequestUrl(id) => {
+                let state = self.inner.state.lock().unwrap();
+                state
+                    .ledger
+                    .as_ref()
+                    .and_then(|ledger| {
+                        ledger.pending().find_map(|pending| {
+                            if pending.block_id != id {
+                                return None;
+                            }
+                            if let super::requests::RequestKind::ElicitationUrl(url) = &pending.kind
+                            {
+                                Some(serde_json::json!(url.url))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .ok_or_else(|| {
+                        AppError::new(
+                            ErrorCode::InvalidInput,
+                            "This URL request is no longer pending",
+                        )
+                    })
+            }
+            ResourceRequest::AgentStop(id) => self.inner.stop_agent(&id),
+            request => self.inner.resource(request),
+        }
+    }
     fn close(&self) {
         self.inner.close();
     }
@@ -241,6 +289,15 @@ impl Inner {
     }
     fn start(self: &Arc<Self>, ctx: &TurnContext, emitter: &Emitter) -> Result<(), AppError> {
         let connection = self.connection(ctx)?;
+        // Account resource inheritance may have changed the effective file
+        // since the previous turn on this persistent process.
+        connection.call(Transport::deadline(), |id| {
+            Ok(protocol::request(
+                id,
+                "config/mcpServer/reload",
+                serde_json::Value::Null,
+            ))
+        })?;
         emitter.require(RuntimeEvent::Capabilities(
             crate::session::adapter::native_capabilities(crate::session::AgentRuntime::Codex),
         ))?;
@@ -250,6 +307,7 @@ impl Inner {
             model: &ctx.model_id,
             effort: ctx.effort.as_deref(),
             permission_mode: &ctx.permission_mode,
+            system_prompt: ctx.system_prompt.as_deref(),
         };
         let thread = self.state.lock().unwrap().thread_id.clone();
         let thread = if let Some(thread) = thread {
@@ -293,6 +351,16 @@ impl Inner {
             }
             turn.start_sent = true;
         }
+        if ctx.mode == TurnMode::Compact {
+            connection.call(Transport::deadline(), |id| {
+                Ok(protocol::request(
+                    id,
+                    "thread/compact/start",
+                    json!({"threadId":thread}),
+                ))
+            })?;
+            return Ok(());
+        }
         let prompt =
             crate::session::prefixed_prompt(ctx.execution.response_prefix.as_deref(), &ctx.text);
         let images = ctx
@@ -301,9 +369,10 @@ impl Inner {
             .iter()
             .map(|path| super::invocation::native_path(ctx, path))
             .collect::<Result<Vec<_>, _>>()?;
+        let skill_inputs = super::resources::skill_inputs(&connection, ctx, &ctx.text)?;
         let result = connection.call(Transport::deadline(), |id| {
             settings
-                .turn_request(id, &thread, &prompt, &images)
+                .turn_request(id, &thread, &prompt, &images, &skill_inputs)
                 .map_err(|_| transport::protocol_error())
         })?;
         let native_turn = result["turn"]["id"]
@@ -347,9 +416,29 @@ impl Inner {
         self.connection_lost(error);
     }
     pub(super) fn connection_lost(&self, error: AppError) {
+        self.connection_lost_if(error, None);
+    }
+    pub(super) fn child_subscription_failed(
+        &self,
+        scope: &RuntimeScope,
+        thread: &str,
+        error: AppError,
+    ) {
+        self.connection_lost_if(error, Some((scope, thread)));
+    }
+    fn connection_lost_if(&self, error: AppError, child_scope: Option<(&RuntimeScope, &str)>) {
         let (connection, emitter, resolutions) = {
             let mut state = self.state.lock().unwrap();
             if state.closed {
+                return;
+            }
+            if child_scope.is_some_and(|(scope, thread)| {
+                !state
+                    .turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.context.scope == *scope)
+                    || !state.agents.child_running(thread, scope.generation)
+            }) {
                 return;
             }
             state.closed = true;
@@ -362,12 +451,20 @@ impl Inner {
                 turn.finished = true;
                 turn.emitter.clone()
             });
-            (state.transport.take(), emitter, resolutions)
+            let agent_events = state.agents.closed();
+            (state.transport.take(), emitter, (resolutions, agent_events))
         };
         if let Some(connection) = connection {
             connection.close();
         }
         if let Some(emitter) = emitter {
+            let (resolutions, agent_events) = resolutions;
+            let _ = emitter.publish(RuntimeEvent::RemoteObserved(
+                crate::session::remote::RemoteState::Off,
+            ));
+            for event in agent_events {
+                let _ = emitter.publish(event);
+            }
             for resolution in resolutions {
                 let _ = emitter.publish(events::resolved(resolution));
             }

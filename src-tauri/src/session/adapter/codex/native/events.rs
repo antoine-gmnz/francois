@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
-    if let RequestKind::Questions(input) = &request.kind {
+    if let Some(input) = request.kind.questions() {
         return RuntimeEvent::QuestionAsked {
             block_id: request.block_id.clone(),
             blocking: Some(input.is_blocking),
@@ -63,7 +63,25 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
             json!({"changes":request.file_changes(),"reason":file.reason,"grantRoot":file.grant_root}),
             cwd,
         ),
-        RequestKind::Questions(_) => unreachable!(),
+        RequestKind::Permissions(grant) => (
+            "Permissions",
+            grant
+                .reason
+                .clone()
+                .unwrap_or_else(|| "Codex requests additional permissions for this turn".into()),
+            json!({"permissions":grant.permissions,"reason":grant.reason,"scope":"turn"}),
+            grant.cwd.as_str(),
+        ),
+        RequestKind::ElicitationUrl(request) => (
+            "MCP",
+            format!(
+                "{}\nComplete the request at {} before allowing it.",
+                request.message, request.url
+            ),
+            json!({"server":request.server,"url":request.url,"message":request.message}),
+            cwd,
+        ),
+        RequestKind::Questions(_) | RequestKind::Elicitation(_) => unreachable!(),
     };
     RuntimeEvent::PermissionAsked {
         block_id: request.block_id.clone(),
@@ -122,6 +140,8 @@ pub(super) struct Items {
     translator: Translator<fn() -> String>,
     text_ids: HashMap<String, String>,
     completed: HashSet<String>,
+    details: super::item_details::Details,
+    progress: super::progress::Progress,
 }
 impl Default for Items {
     fn default() -> Self {
@@ -129,6 +149,8 @@ impl Default for Items {
             translator: Translator::new(crate::ids::uuid),
             text_ids: HashMap::new(),
             completed: HashSet::new(),
+            details: super::item_details::Details::default(),
+            progress: super::progress::Progress::default(),
         }
     }
 }
@@ -174,12 +196,16 @@ impl Items {
                     .clone();
                 return vec![RuntimeEvent::AssistantFinal {
                     block_id,
-                    text: string(item, "text"),
+                    text: message_text(item),
                 }];
             }
             "commandExecution" => ItemKind::CommandExecution {
                 command: string(item, "command"),
-                aggregated_output: string(item, "aggregatedOutput"),
+                aggregated_output: item["aggregatedOutput"]
+                    .as_str()
+                    .or_else(|| self.progress.buffered(id))
+                    .unwrap_or_default()
+                    .into(),
                 exit_code: item["exitCode"].as_i64(),
             },
             "fileChange" => ItemKind::FileChange {
@@ -209,7 +235,7 @@ impl Items {
             "webSearch" => ItemKind::WebSearch {
                 query: string(item, "query"),
             },
-            _ => return vec![],
+            _ => return self.details.item(item, completed, ctx),
         };
         let item = Item {
             id: id.into(),
@@ -221,11 +247,17 @@ impl Items {
         } else {
             CodexEvent::ItemStarted { item }
         };
-        self.translator
+        let mut events: Vec<_> = self
+            .translator
             .on_event(event)
             .into_iter()
             .map(|effect| super::super::runner::normalize(&mut self.translator, effect, ctx))
-            .collect()
+            .collect();
+        self.progress.observe(id, completed, &mut events);
+        events
+    }
+    pub(super) fn progress(&mut self, params: &Value, append: bool) -> Option<RuntimeEvent> {
+        self.progress.update(params, append)
     }
     /// `turn/plan/updated`: every update is a whole plan, so — like each of
     /// Claude's `TodoWrite` calls — it lands as one completed `TodoWrite` row.
@@ -250,17 +282,27 @@ impl Items {
             .collect()
     }
     pub(super) fn close(&mut self, ctx: &TurnContext) -> Vec<RuntimeEvent> {
-        self.translator
+        let mut events: Vec<_> = self
+            .translator
             .close_open()
             .into_iter()
             .map(|effect| super::super::runner::normalize(&mut self.translator, effect, ctx))
-            .collect()
+            .collect();
+        events.extend(self.details.close(ctx));
+        self.progress.close(&mut events);
+        events
     }
 }
 /// The session cwd in every spelling Codex may report a path in: the host
 /// path, plus its Linux form when the session runs under WSL.
 pub(super) fn roots(ctx: &TurnContext) -> Vec<String> {
     let mut roots = vec![ctx.cwd.clone()];
+    if let Ok(canonical) = std::fs::canonicalize(&ctx.cwd) {
+        let canonical = canonical.to_string_lossy().into_owned();
+        if !roots.contains(&canonical) {
+            roots.push(canonical);
+        }
+    }
     if let Some((_, linux)) = crate::wsl::wsl_unc_to_linux(&ctx.cwd) {
         roots.push(linux);
     }
@@ -268,4 +310,29 @@ pub(super) fn roots(ctx: &TurnContext) -> Vec<String> {
 }
 fn string(value: &Value, key: &str) -> String {
     value[key].as_str().unwrap_or_default().into()
+}
+
+fn message_text(item: &Value) -> String {
+    let mut text = string(item, "text");
+    // Asynchronous agent questions have no RPC request id: replies are normal
+    // user turns. Preserve them in the message instead of inventing authority.
+    for question in item["questions"].as_array().into_iter().flatten().take(32) {
+        if let Some(title) = question["title"].as_str() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(title);
+            for option in question["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(32)
+                .filter_map(Value::as_str)
+            {
+                text.push_str("\n- ");
+                text.push_str(option);
+            }
+        }
+    }
+    text
 }

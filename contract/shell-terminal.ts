@@ -62,6 +62,8 @@ export interface ShellEnsureData {
 
 export interface ShellCreatePayload {
   owner: ShellOwner;
+  /** Pin a host shell for a host service, even if its owner uses WSL. */
+  runtime?: 'native';
 }
 // invoke('shell_create', req: ShellCreatePayload): Promise<Result<ShellInfo>>
 // A `project` owner: cwd is the project's `root` (PROJECT_NOT_FOUND if the id is not in the

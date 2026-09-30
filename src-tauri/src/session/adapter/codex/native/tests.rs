@@ -31,6 +31,66 @@ fn insert(ledger: &mut RequestLedger, frame: Value) -> PendingRequest {
 }
 
 #[test]
+fn additional_permissions_grant_only_requested_profile_for_current_turn() {
+    for decision in [NativeDecision::Accept, NativeDecision::Decline] {
+        let mut ledger = ledger();
+        let requested = json!({"network":{"enabled":true},"fileSystem":null});
+        let request = insert(
+            &mut ledger,
+            json!({"id":"grant","method":"item/permissions/requestApproval","params":{"threadId":"thread","turnId":"turn","itemId":"permissions","cwd":"/repo","permissions":requested,"reason":"Fetch dependency"}}),
+        );
+        assert_eq!(
+            request.allowed_decisions(),
+            vec![NativeDecision::Accept, NativeDecision::Decline]
+        );
+        let reply = ledger
+            .claim_permission(&scope(), &request.block_id, decision)
+            .unwrap();
+        assert_eq!(
+            reply.wire()["result"],
+            json!({"scope":"turn","permissions":if decision == NativeDecision::Accept { json!({"network":{"enabled":true}}) } else { json!({}) }})
+        );
+    }
+}
+
+#[test]
+fn mcp_form_answers_keep_types_validate_bounds_and_redact_secrets() {
+    let mut ledger = ledger();
+    let request = insert(
+        &mut ledger,
+        json!({"id":"mcp-form","method":"mcpServer/elicitation/request","params":{"threadId":"thread","turnId":null,"serverName":"forms","mode":"form","message":"Configure","requestedSchema":{"type":"object","properties":{"count":{"type":"integer","minimum":1,"maximum":5},"secret":{"type":"string","format":"password"},"enabled":{"type":"boolean"}},"required":["count","secret","enabled"]}}}),
+    );
+    assert!(request.is_blocking());
+    let invalid = BTreeMap::from([
+        ("count".into(), "9".into()),
+        ("secret".into(), "PRIVATE-SENTINEL".into()),
+        ("enabled".into(), "true".into()),
+    ]);
+    assert_eq!(
+        ledger
+            .claim_answers(&scope(), &request.block_id, invalid)
+            .err(),
+        Some(RequestError::InvalidAnswer)
+    );
+    let answers = BTreeMap::from([
+        ("count".into(), "3".into()),
+        ("secret".into(), "PRIVATE-SENTINEL".into()),
+        ("enabled".into(), "true".into()),
+    ]);
+    let reply = ledger
+        .claim_answers(&scope(), &request.block_id, answers)
+        .unwrap();
+    assert_eq!(
+        reply.wire(),
+        &json!({"id":"mcp-form","result":{"action":"accept","content":{"count":3,"enabled":true,"secret":"PRIVATE-SENTINEL"},"_meta":null}})
+    );
+    let resolution = ledger
+        .resolve(&scope(), &RequestId::String("mcp-form".into()))
+        .unwrap();
+    assert!(!format!("{resolution:?}").contains("PRIVATE-SENTINEL"));
+}
+
+#[test]
 fn exact_string_and_numeric_request_ids_never_collide() {
     let mut ledger = ledger();
     let one = insert(&mut ledger, command(json!(1)));

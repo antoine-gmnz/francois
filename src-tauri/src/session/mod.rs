@@ -1,3 +1,4 @@
+mod codex_resources;
 // session.rs — the Francois session engine (specs/session-engine.md).
 //
 // Owns the registry of Claude Code sessions, spawns `claude -p --output-format
@@ -153,25 +154,26 @@ pub(crate) use commands::validate_catalog_selection;
 pub use commands::{
     __cmd__conversation_get_transcript, __cmd__permissions_decide, __cmd__session_answer_question,
     __cmd__session_clear, __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt,
-    __cmd__session_list, __cmd__session_pick_directory, __cmd__session_remove,
-    __cmd__session_rename, __cmd__session_send, __cmd__session_switch_effort,
-    __cmd__session_switch_model, __cmd__session_switch_permission_mode,
-    __cmd__session_switch_response_mode, __cmd__session_unqueue, __cmd__session_update_settings,
+    __cmd__session_list, __cmd__session_open_request_url, __cmd__session_pick_directory,
+    __cmd__session_remove, __cmd__session_rename, __cmd__session_send,
+    __cmd__session_switch_effort, __cmd__session_switch_model,
+    __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
+    __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
     __tauri_command_name_session_answer_question, __tauri_command_name_session_clear,
     __tauri_command_name_session_compact, __tauri_command_name_session_create,
     __tauri_command_name_session_interrupt, __tauri_command_name_session_list,
-    __tauri_command_name_session_pick_directory, __tauri_command_name_session_remove,
-    __tauri_command_name_session_rename, __tauri_command_name_session_send,
-    __tauri_command_name_session_switch_effort, __tauri_command_name_session_switch_model,
-    __tauri_command_name_session_switch_permission_mode,
+    __tauri_command_name_session_open_request_url, __tauri_command_name_session_pick_directory,
+    __tauri_command_name_session_remove, __tauri_command_name_session_rename,
+    __tauri_command_name_session_send, __tauri_command_name_session_switch_effort,
+    __tauri_command_name_session_switch_model, __tauri_command_name_session_switch_permission_mode,
     __tauri_command_name_session_switch_response_mode, __tauri_command_name_session_unqueue,
     __tauri_command_name_session_update_settings, apply_model_switch, conversation_get_transcript,
     do_send, permissions_decide, session_answer_question, session_clear, session_compact,
-    session_create, session_interrupt, session_list, session_pick_directory, session_remove,
-    session_rename, session_send, session_switch_effort, session_switch_model,
-    session_switch_permission_mode, session_switch_response_mode, session_unqueue,
-    session_update_settings, SendSource, SessionSettingsPatch,
+    session_create, session_interrupt, session_list, session_open_request_url,
+    session_pick_directory, session_remove, session_rename, session_send, session_switch_effort,
+    session_switch_model, session_switch_permission_mode, session_switch_response_mode,
+    session_unqueue, session_update_settings, SendSource, SessionSettingsPatch,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -334,7 +336,7 @@ use crate::profiles::SessionProfileRef;
 // is unchanged — these are the same functions, imported instead of defined.
 use crate::usage::{parse_meter_line, probe_answer, synthetic_text};
 use crate::usage_meter::UsageMeter;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -588,7 +590,7 @@ pub struct WorkflowPhaseInfo {
     detail: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct McpServerInfo {
     name: String,
     status: String, // connected | connecting | error

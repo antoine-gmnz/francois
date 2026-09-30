@@ -106,7 +106,7 @@ export function startHydratedSubscription<E, D>(
   let state = initHydrationBuffer<E>();
 
   void subscribe((e) => {
-    if (!isRelevant(e)) return;
+    if (!live || !isRelevant(e)) return;
     const routed = routeIncoming(state, e, shouldBuffer);
     state = routed.next;
     if (routed.applyNow) onEvent(e);
@@ -121,17 +121,22 @@ export function startHydratedSubscription<E, D>(
         if (!live) return;
         if (res.ok) {
           onHydrated(res.data);
-          const drained = hydrateBuffer(state);
-          state = drained.next;
-          for (const e of drained.drained) onEvent(e);
         } else {
           onError(res.error.message);
         }
+        // Even a failed snapshot must release the live stream: otherwise all
+        // future events would remain buffered forever after a transient read error.
+        const drained = hydrateBuffer(state);
+        state = drained.next;
+        for (const e of drained.drained) onEvent(e);
       });
     })
     .catch(() => {
-      // A failed subscribe would otherwise leave the panel silently unhydrated.
-      if (live) onError('could not subscribe to session events');
+      if (!live) return;
+      onError(unlisten ? 'could not load the session snapshot' : 'could not subscribe to session events');
+      const drained = hydrateBuffer(state);
+      state = drained.next;
+      for (const event of drained.drained) onEvent(event);
     });
 
   return () => {

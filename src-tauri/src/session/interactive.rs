@@ -110,8 +110,12 @@ pub fn help_entries() -> Vec<HelpEntry> {
 /// `/context` is a Claude Code turn command and must not be advertised when
 /// Codex would receive it as an ordinary prompt instead.
 pub fn help_entries_for_runtime(runtime: AgentRuntime) -> Vec<HelpEntry> {
-    let entries = help_entries();
+    let mut entries = help_entries();
     if runtime == AgentRuntime::Codex {
+        entries.push(HelpEntry {
+            command: "compact",
+            description: "compact the native Codex thread",
+        });
         entries
             .into_iter()
             .filter(|entry| entry.command != "context")

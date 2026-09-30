@@ -336,6 +336,20 @@ fn project_owner_target(root_lookup: Result<String, AppError>) -> Result<OwnerTa
     })
 }
 
+fn apply_runtime_override(target: &mut OwnerTarget, runtime: Option<&str>) -> Result<(), AppError> {
+    match runtime {
+        None => Ok(()),
+        Some("native") => {
+            target.runtime = "native".into();
+            target.account_config_dir = None;
+            Ok(())
+        }
+        _ => Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Only a native host shell override is supported",
+        )),
+    }
+}
 /// unbound-panes §5: resolve `owner` to where/how its shell spawns. A session
 /// owner reads its live cwd/runtime/account off the engine exactly as before
 /// (`SESSION_NOT_FOUND` if unknown). A project owner resolves to the
@@ -510,11 +524,15 @@ pub fn shell_create(
     reg: State<'_, Registry>,
     engine: State<'_, session::Engine>,
     owner: ShellOwner,
+    runtime: Option<String>,
 ) -> IpcResult<ShellInfo> {
-    let target = match resolve_owner_target(&app, &engine, &owner) {
+    let mut target = match resolve_owner_target(&app, &engine, &owner) {
         Ok(t) => t,
         Err(e) => return e.into(),
     };
+    if let Err(error) = apply_runtime_override(&mut target, runtime.as_deref()) {
+        return error.into();
+    }
     // FR-2: checked BEFORE spawning — a refused create spawns nothing.
     if reg.at_cap(&owner) {
         return err(
@@ -522,15 +540,20 @@ pub fn shell_create(
             "at most 6 shells per session or project",
         );
     }
-    spawn_and_register(
+    let result = spawn_and_register(
         &app,
         &reg,
         owner,
         &target.cwd,
         &target.runtime,
         target.account_config_dir.as_deref(),
-    )
-    .into()
+    );
+    if runtime.as_deref() == Some("native") {
+        if let Ok(info) = &result {
+            reg.pin_native(&info.id);
+        }
+    }
+    result.into()
 }
 
 #[tauri::command(async)]
@@ -554,7 +577,7 @@ pub fn shell_restart(
     // The owner may have moved on (a project's root, an account) since this
     // shell was first spawned — re-resolve rather than reuse stale values,
     // same as the original spawn path.
-    let (runtime, account_config_dir) = match &info.owner {
+    let (mut runtime, mut account_config_dir) = match &info.owner {
         ShellOwner::Session { session_id } => (
             engine
                 .runtime_of(session_id)
@@ -572,6 +595,10 @@ pub fn shell_restart(
             None,
         ),
     };
+    if let Some(pinned) = reg.runtime_override(&shell_id) {
+        runtime = pinned;
+        account_config_dir = None;
+    }
     let (pty, reader, mut child) = match open_and_spawn(
         &info.cwd,
         &runtime,
@@ -697,5 +724,23 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code, ErrorCode::ProjectRootMissing);
         assert_eq!(err.message, "root not set");
+    }
+}
+
+#[cfg(test)]
+mod host_override_tests {
+    use super::*;
+    #[test]
+    fn native_service_shell_preserves_host_path_and_drops_session_environment_override() {
+        let mut target = OwnerTarget {
+            cwd: r"\\wsl$\Ubuntu\home\repo".into(),
+            runtime: "wsl".into(),
+            account_config_dir: Some("wsl-account".into()),
+        };
+        apply_runtime_override(&mut target, Some("native")).unwrap();
+        assert_eq!(target.runtime, "native");
+        assert_eq!(target.cwd, r"\\wsl$\Ubuntu\home\repo");
+        assert!(target.account_config_dir.is_none());
+        assert!(apply_runtime_override(&mut target, Some("unrecognized")).is_err());
     }
 }

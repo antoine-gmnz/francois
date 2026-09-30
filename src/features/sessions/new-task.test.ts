@@ -42,6 +42,9 @@ describe('advancedRecap', () => {
   it('leaves out what has no choice: effort without levels, no account', () => {
     expect(flat(advancedRecap({ ...base, accountLabel: null, showEffort: false }))).toBe('Profile=none Permissions=default Response=default Git=ask');
   });
+  it('omits Git approval when the selected account cannot apply that control', () => {
+    expect(advancedRecap({ ...base, allowGit: null }).map(item => item.key)).not.toContain('git');
+  });
 });
 
 describe('whereCard', () => {

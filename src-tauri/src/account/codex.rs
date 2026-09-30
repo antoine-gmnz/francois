@@ -118,31 +118,93 @@ pub fn spawn_codex_login(config_dir: &str) -> Result<std::process::Child, AppErr
 /// the same truth from the same file (FR-20).
 pub fn start_codex_login_poller(
     app: &AppHandle,
+    account_id: String,
     config_dir: String,
     mut child: std::process::Child,
+    reservation: CodexLoginReservation,
 ) {
     let app = app.clone();
+    let initial_auth = auth_signature(&config_dir);
     std::thread::spawn(move || {
-        let deadline = crate::ids::now_ms() + LOGIN_TIMEOUT_SECS * 1_000;
+        let deadline = std::time::Instant::now() + Duration::from_secs(LOGIN_TIMEOUT_SECS);
         loop {
             std::thread::sleep(POLL);
-            let signed_in = super::codex_auth_file_exists(&config_dir);
-            let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
-            let expired = crate::ids::now_ms() >= deadline;
+            let status = child.try_wait();
+            let exited = matches!(&status, Ok(Some(_)) | Err(_));
+            let expired = std::time::Instant::now() >= deadline;
+            // A pre-existing credential must not finish a re-login on its first
+            // tick. A fresh credential or successful process exit is evidence.
+            let auth = auth_signature(&config_dir);
+            let signed_in = auth.is_some()
+                && (auth != initial_auth
+                    || matches!(&status, Ok(Some(status)) if status.success()));
             match poll_step(signed_in, exited, expired) {
                 PollStep::Continue => continue,
                 PollStep::Publish => {
-                    publish(&app);
-                    let _ = child.wait();
+                    reap_login(&mut child);
+                    drop(reservation);
+                    publish(&app, &account_id);
                     return;
                 }
                 PollStep::Stop => {
-                    let _ = child.wait();
+                    reap_login(&mut child);
+                    drop(reservation);
+                    emit(
+                        &app,
+                        AccountEvent::LoginFailed {
+                            login_id: account_id,
+                            error: AppError::new(
+                                ErrorCode::AccountNotAuthenticated,
+                                if expired {
+                                    "Codex sign-in timed out. Try signing in again."
+                                } else {
+                                    "Codex sign-in ended without a new credential. Try signing in again."
+                                },
+                            ),
+                        },
+                    );
                     return;
                 }
             }
         }
     });
+}
+fn auth_signature(config_dir: &str) -> Option<Vec<u8>> {
+    use sha2::Digest;
+    std::fs::read(std::path::Path::new(config_dir).join("auth.json"))
+        .ok()
+        .map(|bytes| sha2::Sha256::digest(bytes).to_vec())
+}
+fn reap_login(child: &mut std::process::Child) {
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+/// The reservation survives the command and releases on every error and
+/// background completion, including an unwinding poller.
+pub(crate) struct CodexLoginReservation {
+    app: AppHandle,
+}
+impl CodexLoginReservation {
+    pub(crate) fn acquire(app: &AppHandle) -> Result<Self, AppError> {
+        let state = app.state::<AccountState>();
+        if !reserve_login(&state.1) {
+            return Err(AppError::new(ErrorCode::InvalidInput, super::MSG_IN_FLIGHT));
+        }
+        Ok(Self { app: app.clone() })
+    }
+}
+impl Drop for CodexLoginReservation {
+    fn drop(&mut self) {
+        if let Some(state) = self.app.try_state::<AccountState>() {
+            state.1.store(false, Ordering::SeqCst);
+        }
+    }
+}
+fn reserve_login(flag: &std::sync::atomic::AtomicBool) -> bool {
+    flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,24 +235,30 @@ fn poll_step(signed_in: bool, exited: bool, expired: bool) -> PollStep {
     PollStep::Continue
 }
 
-fn publish(app: &AppHandle) {
+fn publish(app: &AppHandle, account_id: &str) {
     let Some(state) = app.try_state::<AccountState>() else {
         return;
     };
-    let Ok(inner) = state.0.lock() else {
+    let Ok(mut inner) = state.0.lock() else {
         return;
     };
+    inner.auth_failed_at.remove(account_id);
     let accounts = build_list(&inner);
+    let signed_in = accounts
+        .iter()
+        .find(|account| account.id == account_id)
+        .cloned();
     drop(inner);
     emit(app, AccountEvent::List { accounts });
-}
-
-/// FR-25: a re-login must not race a still-running one. `codex login` writes
-/// `auth.json` atomically enough that two concurrent runs would not corrupt it,
-/// but two browser tabs for the same row is a confusing UI, so the caller checks
-/// this first.
-pub fn codex_login_in_flight(state: &AccountState) -> bool {
-    state.1.load(Ordering::SeqCst)
+    if let Some(account) = signed_in {
+        emit(
+            app,
+            AccountEvent::LoginDone {
+                login_id: account_id.into(),
+                account,
+            },
+        );
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +266,26 @@ mod tests {
     use super::*;
     use crate::account::testutil::inner_fixture;
 
+    #[test]
+    fn native_login_reservation_is_atomic() {
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        assert!(reserve_login(&flag));
+        assert!(!reserve_login(&flag));
+        flag.store(false, Ordering::SeqCst);
+        assert!(reserve_login(&flag));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn timeout_terminates_and_reaps_the_login_child() {
+        let mut child = crate::process_util::spawn("sh")
+            .args(["-c", "exec sleep 30"])
+            .start()
+            .unwrap();
+        let start = std::time::Instant::now();
+        reap_login(&mut child);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(child.try_wait().unwrap().is_some());
+    }
     #[test]
     fn a_codex_row_is_added_with_its_kind_and_no_endpoint() {
         let mut inner = inner_fixture(&[], "default");

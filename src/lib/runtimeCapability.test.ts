@@ -15,6 +15,10 @@ import {
   sandboxSelectionCapability,
   sessionCapability,
   sessionIsRetired,
+  permissionRulesCapability,
+  accountSupportsClaudeTools,
+  accountUsesCodex,
+  sessionUsesNativeMcpAuth,
 } from './runtimeCapability';
 const PI_BASELINE_UNAVAILABLE = Object.keys(runtimeCapabilities('pi')) as (keyof RuntimeCapabilities)[];
 
@@ -160,6 +164,39 @@ describe('sessionCapability (FR-20)', () => {
       reason: PI_UNAVAILABLE,
     });
   });
+});
+
+it('distinguishes native approval requests from persistent Claude rules and Git auto-approval', () => {
+  const codex = meta({ agentRuntime: 'codex', runtimeGeneration: 'native', effectiveCapabilities: { ...runtimeCapabilities('codex'), permissions: { available: true } } });
+  expect(sessionCapability(codex, 'permissions').available).toBe(true);
+  expect(permissionRulesCapability(codex).available).toBe(false);
+  expect(permissionRulesCapability(meta({ agentRuntime: 'claude-code' })).available).toBe(true);
+  expect(permissionRulesCapability(meta({ agentRuntime: 'francois' })).available).toBe(false);
+  expect(permissionRulesCapability(null).available).toBe(false);
+  expect(accountSupportsClaudeTools({ kind: 'claude-code-oauth' })).toBe(true);
+  expect(accountSupportsClaudeTools({ kind: 'codex-cli' })).toBe(false);
+  expect(accountSupportsClaudeTools(null)).toBe(false);
+  expect(accountUsesCodex({ kind: 'codex-cli' })).toBe(true);
+  expect(sessionUsesNativeMcpAuth(codex)).toBe(true);
+  expect(sessionUsesNativeMcpAuth(meta({ agentRuntime: 'claude-code' }))).toBe(false);
+});
+
+it('enables integrated native Codex features while offline but keeps request replies live-only', () => {
+  const codex = meta({ agentRuntime: 'codex' });
+  for (const key of ['mcp', 'skills', 'skillsInstall', 'subagents', 'compaction', 'resumableSessions', 'contextMetrics'] as const) {
+    expect(sessionCapability(codex, key).available, key).toBe(true);
+  }
+  expect(sessionCapability(codex, 'permissions').available).toBe(false);
+  expect(sessionCapability({ ...codex, runtimeGeneration: 'live', effectiveCapabilities: { ...runtimeCapabilities('codex'), mcp: { available: false, reason: 'Server unavailable' } } }, 'mcp')).toEqual({ available: false, reason: 'Server unavailable' });
+});
+
+it('enables native remote control only for a negotiated Codex connection', () => {
+  const codex = meta({ agentRuntime: 'codex' });
+  const capabilities = { ...runtimeCapabilities('codex'), remoteControl: { available: true } };
+  expect(sessionCapability(codex, 'remoteControl').available).toBe(false);
+  expect(sessionCapability({ ...codex, effectiveCapabilities: capabilities }, 'remoteControl').available).toBe(false);
+  expect(sessionCapability({ ...codex, runtimeGeneration: 'live', effectiveCapabilities: capabilities }, 'remoteControl')).toEqual({ available: true });
+  expect(sessionCapability({ ...codex, runtimeGeneration: 'live', effectiveCapabilities: { ...capabilities, remoteControl: { available: false, reason: 'Pairing unavailable' } } }, 'remoteControl')).toEqual({ available: false, reason: 'Pairing unavailable' });
 });
 
 describe('sandboxSelectionCapability (pi-skills-capabilities FR-5)', () => {

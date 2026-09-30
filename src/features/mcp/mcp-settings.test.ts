@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { McpServerInfo, SessionMeta } from '../../../contract/common';
 import {
+  mcpConfigurationNote,
   filterMcpServers,
   mcpCheckedLabel,
   mcpHealthSummary,
@@ -10,6 +11,20 @@ import {
   mcpScopeCounts,
   mcpStatusView,
 } from './mcp-settings';
+
+it('describes the active runtime configuration source without sending Codex users to Claude files', () => {
+  expect(mcpConfigurationNote(true)).toContain('Codex');
+  expect(mcpConfigurationNote(true)).toContain('config.toml');
+  expect(mcpConfigurationNote(true)).not.toContain('Claude');
+  expect(mcpConfigurationNote(true)).not.toContain('.mcp.json');
+  expect(mcpConfigurationNote(false)).toContain('.mcp.json');
+});
+
+it('presents native MCP authentication separately from Claude consent', () => {
+  const native = { name: 'docs', status: 'pending' as const };
+  expect(mcpStatusView(native, true).text).toBe('Sign-in required');
+  expect(mcpHealthSummary([native], true).text).toBe('1 needs sign-in');
+});
 
 const s = (name: string, status: McpServerInfo['status'], extra: Partial<McpServerInfo> = {}): McpServerInfo => ({
   name,

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { intakeClientError, type IntakeFields } from './intake-validate';
+import { intakeClientError, intakeNextAction, type IntakeFields } from './intake-validate';
+
+it('never advances an intake with unresolved questions', () => {
+  expect(intakeNextAction({ triage: 'questions', questions: [] })).toBeNull();
+  expect(intakeNextAction({ triage: 'feature', questions: ['Which scope?'] })).toBeNull();
+  expect(intakeNextAction({ triage: 'patch', questions: [] })).toBe('spec');
+  expect(intakeNextAction({ triage: 'feature', questions: [] })).toBe('brainstorm');
+  expect(intakeNextAction({ triage: 'future-route', questions: [] })).toBeNull();
+});
 
 function fields(over: Partial<IntakeFields> = {}): IntakeFields {
   return { title: 'A title', sourceKind: 'text', text: 'a brief', path: '', url: '', ...over };

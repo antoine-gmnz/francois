@@ -1,7 +1,7 @@
 //! Current-turn reply authority; controls never publish under the caller's lock.
 use super::{
     protocol,
-    requests::{NativeDecision, PreparedReply, RequestError, RequestKind},
+    requests::{NativeDecision, PreparedReply, RequestError},
     runtime::Inner,
     transport::Transport,
 };
@@ -143,13 +143,13 @@ impl TurnControl for Control {
         let mut counts = PendingCounts::default();
         if let Some(ledger) = &state.ledger {
             for request in ledger.pending() {
-                match request.kind {
-                    RequestKind::Questions(_) => {
+                match request.kind.questions() {
+                    Some(_) => {
                         if request.is_blocking() {
                             counts.questions += 1;
                         }
                     }
-                    _ => counts.permissions += 1,
+                    None => counts.permissions += 1,
                 }
             }
         }
@@ -183,6 +183,25 @@ impl TurnControl for Control {
 }
 impl Inner {
     pub(super) fn interrupt(self: &Arc<Self>, scope: &RuntimeScope) {
+        let children = {
+            let state = self.state.lock().unwrap();
+            state
+                .turn
+                .as_ref()
+                .filter(|turn| turn.context.scope == *scope)
+                .and_then(|_| state.transport.clone())
+                .map(|connection| (connection, state.agents.active()))
+        };
+        if let Some((connection, children)) = children {
+            for (thread, turn) in children {
+                let connection = connection.clone();
+                std::thread::spawn(move || {
+                    let _ = connection.call(Transport::deadline(), |id| {
+                        Ok(protocol::interrupt(id, &thread, &turn))
+                    });
+                });
+            }
+        }
         let ready = {
             let mut state = self.state.lock().unwrap();
             if state.closed {

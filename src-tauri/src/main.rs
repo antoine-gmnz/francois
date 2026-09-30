@@ -153,6 +153,7 @@ fn main() {
             session::session_unqueue,
             session::session_interrupt,
             session::session_answer_question,
+            session::session_open_request_url,
             session::session_switch_model,
             session::session_switch_permission_mode,
             session::session_switch_effort,
@@ -316,6 +317,7 @@ fn main() {
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 shell::kill_all_shells(app);
+                cohorte::python_service::kill_workers(app);
                 session::kill_model_probes();
                 session::kill_all(app);
                 // remote-control: the hosts are real interactive `claude`

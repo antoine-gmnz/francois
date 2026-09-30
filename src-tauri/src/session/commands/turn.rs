@@ -58,6 +58,18 @@ pub fn do_send(
             "unsupported runtime record retained for recovery",
         );
     }
+    if source == SendSource::Typed
+        && text.trim() == "/compact"
+        && engine.with_session(session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex)
+    {
+        return match session_compact(app.clone(), engine, session_id.into()) {
+            crate::ipc::IpcResult::Ok { .. } => ok(SendOutput {
+                queued: false,
+                queue_position: None,
+            }),
+            crate::ipc::IpcResult::Err { error, .. } => error.into(),
+        };
+    }
     if let Some((command, _)) = send_intercept(&text, source) {
         let key = match command.as_str() {
             "compact" => "compaction",
@@ -233,6 +245,47 @@ pub fn session_compact(
 
     if let Err((code, msg)) = engine.require_capability(&session_id, "compaction") {
         return err(code, msg);
+    }
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        let readiness = engine.with_session_mut(&session_id, |s| {
+            if status::is_busy(&s.status) {
+                return Err((
+                    ErrorCode::SessionAlreadyRunning,
+                    "A turn is already running",
+                ));
+            }
+            if status::is_terminal(&s.status) {
+                return Err((ErrorCode::SessionNotRunning, "Session has ended"));
+            }
+            if s.claude_session_id.is_none() {
+                return Err((
+                    ErrorCode::InvalidInput,
+                    "Send a first message before compacting this Codex session",
+                ));
+            }
+            s.status = status::STARTING.into();
+            Ok(())
+        });
+        match readiness {
+            Some(Ok(())) => {}
+            Some(Err((code, message))) => return err(code, message),
+            None => return err(ErrorCode::SessionNotFound, "no such session"),
+        }
+        emit(
+            &app,
+            SessionEvent::Status {
+                session_id: session_id.clone(),
+                status: status::STARTING.into(),
+            },
+        );
+        begin_turn(
+            &app,
+            &session_id,
+            uuid(),
+            "/compact".into(),
+            TurnMode::Compact,
+        );
+        return ok(None);
     }
     // pi-turn-controls FR-8: a Pi session's compaction goes through its OWN
     // runtime connection — never `run_compact` — and never falls through to

@@ -5,7 +5,7 @@
 import { COHORTE_FROZEN_STATUSES, type CohorteActionId, type CohorteFeatureChoice } from '../../../contract/cohorte-actions';
 import type { CohorteGateActionId, CohorteRun } from '../../../contract/cohorte-integration';
 import type { IconName } from '../../ui/icons';
-import { cohorteBrainstormDisplay, cohorteStartDisplay } from './command-display';
+import { brainstormSource, cohorteBrainstormDisplay, cohorteStartDisplay } from './command-display';
 import { shortRunId } from './run-view';
 
 export interface CohorteMenuItem {
@@ -87,7 +87,7 @@ export function buildSuggestions({ linkedRun, features, runsForRoot }: CohorteMe
   if (approve) {
     out.push({
       id: 'suggest-gate',
-      label: `Approve & ship ${linkedRun!.specId}`,
+      label: `Approve ${linkedRun!.specId}`,
       description: `Review gate on ${shortRunId(linkedRun!.runId)} · ${linkedRun!.gate!.findings.length} findings`,
       icon: 'check',
       commandHint: approve.cli.join(' && '),
@@ -111,7 +111,7 @@ export function buildSuggestions({ linkedRun, features, runsForRoot }: CohorteMe
     });
   }
 
-  const drafts = features.filter((f) => f.status === 'draft');
+  const drafts = features.filter((f) => f.status === 'draft' && f.kind !== 'questions' && brainstormSource(f) !== null);
   const toBrainstorm = newestBy(drafts, (f) => f.updatedAt);
   if (toBrainstorm) {
     out.push({
@@ -119,7 +119,7 @@ export function buildSuggestions({ linkedRun, features, runsForRoot }: CohorteMe
       label: `Brainstorm · ${toBrainstorm.id}`,
       description: `Draft · ${toBrainstorm.title}`,
       icon: 'spark',
-      commandHint: cohorteBrainstormDisplay(toBrainstorm.id),
+      commandHint: cohorteBrainstormDisplay(toBrainstorm.id, brainstormSource(toBrainstorm))!,
       tone: 'neutral',
       action: { kind: 'brainstorm', featureId: toBrainstorm.id },
     });

@@ -6,6 +6,10 @@ import {
   cohortePlumbingLine,
   cohorteSpecDisplay,
   cohorteStartDisplay,
+  brainstormSource,
+  cohorteIntakeContinueArgs,
+  cohorteShipDisplay,
+  cohorteRefreshDisplay,
 } from './command-display';
 
 describe('cohorteIntakeDisplay', () => {
@@ -52,9 +56,26 @@ describe('cohorteIntakeDisplay', () => {
 });
 
 describe('other display lines', () => {
-  it('brainstorm: feature-id flag or bare (new idea)', () => {
-    expect(cohorteBrainstormDisplay('auth-retry')).toBe('cohorte brainstorm --feature-id auth-retry');
+  it('brainstorm resumes the saved source rather than inventing a new feature', () => {
+    expect(cohorteBrainstormDisplay('auth-retry', 'intake')).toBe('cohorte brainstorm --from-intake auth-retry');
+    expect(cohorteBrainstormDisplay('auth-retry', 'brainstorm')).toBe('cohorte brainstorm --continue auth-retry');
+    expect(cohorteBrainstormDisplay('auth-retry')).toBeNull();
     expect(cohorteBrainstormDisplay(null)).toBe('cohorte brainstorm');
+  });
+  it('uses artifact provenance and does not guess when a draft has no source', () => {
+    expect(brainstormSource({ phase: 'intake', artifacts: ['intake-report'] })).toBe('intake');
+    expect(brainstormSource({ phase: 'brainstorm', artifacts: ['brief'] })).toBe('brainstorm');
+    expect(brainstormSource({ artifacts: ['brief', 'intake-report'] })).toBe('brainstorm');
+    expect(brainstormSource({})).toBeNull();
+  });
+  it('builds indexed intake answers without changing their meaning', () => {
+    expect(cohorteIntakeContinueArgs('incoming', [' first answer ', '', '$(do not run)'], 'feature')).toEqual([
+      'intake', '--continue', 'incoming', '--answer', '1=first answer', '--answer', '3=$(do not run)', '--route', 'feature',
+    ]);
+  });
+  it('uses the current ship and run commands', () => {
+    expect(cohorteShipDisplay('run_123')).toBe('cohorte ship run_123 --live');
+    expect(cohorteRefreshDisplay('run_123')).toBe('cohorte --json run run_123');
   });
 
   it('spec: positional feature id', () => {

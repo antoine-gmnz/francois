@@ -10,7 +10,7 @@ import type { PanelTab } from '../../app/appShell';
 import { agentsKill, sessionClearAttachments, sessionCompact, skillsRun } from '../../lib/api';
 import { canOpenShellPane, paneCount, shellPaneEligibleProjects } from '../../lib/layoutStore';
 import { useNotificationsStore } from '../../lib/notificationsStore';
-import { sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
+import { permissionRulesCapability, sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { statusNeedsAttention } from '../../../contract/fleet-board';
 import { focusedSessionId } from '../../lib/layoutStore';
@@ -40,7 +40,7 @@ function registerPaletteCommand(command: PaletteCommand): void {
   const state = (sessionId: string | null) => {
     if (!sessionId) return { available: false, reason: 'Select a session first.' };
     const meta = useStore.getState().sessions.find(s => s.id === sessionId);
-    return meta ? sessionCapability(meta, capability) : { available: false, reason: 'Session is not available.' };
+    return meta ? (command.id === 'manage-permissions' ? permissionRulesCapability(meta) : sessionCapability(meta, capability)) : { available: false, reason: 'Session is not available.' };
   };
   const allowed = (sessionId: string | null) => {
     const cap = state(sessionId);

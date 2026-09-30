@@ -20,8 +20,10 @@ import type { AppError, SessionId } from './common';
  */
 export type RemoteControlState =
   | { phase: 'off' }
-  | { phase: 'starting'; name: string; startedAt: number }
+  | { phase: 'starting'; name: string; startedAt: number; provider?: 'codex' }
+  | { phase: 'enabled'; name: string; startedAt: number }
   | { phase: 'active'; name: string; startedAt: number; url: string }
+  | { phase: 'pairing'; name: string; startedAt: number; pairingCode: string; environmentId: string; expiresAt: number }
   | { phase: 'failed'; name: string; error: AppError };
 
 export interface RemoteControlStatus {

@@ -34,7 +34,7 @@ export function advancedRecap(parts: {
   runtime: ClaudeRuntime | null;
   permissionMode: PermissionMode;
   responseMode: ResponseMode;
-  allowGit: boolean;
+  allowGit: boolean | null;
   baseRef: string | null;
 }): RecapItem[] {
   const items: RecapItem[] = [];
@@ -53,7 +53,7 @@ export function advancedRecap(parts: {
     changed: parts.permissionMode !== 'default',
   });
   items.push({ key: 'response', label: 'Response', value: parts.responseMode, changed: parts.responseMode !== 'default' });
-  items.push({ key: 'git', label: 'Git', value: parts.allowGit ? 'auto-approve' : 'ask', changed: parts.allowGit });
+  if (parts.allowGit !== null) items.push({ key: 'git', label: 'Git', value: parts.allowGit ? 'auto-approve' : 'ask', changed: parts.allowGit });
   if (parts.baseRef !== null) items.push({ key: 'base', label: 'Base', value: parts.baseRef, changed: false });
   return items;
 }

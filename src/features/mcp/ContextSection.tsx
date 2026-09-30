@@ -18,7 +18,7 @@ import type { McpServerInfo, SessionMeta } from '../../../contract/common';
 import type { RepoBrief } from '../../../contract/session-welcome';
 import type { SessionPanelSectionProps } from '../../app/session-panel/sections';
 import { mcpDetach, mcpReconnect, projectRepoBrief } from '../../lib/api';
-import { sessionCapability } from '../../lib/runtimeCapability';
+import { sessionCapability, sessionUsesNativeMcpAuth } from '../../lib/runtimeCapability';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
@@ -81,8 +81,9 @@ export default function ContextSection({ session, context }: SessionPanelSection
 
 function McpBlock({ session, onAttach }: { session: SessionMeta; onAttach: () => void }) {
   const capability = sessionCapability(session, 'mcp');
+  const nativeAuth = sessionUsesNativeMcpAuth(session);
   const { servers, error, loaded, reload } = useSessionMcp(session.id);
-  const down = downServers(servers);
+  const down = downServers(servers, nativeAuth);
 
   if (!capability.available) {
     return (
@@ -96,7 +97,7 @@ function McpBlock({ session, onAttach }: { session: SessionMeta; onAttach: () =>
   return (
     <>
       {down.map((server) => (
-        <DownBanner key={server.name} sessionId={session.id} server={server} onSettled={reload} />
+        <DownBanner key={server.name} sessionId={session.id} server={server} nativeAuth={nativeAuth} onSettled={reload} />
       ))}
       <SidePanelLabel count={servers.length > 0 ? mcpHeading(servers) : undefined}>MCP servers</SidePanelLabel>
       {error ? (
@@ -105,7 +106,7 @@ function McpBlock({ session, onAttach }: { session: SessionMeta; onAttach: () =>
         <SidePanelEmpty>No MCP servers configured.</SidePanelEmpty>
       ) : (
         servers.map((server) => {
-          const note = mcpNote(server);
+          const note = mcpNote(server, nativeAuth);
           return (
             <div key={server.name} className="context-row-wrap">
               <div className="context-row" title={server.errorMessage ?? server.name}>
@@ -125,7 +126,7 @@ function McpBlock({ session, onAttach }: { session: SessionMeta; onAttach: () =>
   );
 }
 
-function DownBanner({ sessionId, server, onSettled }: { sessionId: string; server: McpServerInfo; onSettled: () => void }) {
+function DownBanner({ sessionId, server, nativeAuth, onSettled }: { sessionId: string; server: McpServerInfo; nativeAuth: boolean; onSettled: () => void }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -148,14 +149,14 @@ function DownBanner({ sessionId, server, onSettled }: { sessionId: string; serve
             <Icon name="warn" size={13} />
           </span>
           <span className="context-down__title">
-            <span className="context-down__name">{server.name}</span> is down
+            <span className="context-down__name">{server.name}</span> {nativeAuth && server.status === 'pending' ? 'needs sign-in' : 'is down'}
           </span>
         </div>
-        <p className="context-down__body">{downMessage(server)}</p>
+        <p className="context-down__body">{downMessage(server, nativeAuth)}</p>
         {failed && <p className="context-down__failed">{failed}</p>}
         <div className="context-down__actions">
           <Button size="sm" variant="primary" disabled={busy} title="Reconnect this server" onClick={() => act(() => mcpReconnect(sessionId, server.name))}>
-            Retry
+            {nativeAuth && server.status === 'pending' ? 'Connect · sign in' : 'Retry'}
           </Button>
           <Button size="sm" disabled={busy} title="Detach this server from the session" onClick={() => act(() => mcpDetach(sessionId, server.name))}>
             Detach

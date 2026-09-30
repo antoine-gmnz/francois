@@ -10,6 +10,7 @@ import type { CohorteDetection, CohorteDoctorReport, CohortePrefs } from '../../
 import { formatRelativeTime } from '../../../contract/fleet-board';
 import type { ProjectMeta } from '../../../contract/projects';
 import { cohorteDoctor, cohorteInit } from '../../lib/api';
+import { PreparationInbox } from './PreparationInbox';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { abbreviate } from '../../lib/path';
@@ -118,6 +119,7 @@ export default function CohorteSettingsPage({ project, home }: { project: Projec
         <Detected detection={detection} doctor={doctor} doctorRunning={doctorRunning} doctorNote={doctorNote} onDoctor={runDoctor} />
       )}
       {mode === 'not-detected' && detection && <NotDetected detection={detection} root={root} />}
+      {detection && <PreparationInbox detection={detection} root={root} />}
       {mode === 'checking' && <p className="cohorte-settings__foot">Checking the Cohorte service…</p>}
       {mode === 'error' && (
         <div className="cohorte-settings__error">

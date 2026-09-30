@@ -19,7 +19,7 @@ pub(super) fn invocation(ctx: &TurnContext) -> (String, Vec<String>) {
     // Codex only offers `request_user_input` in Plan collaboration mode unless
     // this (under-development, verified on 0.155.1) feature is on — without it
     // a Codex session could never ask a question the way Claude Code does.
-    let native = vec![
+    let mut native = vec![
         "app-server".into(),
         "--enable".into(),
         "default_mode_request_user_input".into(),
@@ -35,6 +35,8 @@ pub(super) fn invocation(ctx: &TurnContext) -> (String, Vec<String>) {
         "--listen".into(),
         "stdio://".into(),
     ];
+    let flags = profile_args(&ctx.extra_args).unwrap_or_default();
+    native.splice(native.len() - 2..native.len() - 2, flags);
     if ctx.runtime != "wsl" {
         return (crate::process_util::codex_program(), native);
     }
@@ -49,6 +51,57 @@ pub(super) fn invocation(ctx: &TurnContext) -> (String, Vec<String>) {
     args.extend(["--".into(), "codex".into()]);
     args.extend(native);
     ("wsl.exe".into(), args)
+}
+/// Profiles may configure Codex tools/features, but cannot replace the account,
+/// model selection or sandbox controlled by the session.
+pub(super) fn profile_args(args: &[String]) -> Result<Vec<String>, AppError> {
+    let invalid = || {
+        AppError::new(ErrorCode::InvalidInput,
+        "This Codex profile contains unsupported options. Use -c/--config for tools, features, web_search or reasoning display settings, or --enable/--disable feature flags.")
+    };
+    let mut index = 0;
+    while index < args.len() {
+        let flag = &args[index];
+        let (flag, value, consumed) = match flag.split_once('=') {
+            Some((flag, value)) => (flag, value, 1),
+            None => (
+                flag.as_str(),
+                args.get(index + 1).ok_or_else(invalid)?.as_str(),
+                2,
+            ),
+        };
+        match flag {
+            "-c" | "--config" => {
+                let (key, _) = value.split_once('=').ok_or_else(invalid)?;
+                if !(key.starts_with("tools.")
+                    || key.starts_with("features.")
+                    || matches!(
+                        key,
+                        "web_search"
+                            | "model_reasoning_summary"
+                            | "model_verbosity"
+                            | "personality"
+                    ))
+                    || key.is_empty()
+                    || key.chars().any(char::is_control)
+                {
+                    return Err(invalid());
+                }
+            }
+            "--enable" | "--disable" => {
+                if value.is_empty()
+                    || !value
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                {
+                    return Err(invalid());
+                }
+            }
+            _ => return Err(invalid()),
+        }
+        index += consumed;
+    }
+    Ok(args.to_vec())
 }
 pub(super) fn native_path(ctx: &TurnContext, path: &str) -> Result<String, AppError> {
     if ctx.runtime != "wsl" {

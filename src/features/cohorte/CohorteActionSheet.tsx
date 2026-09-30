@@ -17,8 +17,8 @@ import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
 import { Switch } from '../../ui/Switch';
 import { showToast } from '../../lib/toast';
-import { cohorteBrainstormDisplay, cohorteCommandLines, cohorteIntakeDisplay, cohorteSpecDisplay, cohorteStartDisplay } from './command-display';
-import { intakeClientError, intakeSeedFromDraft, type IntakeFields } from './intake-validate';
+import { brainstormSource, cohorteBrainstormDisplay, cohorteCommandLines, cohorteIntakeDisplay, cohorteSpecDisplay, cohorteStartDisplay } from './command-display';
+import { intakeClientError, intakeNextAction, intakeSeedFromDraft, type IntakeFields } from './intake-validate';
 import { openCohorteRun } from './actions';
 import { openCohorteTerminal } from './terminal';
 import { detectionFor } from './linkage';
@@ -238,7 +238,8 @@ function IntakeSheet({ sessionId, root, home }: { sessionId: string; root: strin
     store.markNewFeature(res.data.featureId);
     close();
     // A patch triage skips brainstorm and goes straight to its spec.
-    if (thenContinue) store.openSheet({ action: res.data.triage === 'patch' ? 'spec' : 'brainstorm', sessionId, featureId: res.data.featureId });
+    const nextAction = intakeNextAction(res.data);
+    if (thenContinue && nextAction) store.openSheet({ action: nextAction, sessionId, featureId: res.data.featureId });
   };
 
   // Don't greet an empty form with "Title is required": validation shows once
@@ -320,7 +321,7 @@ function IntakeSheet({ sessionId, root, home }: { sessionId: string; root: strin
         <Switch on={thenContinue} onChange={setThenContinue} label="Continue when the brief is stored" />
         <div className="cohorte-sheet__then-text">
           <span className="cohorte-sheet__then-title">Continue to Brainstorm when the brief is stored</span>
-          <span className="cohorte-sheet__then-sub">Opens the next form with the new feature id — Write spec if it triages as a patch</span>
+          <span className="cohorte-sheet__then-sub">Opens the next form when triage is resolved. Open questions stay in the result card.</span>
         </div>
       </div>
       <ErrorLine message={shownError} />
@@ -361,7 +362,7 @@ function FeatureSheet({
       if (!current || !res.ok) return;
       const list =
         action === 'brainstorm'
-          ? res.data.filter((f) => f.status === 'draft').sort((a, b) => b.updatedAt - a.updatedAt)
+          ? res.data.filter((f) => f.status === 'draft' && f.kind !== 'questions' && brainstormSource(f) !== null).sort((a, b) => b.updatedAt - a.updatedAt)
           : action === 'spec'
             ? res.data.filter((f) => !COHORTE_FROZEN_STATUSES.includes(f.status)).sort((a, b) => b.updatedAt - a.updatedAt)
             : res.data.filter((f) => COHORTE_FROZEN_STATUSES.includes(f.status)).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -375,8 +376,9 @@ function FeatureSheet({
 
   const featureIdSafe = selected === '' || COHORTE_SAFE_FEATURE_ID.test(selected);
   const usesFeature = !(action === 'brainstorm' && newIdea);
-  const command = !usesFeature ? cohorteBrainstormDisplay(null) : action === 'brainstorm' ? cohorteBrainstormDisplay(selected || null) : action === 'spec' ? cohorteSpecDisplay(selected) : cohorteStartDisplay(selected);
-  const disabled = busy || (usesFeature && (!selected || !featureIdSafe));
+  const source = brainstormSource(features.find(feature => feature.id === selected));
+  const command = !usesFeature ? cohorteBrainstormDisplay(null)! : action === 'brainstorm' ? cohorteBrainstormDisplay(selected || null, source) : action === 'spec' ? cohorteSpecDisplay(selected) : cohorteStartDisplay(selected);
+  const disabled = busy || command === null || (usesFeature && (!selected || !featureIdSafe || !features.some(feature => feature.id === selected)));
 
   const run = async () => {
     if (disabled) return;
@@ -396,7 +398,7 @@ function FeatureSheet({
     }
     // brainstorm / spec — FR-20, run in a session shell tab.
     setBusy(true);
-    const ok = await openCohorteTerminal(sessionId, command, { execute: true });
+    const ok = await openCohorteTerminal(sessionId, command!, { execute: true, root });
     setBusy(false);
     if (ok) close();
   };
@@ -408,7 +410,7 @@ function FeatureSheet({
       subtitle={copy.subtitle}
       stage={STAGE_INDEX[action]}
       stageNote={usesFeature ? selected || 'no feature' : 'new idea'}
-      command={command}
+      command={command ?? 'Choose a stored intake or brainstorm'}
       cwd={abbreviate(root, home)}
       footNote={copy.foot}
       primary={{ label: copy.primary, busy, disabled }}
@@ -426,7 +428,7 @@ function FeatureSheet({
         </Field>
       )}
       {usesFeature && (
-        <Field label="Feature" flag={action === 'brainstorm' ? '--feature-id' : 'positional'} htmlFor="cohorte-feature-sheet-select">
+        <Field label="Feature" flag={action === 'brainstorm' ? source === 'brainstorm' ? '--continue' : '--from-intake' : 'positional'} htmlFor="cohorte-feature-sheet-select">
           <div className="cohorte-sheet__select">
             <select
               id="cohorte-feature-sheet-select"

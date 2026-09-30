@@ -22,6 +22,9 @@ import { useStore, type MainTab } from '../../lib/store';
 import { showToast } from '../../lib/toast';
 import { commandErrorFeedback, hasPendingStep, NOTE_DROPPED_TOAST, OUTCOME_VISIBLE_MS, PENDING_REENABLE_MS } from './outcome';
 import { cohorteRunIdFromTab, cohorteTabId } from './tab';
+import { cohorteShipDisplay } from './command-display';
+import { canShipRun } from './run-view';
+import { openCohorteTerminal } from './terminal';
 
 const outcomeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const busyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -99,6 +102,12 @@ export function controlRun(run: CohorteRun, verb: 'pause' | 'resume' | 'cancel')
   const req = { root: run.projectRoot, runId: run.runId };
   const call = verb === 'pause' ? cohortePause : verb === 'resume' ? cohorteResume : cohorteCancel;
   return track(run, verb, () => call(req));
+}
+
+/** Approval records a decision; shipment starts through its separate CLI action. */
+export function shipRun(run: CohorteRun, sessionId: string | null): Promise<boolean> {
+  if (!canShipRun(run)) return Promise.resolve(false);
+  return openCohorteTerminal(sessionId, cohorteShipDisplay(run.runId), { execute: true, root: run.projectRoot, argv: ['ship', run.runId, '--live'] });
 }
 
 /** FR-70: open the run view, remembering the tab to come back to. */

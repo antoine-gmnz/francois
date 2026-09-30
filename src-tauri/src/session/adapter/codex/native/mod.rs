@@ -1,15 +1,23 @@
-//! Codex 0.155.1 private App Server protocol and request authority.
+//! Codex 0.159 private App Server protocol and request authority.
 //!
 //! These modules are transport-independent pieces of the native adapter, not
 //! application state. The connection owner serializes ledger mutations and
 //! stdin writes. Only redacted resolutions may cross the normalized event sink.
 
+mod agents;
 mod control;
+mod elicitation;
 mod events;
 mod invocation;
+mod item_details;
+mod mcp_notifications;
 mod notifications;
+mod progress;
 mod protocol;
+mod remote;
 mod requests;
+mod resources;
+pub(crate) use resources::probe;
 mod runtime;
 mod startup;
 mod transport;
@@ -26,3 +34,6 @@ mod product_tests;
 mod tests;
 #[cfg(test)]
 mod transcript_tests;
+
+#[cfg(test)]
+mod parity_tests;

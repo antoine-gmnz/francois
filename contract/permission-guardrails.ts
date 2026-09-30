@@ -67,3 +67,6 @@ export interface SetRuleTierRequest {
   ruleId: string;
   tier: PermissionTier;
 }
+
+/** Open the URL of this exact pending native request; never grants approval. */
+export interface OpenRequestUrlRequest { sessionId: SessionId; blockId: string }

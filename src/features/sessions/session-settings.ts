@@ -1,4 +1,4 @@
-import { sandboxSelectionCapability, sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
+import { permissionRulesCapability, sandboxSelectionCapability, sessionCapability, sessionIsRetired } from '../../lib/runtimeCapability';
 // session-settings-sheet — the pure half of the sheet: the working draft, what
 // counts as "changed" against the session's current values (FR-14), the patch
 // Apply sends (FR-16), the foot's change count + timing sentence (FR-15), the
@@ -270,7 +270,7 @@ export function nextProjectDefaults(current: ProjectDefaults, draft: SettingsDra
 export function settingCapability(session: SessionMeta, key: keyof SettingsDraft) {
   if (sessionIsRetired(session)) return sessionCapability(session, 'modelSwitching');
   if (key === 'modelId' || key === 'effort') return sessionCapability(session, 'modelSwitching');
-  if (key === 'allowGit') return sessionCapability(session, 'permissions');
+  if (key === 'allowGit') return permissionRulesCapability(session);
   if (key === 'permissionMode') return sandboxSelectionCapability(session);
   return { available: true };
 }

@@ -18,7 +18,7 @@ const UNSAFE = /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/;
 
 /** Keys supported only while the negotiated live transport exists (FR-1/FR-2). */
 function liveOnly(runtime: AgentRuntime, capability: RuntimeCapability): boolean {
-  return runtime === 'codex' && capability === 'permissions';
+  return runtime === 'codex' && (capability === 'permissions' || capability === 'remoteControl');
 }
 
 function validSnapshot(caps: RuntimeCapabilities): boolean {
@@ -60,6 +60,27 @@ export function profileIsRetired<P extends { kind?: SessionProfile['kind'] | str
  */
 export function requestNeedsLiveGeneration(meta: Pick<SessionMeta, 'agentRuntime'> | null | undefined): boolean {
   return !!meta && liveOnly(meta.agentRuntime, 'permissions');
+}
+
+/** Native approval replies do not imply support for Claude's persistent rules. */
+export function permissionRulesCapability(meta: SessionMeta | null | undefined): CapabilityState {
+  if (sessionIsRetired(meta)) return { available: false, reason: PI_UNAVAILABLE };
+  return meta?.agentRuntime === 'claude-code'
+    ? sessionCapability(meta, 'permissions')
+    : { available: false, reason: 'Persistent permission rules and Git auto-approval are available only for Claude Code sessions.' };
+}
+
+/** Claude resources and cloud adoption require a Claude OAuth account. */
+export function accountSupportsClaudeTools(account: { kind?: Account['kind'] } | null | undefined): boolean {
+  return account?.kind === 'claude-code-oauth';
+}
+
+export function accountUsesCodex(account: { kind?: Account['kind'] } | null | undefined): boolean {
+  return account?.kind === 'codex-cli';
+}
+
+export function sessionUsesNativeMcpAuth(meta: Pick<SessionMeta, 'agentRuntime'> | null | undefined): boolean {
+  return meta?.agentRuntime === 'codex';
 }
 
 export function sessionCapability(meta: SessionMeta | null | undefined, capability: RuntimeCapability): CapabilityState {

@@ -461,7 +461,17 @@ pub(crate) fn resolve_capability(
         }
         AgentRuntime::Codex => matches!(
             key,
-            "interactiveCommands" | "usageBar" | "modelSwitching" | "images"
+            "mcp"
+                | "skills"
+                | "skillsInstall"
+                | "subagents"
+                | "compaction"
+                | "resumableSessions"
+                | "contextMetrics"
+                | "interactiveCommands"
+                | "usageBar"
+                | "modelSwitching"
+                | "images"
         ),
         AgentRuntime::Grok => matches!(key, "modelSwitching" | "images"),
         AgentRuntime::Pi => false,
@@ -469,7 +479,9 @@ pub(crate) fn resolve_capability(
     match caps {
         Some(caps) => {
             validate_capabilities(caps).is_ok()
-                && (baseline || runtime == AgentRuntime::Codex && key == "permissions")
+                && (baseline
+                    || runtime == AgentRuntime::Codex
+                        && matches!(key, "permissions" | "remoteControl"))
                 && caps.get(key).is_some_and(|s| s.available)
         }
         None => baseline,
@@ -539,7 +551,11 @@ mod boundary_tests {
                 )
             })
             .collect();
-        assert!(!resolve_capability(AgentRuntime::Codex, Some(&caps), "mcp"));
+        assert!(!resolve_capability(
+            AgentRuntime::Codex,
+            Some(&caps),
+            "workflows"
+        ));
     }
 
     #[test]

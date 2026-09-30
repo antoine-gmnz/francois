@@ -439,7 +439,10 @@ pub fn load_accounts(app: &AppHandle) {
     // entry — a `skills/`, a `hooks/` — that appeared in `~/.claude` after the
     // account was made. Only for a dir that still exists, so a hand-deleted
     // account is never resurrected as a shell of symlinks.
-    for r in records.iter().filter(|r| r.kind != AccountKind::Pi) {
+    for r in records
+        .iter()
+        .filter(|r| r.kind == AccountKind::ClaudeCodeOauth)
+    {
         let dir = Path::new(&r.config_dir);
         if dir.is_dir() {
             crate::account::mirror_global(dir);

@@ -13,7 +13,7 @@ import type {
     PermissionDecision,
     PermissionTier,
 } from '../../../contract/permission-guardrails';
-import { permissionsDecide, permissionsRemove } from '../../lib/api';
+import { permissionsDecide, permissionsRemove, sessionOpenRequestUrl } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { focusedSessionId } from '../../lib/layoutStore';
@@ -145,6 +145,9 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
   }, [interactive, sessionId, actions, decide]);
 
   const why = surface.header.blast;
+  const urlRequest = block.ask.toolName === 'MCP' && (() => {
+    try { return typeof JSON.parse(block.ask.inputJson).url === 'string'; } catch { return false; }
+  })();
 
   return (
     <div ref={rootRef} className={cardClass('pending', inFlight)}>
@@ -176,6 +179,7 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
       )}
 
       <div className="pcard__actions">
+        {urlRequest && <Button disabled={!interactive} onClick={() => { void sessionOpenRequestUrl({ sessionId, blockId: block.blockId }).then((res) => { if (!res.ok) setError(res.error.message); }).catch(() => setError('Could not open the MCP request page')); }}>open request</Button>}
         {actions.map((a, i) => (
           <Button
             key={a.decision}

@@ -83,50 +83,26 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     contextMetrics: { available: false, reason: "Context metrics aren't available on this provider yet." },
     costMetrics: { available: false, reason: "Cost metrics aren't available on this provider yet." },
   },
-  // multi-provider-codex FR-16. Codex owns its own loop like claude-code, but
-  // over a NON-INTERACTIVE transport (`codex exec --json`, prompt on stdin, stdin
-  // then closed), which is what drives most of these falses: with no channel back
-  // into a live turn there is nothing to ask on, install through, or drive a slash
-  // command over.
-  //
-  // Two reasons here deliberately DIVERGE from the francois row rather than being
-  // copied, because the same word would be false:
-  //   - usageBar: a Codex session authenticated with `codex login` bills against a
-  //     ChatGPT PLAN. The App Server rate-limit endpoint now feeds the same
-  //     account-level meters shown for Claude.
-  //   - permissions: not a gap at all. Codex enforces with an OS-level sandbox
-  //     chosen from permissionMode (FR-9). Stating that is honest; "isn't
-  //     available yet" would imply the calls run ungoverned, which is the opposite
-  //     of the truth.
+  // Codex App Server: native discovery, skills, collaboration, compaction,
+  // durable threads and token metrics. Request replies require a live generation.
   codex: {
-    mcp: { available: false, reason: "MCP servers aren't available on this provider yet." },
-    subagents: { available: false, reason: "Subagents aren't available on this provider yet." },
-    // Codex has its own skills dir, but the panes read Claude Code's control
-    // surface; inverting discovery is capability-registry, not this feature.
-    skills: { available: false, reason: "Skills aren't available on this provider yet." },
-    skillsInstall: {
-      available: false,
-      reason: "Installing skills isn't available on this provider yet.",
-    },
-    workflows: { available: false, reason: "Workflows aren't available on this provider yet." },
-    // Francois-owned commands (/model, /status and /help) are answered in the
-    // core and do not require Codex's non-interactive stdin transport. Vendor
-    // slash commands still pass through as ordinary prompts.
+    mcp: { available: true },
+    subagents: { available: true },
+    skills: { available: true },
+    skillsInstall: { available: true },
+    workflows: { available: false, reason: 'Use the Cohorte integration to orchestrate Codex workflows.' },
     interactiveCommands: { available: true },
-    permissions: {
-      available: false,
-      reason: 'Codex enforces permissions with its own sandbox.',
-    },
-    remoteControl: { available: false, reason: 'Remote Control is an Anthropic service.' },
+    permissions: { available: false, reason: 'Native approvals require a live Codex connection.' },
+    remoteControl: { available: false, reason: 'Start a Codex session to connect remote control.' },
     usageBar: { available: true },
-    compaction: { available: false, reason: "Compaction isn't available on this provider yet." },
-    steering: { available: false, reason: "Steering isn't available on this provider yet." },
-    followUps: { available: false, reason: "Follow-ups aren't available on this provider yet." },
-    resumableSessions: { available: false, reason: "Resumable sessions aren't available on this provider yet." },
+    compaction: { available: true },
+    steering: { available: false, reason: 'Steering is not integrated yet; messages are queued for the next turn.' },
+    followUps: { available: false, reason: 'Messages are queued by Francois for the next turn.' },
+    resumableSessions: { available: true },
     modelSwitching: { available: true },
     images: { available: true },
-    contextMetrics: { available: false, reason: "Context metrics aren't available on this provider yet." },
-    costMetrics: { available: false, reason: "Cost metrics aren't available on this provider yet." },
+    contextMetrics: { available: true },
+    costMetrics: { available: false, reason: 'Codex does not report a monetary cost for ChatGPT plan turns.' },
   },
   // multi-provider-grok FR-26. Grok owns its own loop like claude-code and codex,
   // over the same shape of NON-INTERACTIVE transport as codex (`grok -p

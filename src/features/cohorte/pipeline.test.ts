@@ -83,6 +83,16 @@ describe('derivePipeline stages (FR-61)', () => {
     expect(card).toMatchObject({ stage: 2, stageLabel: 'questions' });
   });
 
+  it('keeps an intake with unanswered questions resumable instead of starting brainstorm', () => {
+    const [card] = derivePipeline([feature({ id: 'needs-details', kind: 'questions', phase: 'intake' })], []);
+    expect(card).toMatchObject({ stage: 0, stageLabel: 'intake · questions', action: { id: 'continue-intake', label: 'Continue intake' } });
+  });
+
+  it('shows the saved brainstorm stage rather than claiming it is a fresh intake', () => {
+    const [card] = derivePipeline([feature({ id: 'saved-idea', phase: 'brainstorm' })], []);
+    expect(card).toMatchObject({ stage: 1, stageLabel: 'brainstorm', action: { id: 'brainstorm', label: 'Continue brainstorm' } });
+  });
+
   it('picks the LATEST run by startedAt when several exist for the same feature', () => {
     const f = feature({ id: 'a' });
     const old = run({ runId: 'r1', specId: 'a', view: 'failed', startedAt: 1 });

@@ -14,6 +14,7 @@ import './remote.css';
 import {
   approvalRequiredOf,
   remoteControlActions,
+  remotePairingAction,
   isRemoteLive,
   remoteDotTone,
   remoteFailure,
@@ -79,6 +80,8 @@ export function RemoteControlBadge({ sessionId, capability }: { sessionId: Sessi
   capabilityRef.current = capability;
   const live = isRemoteLive(state);
   const url = remoteUrlOf(state);
+  const copyValue = state.phase === 'pairing' ? state.pairingCode : url;
+  const pairingAction = remotePairingAction(state);
   const handle = remoteSessionHandle(state);
   // Set only when the host refused to spawn because Claude Code still owes a
   // consent/trust decision for this folder — the one failure the user can fix
@@ -156,9 +159,9 @@ export function RemoteControlBadge({ sessionId, capability }: { sessionId: Sessi
   }
 
   async function copy() {
-    if (!url) return;
+    if (!copyValue) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(copyValue);
       if (mounted.current) {
         setCopied(true);
         if (copyTimeout.current) clearTimeout(copyTimeout.current);
@@ -200,7 +203,7 @@ export function RemoteControlBadge({ sessionId, capability }: { sessionId: Sessi
 
           {state.phase === 'starting' && (
             <div className="rc-popover-note">
-              registering with claude.ai — the URL appears here in a moment
+              {state.provider === 'codex' ? 'Connecting Codex remote control…' : 'Registering with claude.ai — the URL appears here in a moment'}
             </div>
           )}
 
@@ -210,6 +213,13 @@ export function RemoteControlBadge({ sessionId, capability }: { sessionId: Sessi
               <div className="rc-popover-note">
                 Open it on your phone or in any browser to continue this same session.
               </div>
+            </>
+          )}
+          {state.phase === 'pairing' && (
+            <>
+              <div className="rc-url-box">{state.pairingCode}</div>
+              <div className="rc-popover-note">Use this code in your Codex remote client to pair this environment. Remote access lasts while this session is connected.</div>
+              <div className="rc-popover-note">Code expires: {new Date(state.expiresAt).toLocaleString()}</div>
             </>
           )}
 
@@ -225,15 +235,18 @@ export function RemoteControlBadge({ sessionId, capability }: { sessionId: Sessi
           )}
 
           <div className="rc-btn-row">
-            {url && (
+            {copyValue && (
               <button className="rc-btn" onClick={() => void copy()}>
-                {copied ? 'copied' : 'copy url'}
+                {copied ? 'copied' : state.phase === 'pairing' ? 'copy pairing code' : 'copy url'}
               </button>
             )}
             {approval && (
               <button className="rc-btn" onClick={() => void approveAndStart()} disabled={busy || !actions.canStart} title={actions.reason}>
                 approve &amp; start
               </button>
+            )}
+            {pairingAction && (
+              <button className="rc-btn" onClick={() => void start()} disabled={busy || !actions.canStart}>{pairingAction}</button>
             )}
             {state.phase === 'failed' && !approval && (
               <button className="rc-btn" onClick={() => void start()} disabled={busy || !actions.canStart} title={actions.reason}>

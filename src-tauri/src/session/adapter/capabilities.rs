@@ -16,7 +16,7 @@ pub(crate) const CAPABILITY_INVALID: &str = "runtime reported an invalid capabil
 /// Keys an implemented adapter supports only while its negotiated live
 /// transport exists: absent a snapshot they stay off (FR-1/FR-2).
 pub(crate) fn live_only(runtime: AgentRuntime, key: &str) -> bool {
-    runtime == AgentRuntime::Codex && key == "permissions"
+    runtime == AgentRuntime::Codex && matches!(key, "permissions" | "remoteControl")
 }
 
 /// FR-1: the explicit supported-control matrix — legacy baseline plus the
@@ -117,7 +117,7 @@ mod tests {
     fn denial_names_unsupported_disconnected_and_invalid_without_native_detail() {
         let codex = AgentRuntime::Codex;
         assert_eq!(
-            check_capability(codex, None, None, "mcp"),
+            check_capability(codex, None, None, "workflows"),
             Err((ErrorCode::RuntimeUnsupported, CAPABILITY_UNSUPPORTED))
         );
         assert_eq!(

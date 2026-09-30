@@ -39,6 +39,7 @@ portable-pty = "0.8"
 # Claude Code's own tool name, so it must accept the regex syntax Claude
 # Code's Grep accepts rather than only literal substrings.
 regex = "1"
+url = "2"
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 ureq = { version = "2", features = ["json"] }

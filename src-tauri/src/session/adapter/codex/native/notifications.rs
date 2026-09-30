@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 impl Inner {
-    pub(super) fn server_request(self: &Arc<Self>, id: RequestId, method: &str, params: Value) {
+    pub(super) fn server_request(self: &Arc<Self>, id: RequestId, method: &str, mut params: Value) {
         let (connection, emission) = {
             let mut state = self.state.lock().unwrap();
             if state.closed {
@@ -21,6 +21,25 @@ impl Inner {
             let Some(connection) = state.transport.clone() else {
                 return;
             };
+            if let Some(thread) = params["threadId"].as_str() {
+                if state.agents.contains(thread) {
+                    let valid = state.turn.as_ref().is_some_and(|turn| {
+                        state
+                            .agents
+                            .generation_matches(thread, turn.context.scope.generation)
+                    }) && params["turnId"]
+                        .as_str()
+                        .is_none_or(|turn| state.agents.matches_turn(thread, turn));
+                    if !valid {
+                        params["threadId"] = Value::Null;
+                    } else if let Some(scope) =
+                        state.turn.as_ref().and_then(|turn| turn.native.clone())
+                    {
+                        params["threadId"] = serde_json::json!(scope.thread_id);
+                        params["turnId"] = serde_json::json!(scope.turn_id);
+                    }
+                }
+            }
             let current = state
                 .turn
                 .as_ref()
@@ -60,7 +79,22 @@ impl Inner {
         }
     }
     pub(super) fn notification(self: &Arc<Self>, method: &str, params: &Value) {
+        if method == "remoteControl/status/changed" {
+            self.remote_notification(params);
+            return;
+        }
+        if matches!(
+            method,
+            "mcpServer/oauthLogin/completed" | "mcpServer/startupStatus/updated"
+        ) {
+            self.refresh_mcp(params);
+            return;
+        }
+        if self.child_notification(method, params) {
+            return;
+        }
         let mut output = vec![];
+        let mut subscriptions = vec![];
         let mut interrupt = None;
         let emitter = {
             let mut state = self.state.lock().unwrap();
@@ -165,6 +199,23 @@ impl Inner {
                                 let _ = ledger.observe_file_item(&scope, params["item"].clone());
                             }
                         }
+                        if params["item"]["type"] == "collabAgentToolCall" {
+                            let existing = state.agents.threads();
+                            let context = state.turn.as_ref().unwrap().context.clone();
+                            output.extend(state.agents.call(&params["item"], &context));
+                            if let Some(connection) = state.transport.clone() {
+                                subscriptions.extend(
+                                    state
+                                        .agents
+                                        .threads()
+                                        .into_iter()
+                                        .filter(|thread| !existing.contains(thread))
+                                        .map(|thread| {
+                                            (thread, context.clone(), connection.clone())
+                                        }),
+                                );
+                            }
+                        }
                         let turn = state.turn.as_mut().unwrap();
                         output.extend(turn.items.item(
                             &params["item"],
@@ -182,31 +233,55 @@ impl Inner {
                             }
                         }
                     }
+                    "item/commandExecution/outputDelta" | "item/mcpToolCall/progress" => {
+                        if let Some(event) = state
+                            .turn
+                            .as_mut()
+                            .unwrap()
+                            .items
+                            .progress(params, method == "item/commandExecution/outputDelta")
+                        {
+                            output.push(event);
+                        }
+                    }
                     "turn/plan/updated" => {
                         let turn = state.turn.as_mut().unwrap();
                         output.extend(turn.items.plan(params, &turn.context));
                     }
                     "thread/tokenUsage/updated" => {
                         let usage = &params["tokenUsage"];
-                        output.push(RuntimeEvent::Usage {
-                            context_used_tokens: usage["last"]["totalTokens"].as_u64(),
-                            input_tokens: usage["total"]["inputTokens"].as_u64(),
-                            output_tokens: usage["total"]["outputTokens"].as_u64(),
-                            cost: None,
-                        });
+                        output.push(RuntimeEvent::Metrics(
+                            crate::session::events::RuntimeMetrics {
+                                context_tokens: usage["last"]["totalTokens"].as_u64(),
+                                context_window: usage["modelContextWindow"]
+                                    .as_u64()
+                                    .filter(|value| *value > 0),
+                                input_tokens: usage["total"]["inputTokens"].as_u64(),
+                                output_tokens: usage["total"]["outputTokens"].as_u64(),
+                                cache_read_tokens: usage["total"]["cachedInputTokens"].as_u64(),
+                                cache_write_tokens: usage["total"]["cacheWriteInputTokens"]
+                                    .as_u64(),
+                                context_basis: if usage["last"]["totalTokens"].is_u64() {
+                                    "reported"
+                                } else {
+                                    "unknown"
+                                }
+                                .into(),
+                                cost_usd: None,
+                                cost_basis: "unknown".into(),
+                                measured_at: crate::ids::now_ms(),
+                                stale: false,
+                            },
+                        ));
                     }
                     "turn/completed" => {
                         let turn = state.turn.as_mut().unwrap();
-                        turn.finished = true;
                         turn.interrupt.completed();
                         output.extend(turn.items.close(&turn.context));
-                        if let Some(ledger) = &mut state.ledger {
-                            output.extend(ledger.drain().into_iter().map(events::resolved));
-                        }
                         state.completed_turns.insert(scope.turn_id);
                         let turn = state.turn.as_mut().unwrap();
                         let held = turn.failure.take();
-                        output.push(if params["turn"]["status"] == "failed" || held.is_some() {
+                        let terminal = if params["turn"]["status"] == "failed" || held.is_some() {
                             let message = more_informative(held, failure(&params["turn"]["error"]))
                                 .unwrap_or_else(|| {
                                     "Codex reported an error with no message".into()
@@ -214,7 +289,16 @@ impl Inner {
                             RuntimeEvent::TurnFailed(AppError::new(ErrorCode::Internal, message))
                         } else {
                             RuntimeEvent::TurnFinished
-                        });
+                        };
+                        if state.agents.running() {
+                            state.turn.as_mut().unwrap().pending_finish = Some(terminal);
+                        } else {
+                            state.turn.as_mut().unwrap().finished = true;
+                            if let Some(ledger) = &mut state.ledger {
+                                output.extend(ledger.drain().into_iter().map(events::resolved));
+                            }
+                            output.push(terminal);
+                        }
                     }
                     // Terminal, but `turn/completed` (status failed) follows: hold
                     // it so the turn fails exactly once.
@@ -234,9 +318,82 @@ impl Inner {
                 break;
             }
         }
+        for (thread, context, connection) in subscriptions {
+            self.subscribe_child(thread, context, connection);
+        }
         if let Some((scope, connection)) = interrupt {
             Self::send_interrupt(self, scope, connection);
         }
+    }
+    fn child_notification(self: &Arc<Self>, method: &str, params: &Value) -> bool {
+        let Some(thread) = params["threadId"].as_str() else {
+            return false;
+        };
+        let (emitter, output) = {
+            let mut state = self.state.lock().unwrap();
+            if !state.agents.contains(thread) {
+                return false;
+            }
+            if state.closed {
+                return true;
+            }
+            let generation = state
+                .turn
+                .as_ref()
+                .map(|turn| turn.context.scope.generation);
+            if generation
+                .is_none_or(|generation| !state.agents.generation_matches(thread, generation))
+                || params["_snapshotGeneration"]
+                    .as_u64()
+                    .is_some_and(|snapshot| Some(snapshot) != generation)
+            {
+                return true;
+            }
+            if method == "serverRequest/resolved" {
+                let output = RequestId::parse(&params["requestId"])
+                    .ok()
+                    .and_then(|id| {
+                        let scope = state.turn.as_ref()?.native.clone()?;
+                        state.ledger.as_mut()?.resolve(&scope, &id)
+                    })
+                    .map(events::resolved)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                (state.turn.as_ref().map(|turn| turn.emitter.clone()), output)
+            } else {
+                if params["item"]["type"] == "fileChange" {
+                    if let Some(scope) = state.turn.as_ref().and_then(|turn| turn.native.clone()) {
+                        if let Some(ledger) = &mut state.ledger {
+                            let _ = ledger.observe_file_item(&scope, params["item"].clone());
+                        }
+                    }
+                }
+                let mut output = state.agents.notification(method, params);
+                if !state.agents.running() {
+                    if let Some(terminal) = state
+                        .turn
+                        .as_mut()
+                        .and_then(|turn| turn.pending_finish.take())
+                    {
+                        state.turn.as_mut().unwrap().finished = true;
+                        if let Some(ledger) = &mut state.ledger {
+                            output.extend(ledger.drain().into_iter().map(events::resolved));
+                        }
+                        output.push(terminal);
+                    }
+                }
+                (state.turn.as_ref().map(|turn| turn.emitter.clone()), output)
+            }
+        };
+        if let Some(emitter) = emitter {
+            for event in output {
+                if let Err(error) = emitter.publish(event) {
+                    self.connection_lost(error);
+                    break;
+                }
+            }
+        }
+        true
     }
 }
 

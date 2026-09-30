@@ -47,7 +47,8 @@ export function dotColor(status: McpStatus): string {
 }
 
 /** The row/detail-popover secondary text: tool count, handshake notice, or the error message. */
-export function detailText(server: McpServerInfo): { text: string; color: string } {
+export function detailText(server: McpServerInfo, nativeAuth = false): { text: string; color: string } {
+  if (nativeAuth && server.status === 'pending') return { text: 'sign-in required', color: 'var(--warn)' };
   if (server.status === 'connected') return { text: `${server.toolCount ?? 0} tools`, color: 'var(--text-dim)' };
   if (server.status === 'connecting') return { text: 'handshake…', color: 'var(--text-dim)' };
   if (server.status === 'pending') return { text: 'needs approval', color: 'var(--warn)' };
@@ -61,8 +62,8 @@ export function detailText(server: McpServerInfo): { text: string; color: string
 // ---------- first-run approval ----------
 
 /** These statuses are approval verdicts, not connection states — the panel can offer a decision. */
-export function isApprovable(status: McpStatus): boolean {
-  return status === 'pending' || status === 'rejected' || status === 'approved';
+export function isApprovable(status: McpStatus, nativeAuth = false): boolean {
+  return !nativeAuth && (status === 'pending' || status === 'rejected' || status === 'approved');
 }
 
 /**
@@ -70,8 +71,8 @@ export function isApprovable(status: McpStatus): boolean {
  * Offering it on an approval verdict would re-flag `connecting` for a process
  * nobody has spawned — a handshake that can never complete.
  */
-export function canReconnect(status: McpStatus): boolean {
-  return !isApprovable(status);
+export function canReconnect(status: McpStatus, nativeAuth = false): boolean {
+  return !isApprovable(status, nativeAuth);
 }
 
 /** Nothing to ask about — the banner stays hidden. */

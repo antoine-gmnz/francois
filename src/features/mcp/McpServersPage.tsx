@@ -18,7 +18,7 @@ import type { McpServerDetail } from '../../../contract/mcp-panel';
 import { mcpDetail, mcpReconnect } from '../../lib/api';
 import { useDelayedFlag } from '../../lib/hooks/useDelayedFlag';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
-import { sessionCapability } from '../../lib/runtimeCapability';
+import { sessionCapability, sessionUsesNativeMcpAuth } from '../../lib/runtimeCapability';
 import { Button } from '../../ui/Button';
 import { CapabilityNotice } from '../../ui/CapabilityNotice';
 import { Caret } from '../../ui/Loaders';
@@ -28,6 +28,7 @@ import { Tab, TabGroup } from '../../ui/Tab';
 import { Tag } from '../../ui/Tag';
 import { approvalSummary, approveAllDecision, hasApprovalWork } from './mcp';
 import {
+  mcpConfigurationNote,
   filterMcpServers,
   mcpCheckedLabel,
   mcpHealthSummary,
@@ -61,7 +62,9 @@ export default function McpServersPage({ projectName, sessionId, sessionName, fe
   const { approvals, decide, deciding, decideError } = useApprovals(sessionId, reload);
   // Nothing under 300ms — a decision that settles fast never gets a caret flash.
   const showSavingCaret = useDelayedFlag(deciding, 300);
-  const capability = sessionCapability(useSessionMeta(sessionId), 'mcp');
+  const meta = useSessionMeta(sessionId);
+  const capability = sessionCapability(meta, 'mcp');
+  const nativeAuth = sessionUsesNativeMcpAuth(meta);
   const [filter, setFilter] = useState<McpScopeFilter>('all');
   const [details, setDetails] = useState<Record<string, McpServerDetail>>({});
   const [actionError, setActionError] = useState<string | null>(null);
@@ -101,7 +104,7 @@ export default function McpServersPage({ projectName, sessionId, sessionName, fe
 
   const counts = useMemo(() => mcpScopeCounts(servers), [servers]);
   const rows = filterMcpServers(servers, filter);
-  const summary = mcpHealthSummary(servers);
+  const summary = mcpHealthSummary(servers, nativeAuth);
   const checked = mcpCheckedLabel(checkedAt, now);
   const canAdd = sessionId !== null && capability.available;
 
@@ -126,8 +129,7 @@ export default function McpServersPage({ projectName, sessionId, sessionName, fe
 
   const lede = (
     <>
-      Servers the sessions in {projectName ?? 'this project'} start with. Project servers come from <code>.mcp.json</code>; user
-      servers from your Claude config.
+      Servers the sessions in {projectName ?? 'this project'} start with. {mcpConfigurationNote(nativeAuth)}
     </>
   );
 
@@ -206,6 +208,7 @@ export default function McpServersPage({ projectName, sessionId, sessionName, fe
                   <ServerRow
                     key={server.name}
                     server={server}
+                    nativeAuth={nativeAuth}
                     detail={details[server.name]}
                     busy={deciding}
                     onRetry={() => retry(server)}
@@ -233,14 +236,16 @@ function ServerRow({
   busy,
   onRetry,
   onApprove,
+  nativeAuth,
 }: {
   server: McpServerInfo;
+  nativeAuth: boolean;
   detail: McpServerDetail | undefined;
   busy: boolean;
   onRetry: () => void;
   onApprove: () => void;
 }) {
-  const status = mcpStatusView(server);
+  const status = mcpStatusView(server, nativeAuth);
   const launch = detail ? (detail.transport === 'http' ? detail.url : detail.command) : undefined;
   const classes = ['mcps-row'];
   if (server.status === 'error') classes.push('mcps-row--failed');
@@ -272,7 +277,8 @@ function ServerRow({
             Retry
           </Button>
         )}
-        {(server.status === 'pending' || server.status === 'rejected') && (
+        {nativeAuth && server.status === 'pending' && <Button size="sm" disabled={busy} onClick={onRetry}>Connect · sign in</Button>}
+        {!nativeAuth && (server.status === 'pending' || server.status === 'rejected') && (
           <Button size="sm" disabled={busy} onClick={onApprove}>
             Approve
           </Button>

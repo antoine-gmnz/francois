@@ -10,6 +10,7 @@ pub(crate) mod usage;
 mod wire;
 
 mod native;
+pub(crate) use native::probe as probe_resources;
 pub(crate) fn session_runtime() -> std::sync::Arc<dyn crate::session::application::SessionRuntime> {
     native::session_runtime()
 }

@@ -843,9 +843,10 @@ pub fn account_codex_login(app: AppHandle, account_id: String) -> IpcResult<()> 
     // FR-16 (multi-account): one interactive login at a time, shared with the
     // Claude path — two browser tabs racing for one credential store is the same
     // hazard whichever CLI opened them.
-    if codex_login_in_flight(&state) {
-        return err(ErrorCode::InvalidInput, MSG_IN_FLIGHT);
-    }
+    let reservation = match CodexLoginReservation::acquire(&app) {
+        Ok(reservation) => reservation,
+        Err(error) => return error.into(),
+    };
 
     let config_dir = {
         let Ok(inner) = state.0.lock() else {
@@ -880,9 +881,18 @@ pub fn account_codex_login(app: AppHandle, account_id: String) -> IpcResult<()> 
     // leaves a zombie, and the poller uses its liveness to stop early.
     let child = match spawn_codex_login(&config_dir) {
         Ok(child) => child,
-        Err(e) => return e.into(),
+        Err(e) => {
+            emit(
+                &app,
+                AccountEvent::LoginFailed {
+                    login_id: account_id.clone(),
+                    error: e.clone(),
+                },
+            );
+            return e.into();
+        }
     };
-    start_codex_login_poller(&app, config_dir, child);
+    start_codex_login_poller(&app, account_id, config_dir, child, reservation);
     ok(())
 }
 

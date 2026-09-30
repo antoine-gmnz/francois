@@ -412,7 +412,7 @@ pub(crate) fn map_step(
     let step = |outcome: &str, message: Option<String>, error_code: Option<String>| CommandStep {
         cli: display(args),
         outcome: outcome.into(),
-        exit_code: out.code,
+        exit_code: Some(out.code),
         message,
         error_code,
     };
@@ -512,7 +512,7 @@ mod tests {
             "completed"
         );
         let p = map_step(&a, &out(4, ""), MUTATE_TIMEOUT).unwrap();
-        assert_eq!((p.outcome.as_str(), p.exit_code), ("pending", 4));
+        assert_eq!((p.outcome.as_str(), p.exit_code), ("pending", Some(4)));
         let r = map_step(
             &a,
             &out(3, r#"{"documentVersion":1,"status":"rejected","error":{"code":"conflict/run-active","message":"run is active"}}"#),

@@ -36,8 +36,17 @@ pub(crate) fn cli() -> String {
 /// `actions_cli`'s spawn can't drift from it.
 pub(crate) fn data_dir_args() -> Vec<String> {
     std::env::var("COHORTE_PYTHON_DATA_DIR")
-        .map(|dir| vec!["--data-dir".to_string(), dir])
+        .map(|dir| data_dir_args_for(&dir, &std::env::current_dir().unwrap_or_default()))
         .unwrap_or_default()
+}
+fn data_dir_args_for(dir: &str, cwd: &std::path::Path) -> Vec<String> {
+    let path = std::path::Path::new(dir);
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        cwd.join(path)
+    };
+    vec!["--data-dir".into(), absolute.to_string_lossy().into_owned()]
 }
 
 /// Each `cohorte service …` spawn is bounded: a wedged CLI must surface as an
@@ -192,6 +201,15 @@ impl RpcClient {
         Ok(client)
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_test_frames(bytes: Vec<u8>) -> Self {
+        Self {
+            reader: BufReader::new(Box::new(std::io::Cursor::new(bytes))),
+            writer: Box::new(std::io::sink()),
+            next_id: 1,
+        }
+    }
+
     pub(crate) fn call(&mut self, method: &str, params: Value) -> Result<Value, AppError> {
         self.call_uninitialized(method, params)
     }
@@ -218,11 +236,8 @@ impl RpcClient {
             if document["id"] != id {
                 return Err(invalid("Cohorte service replied with a mismatched id"));
             }
-            if document.get("error").is_some() {
-                let code = document["error"]["data"]["code"]
-                    .as_str()
-                    .unwrap_or("PROTOCOL_ERROR");
-                return Err(AppError::new(ErrorCode::CohorteRejected, code));
+            if let Some(error) = document.get("error") {
+                return Err(remote_error(error));
             }
             return document
                 .get("result")
@@ -250,6 +265,21 @@ impl RpcClient {
         }
         serde_json::from_slice(&bytes).map_err(|_| invalid("Cohorte service returned invalid JSON"))
     }
+}
+
+pub(crate) fn remote_error(error: &Value) -> AppError {
+    let data = error.get("data").unwrap_or(error);
+    let code = data["code"].as_str().unwrap_or("PROTOCOL_ERROR");
+    let message = data["message"]
+        .as_str()
+        .or_else(|| error["message"].as_str())
+        .unwrap_or("Cohorte rejected this operation");
+    let remediation = data["remediation"].as_str().unwrap_or("");
+    AppError::with_detail(
+        ErrorCode::CohorteRejected,
+        super::sanitize::line(message, super::sanitize::MESSAGE_BYTES),
+        json!({"code":super::sanitize::line(code,200),"remediation":super::sanitize::line(remediation,super::sanitize::MESSAGE_BYTES),"retryable":data["retryable"].as_bool().unwrap_or(false)}),
+    )
 }
 
 pub(crate) fn mutation_id() -> String {
@@ -364,6 +394,30 @@ mod service_tests {
         assert_eq!(
             next_service_action(&ServiceState::Endpoint("x".into()), &none),
             None
+        );
+    }
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+    #[test]
+    fn relative_data_directory_has_the_same_absolute_identity_across_cli_cwds() {
+        let base = std::env::temp_dir();
+        assert_eq!(
+            data_dir_args_for("state", &base),
+            vec![
+                "--data-dir".to_owned(),
+                base.join("state").to_string_lossy().into_owned()
+            ]
+        );
+        let absolute = base.join("absolute-state");
+        assert_eq!(
+            data_dir_args_for(&absolute.to_string_lossy(), &base),
+            vec![
+                "--data-dir".to_owned(),
+                absolute.to_string_lossy().into_owned()
+            ]
         );
     }
 }

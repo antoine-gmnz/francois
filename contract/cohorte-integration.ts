@@ -148,6 +148,8 @@ export interface CohorteArtifact {
 }
 
 export interface CohorteRun {
+  /** The native ship request was approved for the current candidate. */
+  shipReady?: boolean;
   projectRoot: string;
   runId: string;
   /** RunNode.title, else spec id. */
@@ -167,7 +169,7 @@ export interface CohorteRun {
   stop?: CohorteStop;
   lastError?: CohorteErrorInfo;
   iteration: { fixRounds: number; maxFixRounds: number; reviewRounds: number };
-  host: { alive: boolean; heartbeatAt?: number; pid?: number };
+  host: { alive: boolean | null; heartbeatAt?: number; pid?: number };
   git: { baseBranch: string; baseSha?: string; integrationBranch?: string; integrationHead?: string };
   runtime?: { id: string; version: string; pinDigest?: string };
   snapshotDigest?: string;
@@ -225,6 +227,12 @@ export interface CohorteCliInfo {
 }
 
 export interface CohorteDetection {
+  /** Executable and data directory used by the native service. */
+  cliExecutable?: string;
+  cliDataDir?: string;
+  initialization?: { questions: string[]; analysis?: unknown; needsReview: boolean };
+  /** Project/feature approval requests that precede creation of a run. */
+  pendingRequests?: CohorteGate[];
   /** the directory the caller asked about (project root or session cwd), normalised. */
   startDir: string;
   state: CohorteDetectionState;
@@ -340,7 +348,7 @@ export interface CohorteCommandStep {
   /** display form of the argv that ran: 'cohorte approve run_… apr_…'. */
   cli: string;
   outcome: 'completed' | 'pending' | 'rejected' | 'skipped';
-  exitCode: number;
+  exitCode: number | null;
   /** CommandResultDocument.error.message when rejected (sanitised). */
   message?: string;
   errorCode?: string; // Cohorte's own 'conflict/run-active' …

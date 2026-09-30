@@ -379,6 +379,7 @@ export const sessionSwitchEffort = (sessionId: SessionId, effort: string | null)
 // to surface a failure inline.
 export const sessionSwitchResponseMode = (sessionId: SessionId, mode: ResponseMode) =>
   ipc<Result<SessionMeta>>('session_switch_response_mode', { sessionId, mode });
+export const sessionOpenRequestUrl = (req: import('../../contract/permission-guardrails').OpenRequestUrlRequest) => ipc<Result<null>>('session_open_request_url', { sessionId: req.sessionId, blockId: req.blockId });
 export const sessionCompact = (sessionId: SessionId) => ipc<Result<null>>('session_compact', { sessionId });
 export const sessionClear = (sessionId: SessionId) => ipc<Result<null>>('session_clear', { sessionId });
 
@@ -531,10 +532,9 @@ export function onAccountEvent(cb: (e: AccountEvent) => void): Promise<UnlistenF
   return stream<AccountEvent>('francois://account/event', cb);
 }
 
-// remote-control: Francois HOSTS Claude Code's native Remote Control for a session
-// (an interactive `claude --remote-control` in a PTY the core owns), so the same
-// thread can be picked up from claude.ai/code or the Claude mobile app. `start`
-// resolves `starting` — the URL arrives later as a remote.status event.
+// Remote control uses the session's native runtime: Claude's owned PTY or
+// Codex's existing App Server connection. Native status events and command
+// responses share the same reducer; Codex returns a manual pairing code.
 export const remoteStart = (sessionId: SessionId, name?: string) =>
   ipc<Result<RemoteControlStatus>>('remote_start', { sessionId, name });
 export const remoteStop = (sessionId: SessionId) =>
@@ -568,7 +568,8 @@ export function onCloudEvent(cb: (e: CloudEvent) => void): Promise<UnlistenFn> {
 export const shellEnsure = (payload: ShellEnsurePayload) => ipc<Result<ShellEnsureData>>('shell_ensure', payload);
 // unbound-panes FR-6: a shell's owner is a union now — `shellCreate` takes it
 // directly rather than assuming a session.
-export const shellCreate = (owner: ShellOwner) => ipc<Result<ShellInfo>>('shell_create', { owner } satisfies ShellCreatePayload);
+export const shellCreate = (owner: ShellOwner, options?: Pick<ShellCreatePayload, 'runtime'>) =>
+  ipc<Result<ShellInfo>>('shell_create', { owner, ...options } satisfies ShellCreatePayload);
 export const shellRestart = (shellId: ShellId) =>
   ipc<Result<ShellRestartData>>('shell_restart', { shellId } satisfies ShellRestartPayload);
 export const shellRename = (shellId: ShellId, name: string) =>

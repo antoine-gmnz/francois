@@ -34,12 +34,13 @@ use crate::ipc::ErrorCode;
 
 use crate::ipc::{ok, IpcResult};
 use portable_pty::{ChildKiller, MasterPty};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
+mod codex;
 mod start;
 pub use start::*;
 
@@ -55,22 +56,27 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// contract AppError — mirrored locally because `crate::ipc::AppError` is not
 /// `Clone` and this one is carried inside cloneable state. Same JSON shape.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct RemoteError {
     pub(crate) code: ErrorCode,
     pub(crate) message: String,
 }
 
 /// contract RemoteControlState — tagged on `phase`.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(tag = "phase", rename_all = "camelCase")]
 pub enum RemoteState {
+    #[default]
     Off,
     #[serde(rename_all = "camelCase")]
     Starting {
         name: String,
         started_at: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
+    Enabled { name: String, started_at: u64 },
     #[serde(rename_all = "camelCase")]
     Active {
         name: String,
@@ -78,10 +84,15 @@ pub enum RemoteState {
         url: String,
     },
     #[serde(rename_all = "camelCase")]
-    Failed {
+    Pairing {
         name: String,
-        error: RemoteError,
+        started_at: u64,
+        pairing_code: String,
+        environment_id: String,
+        expires_at: u64,
     },
+    #[serde(rename_all = "camelCase")]
+    Failed { name: String, error: RemoteError },
 }
 
 /// contract RemoteControlStatus.
@@ -125,7 +136,9 @@ pub struct RemoteRegistry(Mutex<std::collections::HashMap<String, RemoteEntry>>)
 /// failed.
 pub fn to_active(cur: &RemoteState, url: String) -> Option<RemoteState> {
     match cur {
-        RemoteState::Starting { name, started_at } => Some(RemoteState::Active {
+        RemoteState::Starting {
+            name, started_at, ..
+        } => Some(RemoteState::Active {
             name: name.clone(),
             started_at: *started_at,
             url,
@@ -158,6 +171,14 @@ pub fn remote_stop(
     reg: State<'_, RemoteRegistry>,
     session_id: String,
 ) -> IpcResult<RemoteStatus> {
+    let engine = app.state::<Engine>();
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        return codex::command(
+            &engine,
+            &session_id,
+            crate::session::application::ResourceRequest::RemoteStop,
+        );
+    }
     if let Some(entry) = reg.0.lock().unwrap().remove(&session_id) {
         teardown_entry(entry);
     }
@@ -171,7 +192,19 @@ pub fn remote_stop(
 
 /// francois:remote:get — current host state for a session.
 #[tauri::command(async)]
-pub fn remote_get(reg: State<'_, RemoteRegistry>, session_id: String) -> IpcResult<RemoteStatus> {
+pub fn remote_get(
+    app: AppHandle,
+    reg: State<'_, RemoteRegistry>,
+    session_id: String,
+) -> IpcResult<RemoteStatus> {
+    let engine = app.state::<Engine>();
+    if engine.with_session(&session_id, |s| s.agent_runtime) == Some(AgentRuntime::Codex) {
+        return codex::command(
+            &engine,
+            &session_id,
+            crate::session::application::ResourceRequest::RemoteGet,
+        );
+    }
     let state = reg
         .0
         .lock()
@@ -197,7 +230,7 @@ fn teardown_entry(mut entry: RemoteEntry) {
     *entry.state.lock().unwrap() = RemoteState::Off;
 }
 
-fn emit_status(app: &AppHandle, session_id: &str, state: &RemoteState) {
+pub(crate) fn emit_status(app: &AppHandle, session_id: &str, state: &RemoteState) {
     let _ = app.emit(
         EVENT_CHANNEL_REMOTE,
         RemoteEvent::Status {
@@ -275,6 +308,7 @@ mod tests {
 
     fn starting() -> RemoteState {
         RemoteState::Starting {
+            provider: None,
             name: "n".into(),
             started_at: 1,
         }
@@ -357,6 +391,7 @@ mod tests {
         assert_eq!(off, serde_json::json!({ "phase": "off" }));
 
         let starting = serde_json::to_value(RemoteState::Starting {
+            provider: None,
             name: "My Project".into(),
             started_at: 1_784_573_689_516,
         })

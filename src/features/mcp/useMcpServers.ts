@@ -4,10 +4,13 @@
 // McpPanel.tsx so both surfaces subscribe the same way.
 
 import { useCallback, useEffect, useState } from 'react';
-import type { AppError, McpServerInfo, SessionEvent } from '../../../contract/common';
+import type { AppError, McpServerInfo } from '../../../contract/common';
 import type { McpApprovalState, McpDecision } from '../../../contract/mcp-panel';
 import { mcpApprovals, mcpDecide, mcpList } from '../../lib/api';
+import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
+import { permissionRulesCapability } from '../../lib/runtimeCapability';
 import { subscribeSessionEvents } from '../../lib/session-events';
+import { startMcpFeed } from './mcp-feed';
 
 // ---------- server list hook ----------
 
@@ -27,37 +30,14 @@ export function useMcpServers(sessionId: string | null) {
     setListError(null);
     setCheckedAt(null);
     if (!sessionId) return;
-    let mounted = true;
-    let unlisten: (() => void) | undefined;
-
-    // transcript-scale FR-21: through the one router subscription, scoped to
-    // this session.
-    void subscribeSessionEvents(sessionId, (e: SessionEvent) => {
-      if (e.type !== 'mcp.update' || e.sessionId !== sessionId) return;
-      setServers((prev) => {
-        const i = prev.findIndex((server) => server.name === e.server.name);
-        if (i === -1) return [...prev, e.server];
-        const next = prev.slice();
-        // runtime updates don't carry scope — keep the one mcp_list resolved.
-        next[i] = { ...e.server, scope: e.server.scope ?? prev[i].scope };
-        return next;
-      });
-    }).then((unsub) => {
-      if (!mounted) unsub();
-      else unlisten = unsub;
+    return startMcpFeed({
+      sessionId,
+      subscribe: callback => subscribeSessionEvents(sessionId, callback),
+      fetch: () => mcpList(sessionId),
+      setServers,
+      onError: setListError,
+      onLoaded: () => setCheckedAt(Date.now()),
     });
-
-    void mcpList(sessionId).then((res) => {
-      if (!mounted) return; // FR-28
-      if (res.ok) setServers(res.data);
-      else setListError(res.error);
-      setCheckedAt(Date.now());
-    });
-
-    return () => {
-      mounted = false;
-      if (unlisten) unlisten();
-    };
   }, [sessionId, reloads]);
 
   return { servers, setServers, listError, reload, checkedAt };
@@ -72,6 +52,7 @@ export function useMcpServers(sessionId: string | null) {
  * `mcp_approvals` says what Claude Code will ASK before any of them can.
  */
 export function useApprovals(sessionId: string | null, onDecided: () => void) {
+  const enabled = permissionRulesCapability(useSessionMeta(sessionId)).available;
   const [approvals, setApprovals] = useState<McpApprovalState | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [decideError, setDecideError] = useState<AppError | null>(null);
@@ -79,7 +60,7 @@ export function useApprovals(sessionId: string | null, onDecided: () => void) {
   useEffect(() => {
     setApprovals(null);
     setDecideError(null);
-    if (!sessionId) return;
+    if (!sessionId || !enabled) return;
     let mounted = true;
     void mcpApprovals(sessionId).then((res) => {
       if (mounted && res.ok) setApprovals(res.data);
@@ -87,11 +68,11 @@ export function useApprovals(sessionId: string | null, onDecided: () => void) {
     return () => {
       mounted = false;
     };
-  }, [sessionId]);
+  }, [sessionId, enabled]);
 
   const decide = useCallback(
     async (decision: McpDecision) => {
-      if (!sessionId || deciding) return;
+      if (!sessionId || !enabled || deciding) return;
       setDeciding(true);
       setDecideError(null);
       const res = await mcpDecide(sessionId, decision);
@@ -102,10 +83,10 @@ export function useApprovals(sessionId: string | null, onDecided: () => void) {
       } else setDecideError(res.error);
       setDeciding(false);
     },
-    [sessionId, deciding, onDecided],
+    [sessionId, enabled, deciding, onDecided],
   );
 
-  return { approvals, decide, deciding, decideError };
+  return { approvals: enabled ? approvals : null, decide, deciding: enabled && deciding, decideError: enabled ? decideError : null };
 }
 
 

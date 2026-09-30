@@ -17,7 +17,7 @@ export function stepLine(step: CohorteCommandStep): { text: string; tone: StepTo
     case 'completed':
       return { text: `✓ ${step.cli} · completed`, tone: 'success' };
     case 'pending':
-      return { text: `… ${step.cli} · pending — Cohorte will apply it`, tone: 'pending' };
+      return { text: `… ${step.cli} · pending — ${step.message ?? 'Cohorte will apply it'}`, tone: 'pending' };
     case 'rejected':
       return { text: `✕ ${step.cli} · rejected: ${step.message ?? step.errorCode ?? 'refused'}`, tone: 'danger' };
     default:

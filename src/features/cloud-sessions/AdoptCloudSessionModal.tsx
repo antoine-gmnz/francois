@@ -33,6 +33,8 @@ import {
   ADOPT_ONE_WAY_HINT,
   PASTE_PLACEHOLDER,
   adoptRequest,
+  cloudAccountId,
+  cloudAccounts,
   canAdopt,
   checkoutWarning,
   isAdoptTerminal,
@@ -55,6 +57,10 @@ const LANDING_OPTIONS: ChipOption<CloudDestination>[] = [
 const RESOLVE_DELAY_MS = 250;
 
 export default function AdoptCloudSessionModal({ onClose }: { onClose: () => void }): JSX.Element {
+  const accounts = useStore(st => st.accounts);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const eligibleAccounts = cloudAccounts(accounts);
+  const accountId = cloudAccountId(accounts, selectedAccountId);
   const [ref, setRef] = useState('');
   const [projectId, setProjectId] = useState<ProjectId | ''>('');
   const [destination, setDestination] = useState<CloudDestination>('worktree');
@@ -82,7 +88,7 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  const list = useCloudList();
+  const list = useCloudList(accountId);
 
   // The registry, for the selector and for naming the project in the checkout
   // confirmation. Failing to read it is not an error state: the selector simply
@@ -103,15 +109,17 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
   useEffect(() => {
     const id = parseCloudRef(ref);
     resolveToken.current += 1;
-    if (id === null) {
+    if (id === null || accountId === null) {
       setResolved(null);
       return;
     }
+    setResolved(null);
     const token = resolveToken.current;
+    let live = true;
     const timer = setTimeout(() => {
-      void cloudResolve({ ref: ref.trim() })
+      void cloudResolve({ ref: ref.trim(), accountId })
         .then((res) => {
-          if (!mounted.current || token !== resolveToken.current) return; // a later ref won
+          if (!live || !mounted.current || token !== resolveToken.current) return; // a later ref won
           // A malformed ok (older core, demo backend) is treated like a failed
           // lookup: no metadata, no crash, and the paste path unaffected.
           if (!res.ok || !res.data?.session) {
@@ -125,8 +133,8 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
           /* the paste path still works — adoption reports the real reason */
         });
     }, RESOLVE_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [ref, mounted]);
+    return () => { live = false; clearTimeout(timer); };
+  }, [ref, accountId, mounted]);
 
   // Memoized so `submit` — and through it the keydown subscription — only changes
   // when a field the request is built from changes.
@@ -138,7 +146,7 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
   // §Flows 7: a failure restores the form ABOVE the phase list, ref intact, so a
   // retry costs one click.
   const showForm = progress === null || progress.error !== null;
-  const enabled = canAdopt(form) && !inFlight;
+  const enabled = accountId !== null && canAdopt(form) && !inFlight;
   // Nothing under 300ms — an adoption that resolves fast never gets a caret flash.
   const showAdoptCaret = useDelayedFlag(inFlight, 300);
 
@@ -150,20 +158,21 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
   const pick = useCallback((session: CloudSession) => {
     setRef(session.id);
     setResolved(session);
-  }, []);
+    setCursor(list.sessions.findIndex(row => row.id === session.id));
+  }, [list.sessions]);
 
   const submit = useCallback(() => {
-    if (!enabled) return;
+    if (!enabled || accountId === null) return;
     cancelRef.current?.();
     cancelRef.current = startAdoption({
-      request: adoptRequest(form),
+      request: adoptRequest(form, accountId),
       subscribe: onCloudEvent,
       adopt: cloudAdopt,
       onProgress: (p) => {
         if (mounted.current) setProgress(p);
       },
     });
-  }, [enabled, form, mounted]);
+  }, [enabled, form, accountId, mounted]);
 
   // Leaving stops WATCHING the adoption; it does not stop the adoption itself —
   // §5 exposes no cancel channel — so nothing here pretends otherwise. A run
@@ -261,6 +270,27 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
       <ModalBody>
         {showForm && (
           <>
+            <div>
+              <label className="cloud-modal__label" htmlFor="cloud-account">CLAUDE ACCOUNT</label>
+              <div className="cloud-modal__select">
+                <select
+                  id="cloud-account"
+                  className="cloud-modal__field cloud-modal__field--select"
+                  value={accountId ?? ''}
+                  disabled={inFlight || eligibleAccounts.length === 0}
+                  onChange={event => {
+                    setSelectedAccountId(event.target.value);
+                    setResolved(null);
+                    setCursor(-1);
+                  }}
+                >
+                  {eligibleAccounts.length === 0 && <option value="">— no Claude account —</option>}
+                  {eligibleAccounts.map(account => <option key={account.id} value={account.id}>{account.label}</option>)}
+                </select>
+                <span className="cloud-modal__select-caret">▾</span>
+              </div>
+              {!accountId && <div className="cloud-modal__hint">Add a Claude Code account in Accounts to adopt a cloud session.</div>}
+            </div>
             <div>
               <label className="cloud-modal__label" htmlFor="cloud-ref">
                 CLOUD SESSION

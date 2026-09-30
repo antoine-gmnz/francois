@@ -427,7 +427,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       }
       const b = state.blocks[i];
       if (b.kind !== 'tool') return state;
-      return replace(i, runtimeToolBlock(a.blockId, a.tool));
+      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail });
     }
     case 'notice': {
       // FR-5: keyed idempotent upsert, like every other rule in this reducer —
@@ -719,6 +719,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId, text: e.text }),
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model }),
+  'tool.update': (dispatch, _setters, e) => dispatch({ t: 'toolUpdate', blockId: e.blockId, tool: e.tool }),
   'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail }),
   // interactive-commands FR-20: pending command block (loading card)
   'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),

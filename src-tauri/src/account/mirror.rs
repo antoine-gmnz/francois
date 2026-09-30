@@ -106,7 +106,7 @@ fn occupied(path: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn link_entry(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(super) fn link_entry(source: &Path, target: &Path) -> std::io::Result<()> {
     if occupied(target) {
         return Ok(());
     }
@@ -119,7 +119,7 @@ fn link_entry(source: &Path, target: &Path) -> std::io::Result<()> {
 /// (`settings.json`) cannot be a junction and is COPIED instead — which means
 /// it snapshots rather than tracking the global file on Windows.
 #[cfg(windows)]
-fn link_entry(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(super) fn link_entry(source: &Path, target: &Path) -> std::io::Result<()> {
     if occupied(target) {
         return Ok(());
     }
