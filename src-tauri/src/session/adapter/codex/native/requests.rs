@@ -121,6 +121,53 @@ pub(super) struct UserInput {
     pub questions: Vec<Question>,
     pub is_blocking: bool,
 }
+/// An MCP tool call waiting on the user. Codex 0.155.1 asks through an MCP
+/// *elicitation* tagged `_meta.codex_approval_kind = "mcp_tool_call"` (verified
+/// live) — refusing that request fails the tool call, so without this no MCP
+/// tool could run outside bypass mode. Other elicitations stay unsupported.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct McpApproval {
+    pub context: RequestContext,
+    pub server: String,
+    pub tool: Option<String>,
+    pub message: String,
+    pub arguments: Value,
+}
+impl McpApproval {
+    fn parse(params: Value, scope: &NativeScope) -> Result<Self, RequestError> {
+        let meta = &params["_meta"];
+        if meta["codex_approval_kind"] != "mcp_tool_call" {
+            return Err(RequestError::UnsupportedMethod);
+        }
+        let text = |key: &str| {
+            params[key]
+                .as_str()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(String::from)
+        };
+        let server = text("serverName").ok_or(RequestError::InvalidParams)?;
+        let message = text("message").unwrap_or_else(|| format!("Run a tool from {server}?"));
+        Ok(Self {
+            context: RequestContext {
+                thread_id: text("threadId").ok_or(RequestError::InvalidParams)?,
+                // Nullable by schema: app-server correlates it when it can. An
+                // uncorrelated one can only belong to the turn in flight.
+                turn_id: text("turnId").unwrap_or_else(|| scope.turn_id.clone()),
+                item_id: format!("mcp:{server}"),
+            },
+            tool: quoted_tool(&message),
+            server,
+            message,
+            arguments: meta["tool_params"].clone(),
+        })
+    }
+}
+/// `Allow the echo MCP server to run tool "echo"?` → `echo`.
+fn quoted_tool(message: &str) -> Option<String> {
+    let rest = &message[message.find("tool \"")? + 6..];
+    Some(rest[..rest.find('"')?].to_string()).filter(|t| !t.is_empty())
+}
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RequestKind {
     Command(CommandApproval),
@@ -129,6 +176,7 @@ pub(super) enum RequestKind {
     Permissions(PermissionsApproval),
     Elicitation(super::elicitation::Form),
     ElicitationUrl(super::elicitation::UrlRequest),
+    Mcp(McpApproval),
 }
 impl RequestKind {
     fn context(&self) -> &RequestContext {
@@ -139,6 +187,7 @@ impl RequestKind {
             Self::Permissions(r) => &r.context,
             Self::Elicitation(r) => &r.input.context,
             Self::ElicitationUrl(r) => &r.context,
+            Self::Mcp(r) => &r.context,
         }
     }
     pub(super) fn questions(&self) -> Option<&UserInput> {
@@ -183,7 +232,7 @@ impl PendingRequest {
                     NativeDecision::Cancel,
                 ],
             },
-            RequestKind::File(_) => vec![
+            RequestKind::File(_) | RequestKind::Mcp(_) => vec![
                 NativeDecision::Accept,
                 NativeDecision::Decline,
                 NativeDecision::Cancel,
@@ -288,6 +337,14 @@ impl RequestLedger {
         self.scope = next;
         Ok(cancelled)
     }
+    /// The connection moved to another thread (the session was cleared). The
+    /// previous turn is over, so nothing is pending; request-id tombstones stay,
+    /// because ids are per connection, not per thread.
+    pub(super) fn change_thread(&mut self, thread_id: &str) {
+        self.pending.clear();
+        self.files.clear();
+        self.scope.thread_id = thread_id.into();
+    }
     pub(super) fn observe_file_item(
         &mut self,
         scope: &NativeScope,
@@ -346,6 +403,11 @@ impl RequestLedger {
             "item/permissions/requestApproval" => RequestKind::Permissions(
                 serde_json::from_value(params).map_err(|_| RequestError::InvalidParams)?,
             ),
+            "mcpServer/elicitation/request"
+                if params["_meta"]["codex_approval_kind"] == "mcp_tool_call" =>
+            {
+                RequestKind::Mcp(McpApproval::parse(params, scope)?)
+            }
             "mcpServer/elicitation/request" => super::elicitation::parse(params, scope)?,
             _ => return Err(RequestError::UnsupportedMethod),
         };
@@ -431,6 +493,11 @@ impl RequestLedger {
             }
             RequestKind::ElicitationUrl(_) => {
                 json!({"action":decision.as_str(),"content":null,"_meta":null})
+            }
+            // MCP tool approval is an elicitation with an empty form.
+            RequestKind::Mcp(_) => {
+                let content = (decision == NativeDecision::Accept).then(|| json!({}));
+                json!({"action":decision.as_str(),"content":content})
             }
             _ => json!({"decision":decision.as_str()}),
         };

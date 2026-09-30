@@ -106,11 +106,11 @@ impl Transport {
                     }
                 },
                 Ok(None) => {
-                    connection.fail(unavailable());
+                    connection.fail(connection.exited(unavailable()));
                     break;
                 }
                 Err(error) => {
-                    connection.fail(error);
+                    connection.fail(connection.exited(error));
                     break;
                 }
             }
@@ -120,7 +120,7 @@ impl Transport {
     fn ingest(&self, envelope: Envelope) {
         let response = match envelope {
             Envelope::Success { id, result } => Some((id, Ok(result))),
-            Envelope::Failure { id, code } => Some((
+            Envelope::Failure { id, code, message } => Some((
                 id,
                 Err(AppError::new(
                     if code == -32600 {
@@ -128,7 +128,13 @@ impl Transport {
                     } else {
                         ErrorCode::RuntimeProtocolError
                     },
-                    format!("Codex rejected native request ({code})"),
+                    match message {
+                        Some(message) => format!(
+                            "Codex rejected the request: {}",
+                            protocol::readable_message(&message)
+                        ),
+                        None => format!("Codex rejected the request ({code})"),
+                    },
                 )),
             )),
             event => {
@@ -201,11 +207,13 @@ impl Transport {
         }
     }
     pub(super) fn fail(&self, error: AppError) {
-        if self.close_once() {
+        if self.close_once(&error) {
             (self.receive)(Err(error));
         }
     }
-    fn close_once(&self) -> bool {
+    /// Waiters are released with the real cause: a request in flight when
+    /// Codex dies is how a turn learns why it failed.
+    fn close_once(&self, cause: &AppError) -> bool {
         if self.closed.swap(true, Ordering::SeqCst) {
             return false;
         }
@@ -216,15 +224,41 @@ impl Transport {
         }
         self.writer.lock().unwrap().take();
         for (_, sender) in self.pending.lock().unwrap().drain() {
-            let _ = sender.send(Err(unavailable()));
+            let _ = sender.send(Err(cause.clone()));
         }
         true
     }
     pub(super) fn close(&self) {
-        self.close_once();
+        self.close_once(&unavailable());
     }
     pub(super) fn deadline() -> Instant {
         Instant::now() + Duration::from_secs(10)
+    }
+    /// Startup requests (`initialize`, `thread/start|resume`, `turn/start`) get
+    /// longer: a cold start on Windows (npm shim + Defender scanning a large
+    /// binary), MCP servers coming up, or a long rollout being reloaded can
+    /// outlast 10s — and a missed deadline tears the whole connection down.
+    pub(super) fn startup_deadline() -> Instant {
+        Instant::now() + Duration::from_secs(60)
+    }
+    /// The channel died with `error`; if the process itself has exited, say
+    /// what it last printed. That is the difference between "connection is
+    /// unavailable" and "Error: Unknown feature flag: …" / a config parse error.
+    fn exited(&self, error: AppError) -> AppError {
+        let Some(said) = self
+            .owner
+            .as_ref()
+            .and_then(|owner| owner.exit_diagnostic(Duration::from_secs(2)))
+        else {
+            return error;
+        };
+        AppError::new(
+            ErrorCode::RuntimeUnavailable,
+            format!(
+                "Codex exited unexpectedly: {}",
+                protocol::readable_message(&said)
+            ),
+        )
     }
 }
 impl Drop for Transport {

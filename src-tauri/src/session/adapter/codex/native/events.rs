@@ -46,7 +46,7 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
     }
     let (tool, summary, input, cwd) = match &request.kind {
         RequestKind::Command(command) => (
-            "Bash",
+            "Bash".to_string(),
             command
                 .command
                 .clone()
@@ -56,7 +56,7 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
             command.cwd.as_deref().unwrap_or(cwd),
         ),
         RequestKind::File(file) => (
-            "Edit",
+            "Edit".to_string(),
             file.reason
                 .clone()
                 .unwrap_or_else(|| "Codex file change approval".into()),
@@ -64,7 +64,7 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
             cwd,
         ),
         RequestKind::Permissions(grant) => (
-            "Permissions",
+            "Permissions".to_string(),
             grant
                 .reason
                 .clone()
@@ -73,7 +73,7 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
             grant.cwd.as_str(),
         ),
         RequestKind::ElicitationUrl(request) => (
-            "MCP",
+            "MCP".to_string(),
             format!(
                 "{}\nComplete the request at {} before allowing it.",
                 request.message, request.url
@@ -81,12 +81,23 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
             json!({"server":request.server,"url":request.url,"message":request.message}),
             cwd,
         ),
+        RequestKind::Mcp(mcp) => (
+            // Claude Code's own name for an MCP tool, so the card and any
+            // rule matching read the same for either runtime.
+            match &mcp.tool {
+                Some(tool) => format!("mcp__{}__{tool}", mcp.server),
+                None => format!("mcp__{}", mcp.server),
+            },
+            mcp.message.clone(),
+            mcp.arguments.clone(),
+            cwd,
+        ),
         RequestKind::Questions(_) | RequestKind::Elicitation(_) => unreachable!(),
     };
     RuntimeEvent::PermissionAsked {
         block_id: request.block_id.clone(),
         ask: PermissionAsk {
-            tool_name: tool.into(),
+            tool_name: tool,
             summary,
             input_json: input.to_string(),
             cwd: cwd.into(),

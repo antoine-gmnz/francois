@@ -4,6 +4,7 @@ const scenario = process.argv[1] || 'plain';
 let initialized = false;
 let count = 0;
 let thread = 'opaque-fixture-thread';
+let threads = 0;
 let turn;
 let pending;
 let baseInstructions;
@@ -38,6 +39,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (scenario === 'child-subscribe-fail' && msg.params.threadId === 'child-thread') { write({id:msg.id,error:{code:-32600,message:'observation unavailable'}}); return; }
     if (msg.params.threadId === 'child-thread') { reply(msg.id,{thread:{id:'child-thread',turns:[]}}); return; }
     baseInstructions = msg.params.baseInstructions;
+    // fresh-threads: every thread/start opens a new thread, as the real server does.
+    if (scenario === 'fresh-threads' && msg.method === 'thread/start') thread = 'fresh-thread-' + ++threads;
     thread = msg.params.threadId || thread;
     reply(msg.id, { thread: { id: thread } });
   } else if (msg.method === 'skills/list') {
@@ -45,6 +48,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (msg.method === 'config/mcpServer/reload') {
     reply(msg.id, {});
   } else if (msg.method === 'turn/start') {
+    // die: the process prints why on stderr and exits mid-request.
+    if (scenario === 'die') { process.stderr.write('noise before\nError: fixture exploded\n', () => process.exit(3)); return; }
+    // reject-turn: Codex refuses the request with its own explanation.
+    if (scenario === 'reject-turn') { write({ id: msg.id, error: { code: -32602, message: 'model fixture-model is not available' } }); return; }
     turn = 'native-turn-' + ++count;
     reply(msg.id, { turn: { id: turn, status: 'inProgress', items: [] } });
     const started = () => {
@@ -72,6 +79,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         write({ id: pending, method: scenario === 'file' ? 'item/fileChange/requestApproval' : 'item/commandExecution/requestApproval', params: { threadId: thread, turnId: turn, itemId: scenario === 'file' ? 'file-item' : 'command-item', startedAtMs: 1, command: scenario === 'file' ? undefined : 'echo fixture', availableDecisions: scenario === 'file' ? undefined : ['accept', 'cancel'] } });
         // permission-eof: the native connection is lost while the request is pending.
         if (scenario === 'permission-eof') setTimeout(() => process.exit(0), 300);
+      } else if (scenario === 'mcp-approval') {
+        // Shape verbatim from a live 0.155.1 capture: an MCP tool call asks
+        // through an elicitation, with an integer id that can be 0.
+        pending = 0;
+        write({ id: pending, method: 'mcpServer/elicitation/request', params: { threadId: thread, turnId: turn, serverName: 'echo', mode: 'form',
+          _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'], tool_description: 'Echo text back', tool_params: { text: 'ping' } },
+          message: 'Allow the echo MCP server to run tool "echo"?', requestedSchema: { type: 'object', properties: {} } } });
       } else if (scenario === 'question') {
         pending = '41';
         write({ id: pending, method: 'item/tool/requestUserInput', params: { threadId: thread, turnId: turn, itemId: 'question-item', isBlocking: false, questions: [{ id: 'opaque-secret', header: 'Secret', question: 'Fixture secret', isOther: false, isSecret: true, options: null }] } });
@@ -143,6 +157,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     finish('interrupted');
   } else if (!msg.method && msg.id === pending) {
     if (scenario === 'question' && msg.result.answers['opaque-secret'].answers[0] !== 'SENTINEL-NATIVE-SECRET') process.exit(21);
+    // An elicitation is answered with an MCP action, never a `decision`.
+    if (scenario === 'mcp-approval' && (msg.result.action !== 'accept' || JSON.stringify(msg.result.content) !== '{}' || 'decision' in msg.result)) process.exit(22);
     note('serverRequest/resolved', { threadId: thread, requestId: pending });
     pending = undefined;
     message('native response accepted');
