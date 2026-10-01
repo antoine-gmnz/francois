@@ -26,6 +26,20 @@
   flex: 1;
   min-width: 0;
 }
+.changes-section__refresh--spinning {
+  animation: changes-section-spin 0.8s linear infinite;
+}
+@keyframes changes-section-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .changes-section__refresh--spinning {
+    animation: none;
+    opacity: 0.5;
+  }
+}
 .changes-section__filter {
   padding: 0 var(--space-10) var(--space-6);
 }

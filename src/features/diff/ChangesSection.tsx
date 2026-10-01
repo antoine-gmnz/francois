@@ -1,7 +1,7 @@
 // The session panel's Changes section — redesign "Graphite & Signal", Figma
 // "Session panel" (130:378), tab Changes. The working tree as a folder tree (the
 // diff-navigator tree helpers, reused), a `+97 −31 in 7 files` summary with
-// fold-all and filter, and a footer carrying the context meter and `Review N
+// fold-all, filter and refresh, and a footer carrying the context meter and `Review N
 // files`. Clicking a file opens the DIFF tab on that file (diff-focus.ts).
 //
 // Above the footer, SessionPullCard surfaces the PR open on the session's
@@ -39,7 +39,7 @@ function folderKeys(nodes: DiffTreeNode[]): string[] {
 }
 
 export default function ChangesSection({ session, context }: SessionPanelSectionProps) {
-  const { summary, error } = useDiffSummary(session.id);
+  const { summary, error, refresh, refreshing } = useDiffSummary(session.id);
   const setMainTab = useStore((s) => s.setMainTab);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
@@ -52,6 +52,7 @@ export default function ChangesSection({ session, context }: SessionPanelSection
   const rows = useMemo(() => flattenVisibleRows(tree, folded, filter ?? ''), [tree, folded, filter]);
   const allFolders = useMemo(() => folderKeys(tree), [tree]);
   const anyOpen = allFolders.some((k) => !folded.has(k));
+  const notRepo = error?.code === 'NOT_A_GIT_REPO';
 
   const openDiff = (path?: string) => {
     if (path) requestDiffFile(session.id, path);
@@ -67,25 +68,34 @@ export default function ChangesSection({ session, context }: SessionPanelSection
       return next;
     });
 
-  const notRepo = error?.code === 'NOT_A_GIT_REPO';
-
   return (
     <>
-      {summary && files.length > 0 && (
+      {!notRepo && (
         <div className="changes-section__summary">
-          <span className="changes-section__totals">
-            <span className="changes-section__add">+{summary.totalAdd}</span>
-            <span className="changes-section__del"> −{summary.totalDel}</span>
-          </span>
-          <span className="changes-section__files">
-            in {files.length} {files.length === 1 ? 'file' : 'files'}
-          </span>
+          {summary && files.length > 0 && (
+            <>
+              <span className="changes-section__totals">
+                <span className="changes-section__add">+{summary.totalAdd}</span>
+                <span className="changes-section__del"> −{summary.totalDel}</span>
+              </span>
+              <span className="changes-section__files">
+                in {files.length} {files.length === 1 ? 'file' : 'files'}
+              </span>
+            </>
+          )}
           <span className="changes-section__spacer" />
-          <IconButton size={24} title={anyOpen ? 'Collapse all folders' : 'Expand all folders'} onClick={() => setFolded(anyOpen ? new Set(allFolders) : new Set())}>
-            <Icon name={anyOpen ? 'chevron-down' : 'chevron-right'} size={12} />
-          </IconButton>
-          <IconButton size={24} on={filter !== null} title="Filter files" onClick={() => setFilter(filter === null ? '' : null)}>
-            <Icon name="search" size={12} />
+          {files.length > 0 && (
+            <>
+              <IconButton size={24} title={anyOpen ? 'Collapse all folders' : 'Expand all folders'} onClick={() => setFolded(anyOpen ? new Set(allFolders) : new Set())}>
+                <Icon name={anyOpen ? 'chevron-down' : 'chevron-right'} size={12} />
+              </IconButton>
+              <IconButton size={24} on={filter !== null} title="Filter files" onClick={() => setFilter(filter === null ? '' : null)}>
+                <Icon name="search" size={12} />
+              </IconButton>
+            </>
+          )}
+          <IconButton size={24} title="Refresh git status" aria-busy={refreshing} disabled={refreshing} onClick={refresh}>
+            <Icon name="refresh" size={12} className={refreshing ? 'changes-section__refresh--spinning' : undefined} />
           </IconButton>
         </div>
       )}
