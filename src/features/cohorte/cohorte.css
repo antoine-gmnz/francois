@@ -1362,6 +1362,27 @@
   padding: 16px;
 }
 
+.cohorte-brainstorm-conversation {
+  display: grid;
+  gap: 12px;
+}
+
+.cohorte-brainstorm-conversation .cohorte-preparation__card {
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-8);
+  background: var(--bg-rail);
+}
+
+.cohorte-brainstorm-conversation h3 {
+  margin: 0 0 8px;
+  font: var(--type-ui-strong);
+}
+
+.cohorte-brainstorm-conversation p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
 .cohorte-preparation__preview {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

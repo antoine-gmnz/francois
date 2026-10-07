@@ -4,8 +4,8 @@
 // footer are shared chrome (SheetShell); each action supplies its own fields.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { COHORTE_FROZEN_STATUSES, COHORTE_SAFE_FEATURE_ID, type CohorteFeatureChoice } from '../../../contract/cohorte-actions';
-import { cohorteActionIntake, cohorteFeatures, cohorteStart } from '../../lib/api';
+import { COHORTE_FROZEN_STATUSES, COHORTE_SAFE_FEATURE_ID, type CohorteBrainstormTurn, type CohorteFeatureChoice } from '../../../contract/cohorte-actions';
+import { cohorteActionBrainstorm, cohorteActionBrief, cohorteActionIntake, cohorteFeatures, cohorteStart } from '../../lib/api';
 import { useCohorteActionsStore, type CohorteResultEntry } from '../../lib/cohorteActionsStore';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
@@ -28,6 +28,8 @@ import './cohorte.css';
 
 const STAGES = ['Intake', 'Brainstorm', 'Spec', 'Freeze', 'Run', 'Ship'];
 const STAGE_INDEX: Record<string, number> = { intake: 0, brainstorm: 1, spec: 2, start: 4 };
+const PYTHON_FEATURE_ID = /^[a-z0-9-]{1,80}$/;
+const PANEL_NAMES: Record<string, string> = { product: 'Produit', architecture: 'Architecture', ux: 'Expérience', qa: 'Qualité', security: 'Sécurité' };
 
 export default function CohorteActionSheet({ home = '' }: { home?: string }): JSX.Element | null {
   const sheet = useCohorteActionsStore((s) => s.sheet);
@@ -52,10 +54,101 @@ interface SheetBodyProps {
 
 function SheetBody({ action, sessionId, root, home, featureId }: SheetBodyProps): JSX.Element | null {
   if (action === 'intake') return <IntakeSheet sessionId={sessionId} root={root} home={home} />;
-  if (action === 'brainstorm' || action === 'spec' || action === 'start') {
+  if (action === 'brainstorm') return <BrainstormSheet sessionId={sessionId} root={root} home={home} initialFeatureId={featureId} />;
+  if (action === 'spec' || action === 'start') {
     return <FeatureSheet action={action} sessionId={sessionId} root={root} home={home} initialFeatureId={featureId} />;
   }
   return null; // patch/fleet/audit/retro never open a sheet (FR-21).
+}
+
+function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionId: string; root: string; home: string; initialFeatureId?: string }): JSX.Element {
+  const [features, setFeatures] = useState<CohorteFeatureChoice[]>([]);
+  const [newIdea, setNewIdea] = useState(!initialFeatureId);
+  const [idea, setIdea] = useState('');
+  const [featureId, setFeatureId] = useState(initialFeatureId ?? '');
+  const [turn, setTurn] = useState<CohorteBrainstormTurn | null>(null);
+  const [reply, setReply] = useState('');
+  const [replyKind, setReplyKind] = useState<'message' | 'answer'>('message');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void cohorteFeatures(root).then(result => {
+      if (!active || !result.ok) return;
+      const candidates = result.data.filter(feature => feature.status === 'draft' && brainstormSource(feature) !== null);
+      setFeatures(candidates);
+      if (!initialFeatureId && candidates[0]) setFeatureId(candidates[0].id);
+    });
+    return () => { active = false; };
+  }, [root, initialFeatureId]);
+
+  useEffect(() => {
+    if (newIdea || turn || !featureId || brainstormSource(features.find(feature => feature.id === featureId)) !== 'brainstorm') return;
+    let active = true;
+    void cohorteActionBrief(root, featureId).then(result => {
+      if (active && result.ok) setTurn(result.data);
+    });
+    return () => { active = false; };
+  }, [root, newIdea, featureId, features, turn]);
+
+  const suggestedId = idea.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+  const selectedId = newIdea && !turn ? (featureId && !features.some(feature => feature.id === featureId) ? featureId : suggestedId) : featureId;
+  const source = turn ? 'continue' : newIdea ? undefined : brainstormSource(features.find(feature => feature.id === featureId)) === 'intake' ? 'intake' : 'continue';
+  const canSend = !busy && PYTHON_FEATURE_ID.test(selectedId) && (turn ? !!reply.trim() : newIdea ? !!idea.trim() : !!featureId && source !== undefined && (source === 'intake' || !!reply.trim()));
+
+  const send = async () => {
+    if (!canSend) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await cohorteActionBrainstorm({
+        root,
+        featureId: selectedId,
+        ...(source ? { source } : { idea: idea.trim() }),
+        ...(reply.trim() ? replyKind === 'answer' ? { answer: turn?.brief.synthesis.blocking_questions.length === 1 && !reply.includes(turn.brief.synthesis.blocking_questions[0]) ? `${turn.brief.synthesis.blocking_questions[0]} ${reply.trim()}` : reply.trim() } : { message: reply.trim() } : {}),
+      });
+      if (!result.ok) { setError(result.error.message); return; }
+      setTurn(result.data);
+      setFeatureId(result.data.brief.feature_id);
+      setReply('');
+      setReplyKind('message');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally { setBusy(false); }
+  };
+
+  return <SheetShell
+    title="Brainstorm"
+    subtitle="Discutez avec les perspectives du projet ; seules vos réponses confirmées deviennent des décisions"
+    stage={STAGE_INDEX.brainstorm}
+    stageNote={turn?.brief.feature_id ?? (newIdea ? 'nouvelle idée' : featureId)}
+    command={turn ? `cohorte brainstorm --continue ${turn.brief.feature_id}` : newIdea ? 'cohorte brainstorm' : cohorteBrainstormDisplay(featureId, brainstormSource(features.find(feature => feature.id === featureId))) ?? 'cohorte brainstorm'}
+    cwd={abbreviate(root, home)}
+    footNote={turn ? `Brief enregistré · révision ${turn.brief_ref.revision}` : 'Le panel lit le projet en lecture seule'}
+    primary={{ label: busy ? 'Le panel réfléchit…' : turn ? 'Envoyer au panel' : 'Lancer le panel', busy, disabled: !canSend }}
+    onRun={() => void send()}
+    width={760}
+  >
+    {!turn && <>
+      <Segmented label="Source" value={newIdea ? 'new' : 'existing'} options={[["new", "Nouvelle idée"], ["existing", "Reprendre"]] as const} onChange={value => { setNewIdea(value === 'new'); setTurn(null); }} />
+      {newIdea ? <>
+        <Field label="Idée" htmlFor="cohorte-brainstorm-idea"><textarea id="cohorte-brainstorm-idea" className="cohorte-sheet__input" value={idea} onChange={event => setIdea(event.target.value)} rows={3} maxLength={4000} /></Field>
+        <Field label="Identifiant" htmlFor="cohorte-brainstorm-id"><input id="cohorte-brainstorm-id" className="cohorte-sheet__input" value={selectedId} onChange={event => setFeatureId(event.target.value)} /></Field>
+      </> : <Field label="Brainstorm à reprendre" htmlFor="cohorte-brainstorm-feature"><select id="cohorte-brainstorm-feature" className="cohorte-sheet__input" value={featureId} onChange={event => { setFeatureId(event.target.value); setTurn(null); }}>{features.map(feature => <option key={feature.id} value={feature.id}>{feature.title} · {feature.id}</option>)}</select></Field>}
+    </>}
+    {turn && <div className="cohorte-brainstorm-conversation">
+      {turn.brief.prior_decisions.length > 0 && <section className="cohorte-preparation__card"><h3>Décisions déjà prises</h3><ul>{turn.brief.prior_decisions.map(decision => <li key={decision}>{decision}</li>)}</ul></section>}
+      {(turn.brief.user_messages.length > 0 || turn.brief.user_answers.length > 0) && <section className="cohorte-preparation__card"><h3>Vos échanges</h3>{turn.brief.user_messages.map((message, index) => <p key={`message-${index}`}>Question ou réaction : {message}</p>)}{turn.brief.user_answers.map((answer, index) => <p key={`answer-${index}`}>Décision confirmée : {answer}</p>)}</section>}
+      {turn.brief.contributions.map(contribution => <section key={contribution.perspective} className="cohorte-preparation__card"><h3>{PANEL_NAMES[contribution.perspective] ?? contribution.perspective}</h3><p>{contribution.problem}</p>{contribution.alternatives[0] && <p><strong>Proposition :</strong> {contribution.alternatives[0]}</p>}{contribution.disagreements[0] && <p><strong>Objection :</strong> {contribution.disagreements[0]}</p>}{contribution.risks[0] && <p><strong>Risque :</strong> {contribution.risks[0]}</p>}</section>)}
+      <section className="cohorte-preparation__card"><h3>Synthèse</h3><p>{turn.brief.synthesis.recommendation}</p>{turn.brief.synthesis.strong_objections.map(objection => <p key={objection}>À discuter : {objection}</p>)}</section>
+      {turn.brief.synthesis.question_proposals.map(proposal => <section key={proposal.question} className="cohorte-preparation__card"><p>{proposal.question}</p><p>Produit : {proposal.business_option}</p><p>Code : {proposal.code_option}</p><p>À vérifier : {proposal.caveat}</p><Button size="sm" onClick={() => { setReply(`${proposal.question} ${proposal.business_option}`); setReplyKind('answer'); }}>Confirmer la piste produit</Button> <Button size="sm" onClick={() => { setReply(`${proposal.question} ${proposal.code_option}`); setReplyKind('answer'); }}>Confirmer la piste code</Button></section>)}
+    </div>}
+    {(turn || !newIdea) && <Field label={replyKind === 'answer' ? 'Décision à confirmer' : 'Question ou réaction'} htmlFor="cohorte-brainstorm-reply"><textarea id="cohorte-brainstorm-reply" className="cohorte-sheet__input" value={reply} onChange={event => { setReply(event.target.value); setReplyKind('message'); }} rows={3} maxLength={4000} /><div className="cohorte-result__actions"><Button size="sm" onClick={() => setReplyKind('message')}>Discuter</Button> <Button size="sm" onClick={() => setReplyKind('answer')}>Confirmer comme décision</Button></div></Field>}
+    {turn && <Button size="sm" onClick={() => { close(); useCohorteActionsStore.getState().openSheet({ action: 'spec', sessionId, featureId: turn.brief.feature_id }); }}>Passer à la spec</Button>}
+    {error && <Button size="sm" onClick={() => void openCohorteTerminal(sessionId, `cohorte brainstorm${turn ? ` --continue ${turn.brief.feature_id}` : ''}`, { execute: false, root })}>Ouvrir le terminal Cohorte</Button>}
+    <ErrorLine message={error} />
+  </SheetShell>;
 }
 
 // ── shared chrome ────────────────────────────────────────────────────────────

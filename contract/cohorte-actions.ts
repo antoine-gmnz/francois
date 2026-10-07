@@ -82,3 +82,30 @@ export const COHORTE_FROZEN_STATUSES: readonly string[] = ['frozen', 'ready', 'a
 
 export type CohorteIntakeResponse = Result<CohorteIntakeResult>;
 export type CohortePreviewResponse = Result<CohorteCommandPreview>;
+
+export interface CohorteBrainstormRequest {
+  root: string;
+  featureId: string;
+  idea?: string;
+  source?: 'intake' | 'continue';
+  message?: string;
+  answer?: string;
+}
+
+export interface CohorteBrainstormTurn {
+  brief: {
+    feature_id: string;
+    idea: string;
+    prior_decisions: string[];
+    user_messages: string[];
+    user_answers: string[];
+    contributions: { perspective: string; problem: string; alternatives: string[]; disagreements: string[]; risks: string[] }[];
+    synthesis: {
+      recommendation: string;
+      strong_objections: string[];
+      blocking_questions: string[];
+      question_proposals: { question: string; business_option: string; code_option: string; caveat: string }[];
+    };
+  };
+  brief_ref: { id: string; revision: number; sha256: string };
+}

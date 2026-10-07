@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 const INTAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// FR-10: `COHORTE_OUTPUT_CAPPED`.
 const OUTPUT_CAP: usize = 4 * 1024 * 1024;
+const BRAINSTORM_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const TITLE_MAX: usize = 200;
 const TEXT_MAX: usize = 24_000;
 const URL_MAX: usize = 2_000;
@@ -292,10 +293,284 @@ pub fn cohorte_action_preview(req: CohorteIntakeRequest) -> IpcResult<CohorteCom
     .into()
 }
 
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CohorteBrainstormRequest {
+    pub root: String,
+    pub feature_id: String,
+    pub idea: Option<String>,
+    pub source: Option<String>,
+    pub message: Option<String>,
+    pub answer: Option<String>,
+}
+
+fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppError> {
+    let id = req.feature_id.trim();
+    if id.is_empty()
+        || id.len() > 80
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(invalid(
+            "Brainstorm feature ID must be 1-80 lowercase letters, digits, or hyphens",
+        ));
+    }
+    if req
+        .message
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+        || req
+            .answer
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(invalid("A reply cannot be blank"));
+    }
+    if req.message.is_some() && req.answer.is_some() {
+        return Err(invalid("Send either a message or an approved answer"));
+    }
+    let mut args = vec!["brainstorm".into()];
+    match req.source.as_deref() {
+        Some("continue") => {
+            if req.message.is_none() && req.answer.is_none() {
+                return Err(invalid(
+                    "A continued brainstorm needs a message or an answer",
+                ));
+            }
+            args.extend(["--continue".into(), id.into()]);
+        }
+        Some("intake") => args.extend(["--from-intake".into(), id.into()]),
+        None => {
+            let idea = req.idea.as_deref().unwrap_or("").trim();
+            if idea.is_empty() || idea.len() > 4000 {
+                return Err(invalid(
+                    "A new brainstorm needs an idea of at most 4000 bytes",
+                ));
+            }
+            args.extend([
+                "--feature-id".into(),
+                id.into(),
+                "--idea".into(),
+                idea.into(),
+            ]);
+        }
+        _ => return Err(invalid("Unknown brainstorm source")),
+    }
+    if let Some(message) = &req.message {
+        args.extend(["--message".into(), message.trim().into()]);
+    }
+    if let Some(answer) = &req.answer {
+        args.extend(["--answer".into(), answer.trim().into()]);
+    }
+    args.extend(["--repo".into(), req.root.clone(), "--live".into()]);
+    Ok(args)
+}
+
+fn run_brainstorm(runner: &dyn Runner, req: &CohorteBrainstormRequest) -> Result<Value, AppError> {
+    let core_args = brainstorm_argv(req)?;
+    let mut args = vec!["--json".into()];
+    args.extend(python_rpc::data_dir_args());
+    args.extend(core_args);
+    let out = runner.run("cohorte", &req.root, &args, BRAINSTORM_TIMEOUT, OUTPUT_CAP);
+    if let Some(error) = cli::read_failure(&args, &out, BRAINSTORM_TIMEOUT, OUTPUT_CAP) {
+        return Err(error);
+    }
+    let document: Value =
+        serde_json::from_slice(&out.stdout).map_err(|_| cli::output_invalid(&args))?;
+    if document["ok"] != true {
+        return Err(AppError::with_detail(
+            ErrorCode::CohorteRejected,
+            document["error"]["message"]
+                .as_str()
+                .unwrap_or("Cohorte rejected the brainstorm"),
+            json!({"cohorteCode":document["error"]["code"]}),
+        ));
+    }
+    validated_brief(&document, &req.feature_id, &args)
+}
+
+fn validated_brief(document: &Value, feature_id: &str, args: &[String]) -> Result<Value, AppError> {
+    let brief = &document["data"]["brief"];
+    if brief["feature_id"] != feature_id
+        || !brief["contributions"].is_array()
+        || !brief["synthesis"].is_object()
+        || !document["data"]["brief_ref"].is_object()
+    {
+        return Err(cli::output_invalid(args));
+    }
+    Ok(document["data"].clone())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CohorteBriefRequest {
+    pub root: String,
+    pub feature_id: String,
+}
+
+fn read_brief(runner: &dyn Runner, req: &CohorteBriefRequest) -> Result<Value, AppError> {
+    let id = req.feature_id.trim();
+    if id.is_empty()
+        || id.len() > 80
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(invalid("Invalid brainstorm feature ID"));
+    }
+    let mut args = vec!["--json".into()];
+    args.extend(python_rpc::data_dir_args());
+    args.extend(["brief".into(), "show".into(), id.into()]);
+    let out = runner.run(
+        "cohorte",
+        &req.root,
+        &args,
+        Duration::from_secs(30),
+        OUTPUT_CAP,
+    );
+    if let Some(error) = cli::read_failure(&args, &out, Duration::from_secs(30), OUTPUT_CAP) {
+        return Err(error);
+    }
+    let document: Value =
+        serde_json::from_slice(&out.stdout).map_err(|_| cli::output_invalid(&args))?;
+    if document["ok"] != true {
+        return Err(AppError::with_detail(
+            ErrorCode::CohorteRejected,
+            document["error"]["message"]
+                .as_str()
+                .unwrap_or("Could not read the brainstorm"),
+            json!({"cohorteCode":document["error"]["code"]}),
+        ));
+    }
+    validated_brief(&document, id, &args)
+}
+
+#[tauri::command(async)]
+pub fn cohorte_action_brainstorm(req: CohorteBrainstormRequest) -> IpcResult<Value> {
+    run_brainstorm(&SystemRunner, &req).into()
+}
+
+#[tauri::command(async)]
+pub fn cohorte_action_brief(req: CohorteBriefRequest) -> IpcResult<Value> {
+    read_brief(&SystemRunner, &req).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cohorte::testutil::{missing, out, FakeRunner};
+
+    #[test]
+    fn brainstorm_message_and_decision_use_distinct_cli_flags() {
+        let base = CohorteBrainstormRequest {
+            root: "/repo".into(),
+            feature_id: "safe-export".into(),
+            idea: None,
+            source: Some("continue".into()),
+            message: Some("Why not remote storage?".into()),
+            answer: None,
+        };
+        assert_eq!(
+            brainstorm_argv(&base).unwrap(),
+            vec![
+                "brainstorm",
+                "--continue",
+                "safe-export",
+                "--message",
+                "Why not remote storage?",
+                "--repo",
+                "/repo",
+                "--live"
+            ]
+        );
+        let approved = CohorteBrainstormRequest {
+            message: None,
+            answer: Some("Keep exports local".into()),
+            ..base.clone()
+        };
+        assert_eq!(
+            brainstorm_argv(&approved).unwrap()[3..5],
+            ["--answer", "Keep exports local"]
+        );
+        assert!(brainstorm_argv(&CohorteBrainstormRequest {
+            message: Some("question".into()),
+            ..approved
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn brainstorm_bridge_returns_the_saved_native_brief() {
+        let runner = FakeRunner::default();
+        runner.on("cohorte --json brainstorm --feature-id", out(0, r#"{"ok":true,"data":{"brief":{"feature_id":"safe-export","contributions":[],"synthesis":{"recommendation":"local"}},"brief_ref":{"id":"brief:safe-export","revision":1,"sha256":"abc"}}}"#));
+        let request = CohorteBrainstormRequest {
+            root: "/repo".into(),
+            feature_id: "safe-export".into(),
+            idea: Some("Safe export".into()),
+            source: None,
+            message: None,
+            answer: None,
+        };
+        let result = run_brainstorm(&runner, &request).unwrap();
+        assert_eq!(result["brief_ref"]["revision"], 1);
+        assert_eq!(runner.count("cohorte --json brainstorm --feature-id"), 1);
+    }
+
+    #[test]
+    fn brief_bridge_reloads_the_latest_native_revision() {
+        let runner = FakeRunner::default();
+        runner.on("cohorte --json brief show safe-export", out(0, r#"{"ok":true,"data":{"brief":{"feature_id":"safe-export","contributions":[],"synthesis":{"recommendation":"local"}},"brief_ref":{"id":"brief:safe-export","revision":2,"sha256":"abc"}}}"#));
+        let result = read_brief(
+            &runner,
+            &CohorteBriefRequest {
+                root: "/repo".into(),
+                feature_id: "safe-export".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result["brief_ref"]["revision"], 2);
+    }
+
+    #[test]
+    fn live_python_brief_bridge_when_fixture_is_configured() {
+        let Ok(root) = std::env::var("COHORTE_LIVE_BRIEF_ROOT") else {
+            return;
+        };
+        let result = read_brief(
+            &SystemRunner,
+            &CohorteBriefRequest {
+                root,
+                feature_id: "export-safety".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result["brief"]["feature_id"], "export-safety");
+        assert!(result["brief"]["prior_decisions"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty()));
+    }
+
+    #[test]
+    fn live_python_conversation_bridge_when_fixture_is_configured() {
+        let Ok(root) = std::env::var("COHORTE_LIVE_BRIEF_ROOT") else {
+            return;
+        };
+        let result = run_brainstorm(&SystemRunner, &CohorteBrainstormRequest {
+            root,
+            feature_id: "export-safety".into(),
+            idea: None,
+            source: Some("continue".into()),
+            message: Some("L'équipe UX peut-elle critiquer la recommandation QA et proposer un compromis ?".into()),
+            answer: None,
+        }).unwrap();
+        assert!(result["brief_ref"]["revision"]
+            .as_u64()
+            .is_some_and(|revision| revision >= 3));
+        assert!(result["brief"]["user_messages"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty()));
+    }
 
     fn text_req(root: &str, title: &str, text: &str) -> CohorteIntakeRequest {
         CohorteIntakeRequest {

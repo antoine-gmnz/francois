@@ -18,3 +18,11 @@ or cancel a run. `runs.start` creates a queued run; execution itself remains
 owned by Cohorte. François does not launch workflow workers. The old TypeScript
 CLI-backed Tauri handlers remain compiled for compatibility but are no longer
 called by the Cohorte screens.
+
+The Brainstorm sheet runs the Python CLI in JSON mode against the same data
+directory and registered project. It displays the saved perspectives, objections,
+previous project decisions and synthesis. A free-form message uses `--message`
+and remains a question or objection; the separate confirm action uses `--answer`
+and records a decision. Reopening a brainstorm loads its latest saved brief with
+`brief show`. Install `cohorte-engine==1.0.0a20` or later for `brainstorm --message`.
+The spec and freeze controls still use Cohorte's exact approval boundary.

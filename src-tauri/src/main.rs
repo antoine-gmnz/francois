@@ -273,6 +273,8 @@ fn main() {
             cohorte::python_service::cohorte_v3_cancel,
             cohorte::actions_cli::cohorte_action_intake,
             cohorte::actions_cli::cohorte_action_preview,
+            cohorte::actions_cli::cohorte_action_brainstorm,
+            cohorte::actions_cli::cohorte_action_brief,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,
