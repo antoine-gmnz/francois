@@ -39,7 +39,7 @@ import type {
     GithubWorktreeDiskUsageResponse,
 } from '../../contract/github-page';
 import { COHORTE_EVENT_CHANNEL, type CohorteApproveRequest, type CohorteCommandMap, type CohorteDenyRequest, type CohorteDetectRequest, type CohorteEvent, type CohorteInitRequest, type CohorteRootRequest, type CohorteRunControlRequest, type CohorteRunLogRequest, type CohorteRunRequest, type CohorteSendToFixRequest, type CohorteWatchRequest } from '../../contract/cohorte-integration';
-import type { CohorteFeatureChoice, CohorteIntakeRequest, CohorteIntakeResponse, CohortePreviewResponse } from '../../contract/cohorte-actions';
+import type { CohorteBrainstormRequest, CohorteBrainstormTurn, CohorteFeatureChoice, CohorteIntakeRequest, CohorteIntakeResponse, CohortePreviewResponse } from '../../contract/cohorte-actions';
 import type {
     AccountAddCodexPayload,
     AccountAddCodexResponse,
@@ -666,6 +666,10 @@ export const cohorteStart = (req: { root: string; featureId: string; stage?: str
 // wanted — the sheet itself mirrors FR-3 locally, see command-display.ts).
 export const cohorteActionIntake = (req: CohorteIntakeRequest) => ipc<CohorteIntakeResponse>('cohorte_action_intake', { req });
 export const cohorteActionPreview = (req: CohorteIntakeRequest) => ipc<CohortePreviewResponse>('cohorte_action_preview', { req });
+export const cohorteActionBrainstorm = (req: CohorteBrainstormRequest) =>
+  ipc<Result<CohorteBrainstormTurn>>('cohorte_action_brainstorm', { req });
+export const cohorteActionBrief = (root: string, featureId: string) =>
+  ipc<Result<CohorteBrainstormTurn>>('cohorte_action_brief', { req: { root, featureId } });
 export const cohorteAnswer = (req: { root: string; runId: string; approvalId: string; answer: string }) =>
   ipc<Result<import('../../contract/cohorte-integration').CohorteCommandOutcome>>('cohorte_v3_answer', { req });
 
