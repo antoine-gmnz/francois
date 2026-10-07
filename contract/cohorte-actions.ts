@@ -109,3 +109,71 @@ export interface CohorteBrainstormTurn {
   };
   brief_ref: { id: string; revision: number; sha256: string };
 }
+
+export interface CohorteSpecRequest {
+  root: string;
+  featureId: string;
+  action: 'show' | 'propose' | 'accept' | 'prepare' | 'freeze' | 'ratify';
+  message?: string;
+  answers?: string[];
+  contract?: string;
+  expectProposalRevision?: number;
+  expectDraftRevision?: number;
+  requestId?: string;
+  specHash?: string;
+  profileHash?: string;
+  candidateIndex?: number;
+}
+
+export interface CohorteSpecProposal {
+  title: string;
+  response_to_feedback: string;
+  in_scope: string[];
+  out_of_scope: string[];
+  question_suggestions: { question: string; suggestion: string; caveat: string }[];
+  scenarios: { id: string; given: string; when: string; then: string }[];
+  acceptance: { statement: string; surface_id: string; check_id: string | null }[];
+  test_strategy: string[];
+  error_cases: string[];
+  migrations_required: boolean;
+  migrations: string;
+  rollback: string;
+}
+
+export interface CohorteSpecDraft {
+  feature_id: string;
+  revision: number;
+  status: 'draft' | 'frozen';
+  title: string;
+  problem: string;
+  in_scope: string[];
+  out_of_scope: string[];
+  surfaces: string[];
+  scenarios: { id: string; given: string; when: string; then: string }[];
+  acceptance: { id: string; statement: string; verification: string; surface_ids: string[]; check_ids: string[] }[];
+  test_strategy: string[];
+  error_cases: string[];
+  migrations: { required: boolean; plan: string };
+  rollback: { required: boolean; plan: string };
+  open_questions: string[];
+}
+
+export interface CohorteSpecData {
+  feature_status?: string;
+  brief_ref?: { id: string; revision: number; sha256: string };
+  proposal?: CohorteSpecProposal | null;
+  proposal_ref?: { id: string; revision: number; sha256: string } | null;
+  draft_proposal_ref?: { id: string; revision: number; sha256: string } | null;
+  draft?: CohorteSpecDraft | null;
+  draft_ref?: { id: string; revision: number; sha256: string };
+  draft_current?: boolean;
+  feedback?: string[];
+  profile?: { project_id: string; revision: number; surfaces: string[] };
+  preparation?: { request_id: string; spec_hash: string; profile_hash: string };
+  candidate?: CohorteSpecDraft;
+  profile_snapshot?: Record<string, unknown>;
+  spec?: CohorteSpecDraft;
+  spec_ref?: { id: string; revision: number; sha256: string };
+  standing_candidates?: { area: string; decision: string; reason: string; source_answer: string }[];
+  entry?: string;
+}

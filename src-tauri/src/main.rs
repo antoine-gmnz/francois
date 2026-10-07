@@ -275,6 +275,7 @@ fn main() {
             cohorte::actions_cli::cohorte_action_preview,
             cohorte::actions_cli::cohorte_action_brainstorm,
             cohorte::actions_cli::cohorte_action_brief,
+            cohorte::spec_cli::cohorte_action_spec,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,

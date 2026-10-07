@@ -43,6 +43,7 @@ mod projection;
 pub(crate) mod python_rpc;
 pub mod python_service;
 mod sanitize;
+pub mod spec_cli;
 mod watcher;
 mod wire;
 

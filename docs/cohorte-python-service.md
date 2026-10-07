@@ -25,4 +25,11 @@ previous project decisions and synthesis. A free-form message uses `--message`
 and remains a question or objection; the separate confirm action uses `--answer`
 and records a decision. Reopening a brainstorm loads its latest saved brief with
 `brief show`. Install `cohorte-engine==1.0.0a20` or later for `brainstorm --message`.
-The spec and freeze controls still use Cohorte's exact approval boundary.
+The Spec sheet uses `cohorte-engine==1.0.0a21` or later. It loads the saved brief,
+asks the agent for an initial spec proposal, and lets the user send free-form
+feedback for a new revision. Feedback never counts as an approved answer. The
+user accepts a specific proposal revision and supplies decisions for its open
+questions; this creates a saved draft. The approval view shows the full frozen
+candidate and project profile with their exact hashes. A separate confirmed
+action approves and freezes only that request ID and those hashes. After freeze,
+the user may explicitly keep a proposed standing decision for future features.
