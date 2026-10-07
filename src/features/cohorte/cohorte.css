@@ -1089,6 +1089,24 @@
   gap: 8px;
 }
 
+.cohorte-spec-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.cohorte-spec-hash {
+  overflow-wrap: anywhere;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.cohorte-spec-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font: var(--type-small);
+  color: var(--text-primary);
+}
+
 /* FR-60: the This run | Pipeline toggle. */
 .cohorte-panel-wrap {
   display: flex;
@@ -1388,4 +1406,12 @@
   overflow-wrap: anywhere;
   max-height: 320px;
   overflow: auto;
+}
+
+.cohorte-spec-snapshot {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--type-mono);
 }

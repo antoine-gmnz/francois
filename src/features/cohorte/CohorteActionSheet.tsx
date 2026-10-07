@@ -4,8 +4,8 @@
 // footer are shared chrome (SheetShell); each action supplies its own fields.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { COHORTE_FROZEN_STATUSES, COHORTE_SAFE_FEATURE_ID, type CohorteBrainstormTurn, type CohorteFeatureChoice } from '../../../contract/cohorte-actions';
-import { cohorteActionBrainstorm, cohorteActionBrief, cohorteActionIntake, cohorteFeatures, cohorteStart } from '../../lib/api';
+import { COHORTE_FROZEN_STATUSES, COHORTE_SAFE_FEATURE_ID, type CohorteBrainstormTurn, type CohorteFeatureChoice, type CohorteSpecData, type CohorteSpecRequest } from '../../../contract/cohorte-actions';
+import { cohorteActionBrainstorm, cohorteActionBrief, cohorteActionIntake, cohorteActionSpec, cohorteFeatures, cohorteStart } from '../../lib/api';
 import { useCohorteActionsStore, type CohorteResultEntry } from '../../lib/cohorteActionsStore';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
@@ -55,10 +55,132 @@ interface SheetBodyProps {
 function SheetBody({ action, sessionId, root, home, featureId }: SheetBodyProps): JSX.Element | null {
   if (action === 'intake') return <IntakeSheet sessionId={sessionId} root={root} home={home} />;
   if (action === 'brainstorm') return <BrainstormSheet sessionId={sessionId} root={root} home={home} initialFeatureId={featureId} />;
-  if (action === 'spec' || action === 'start') {
+  if (action === 'spec') return <SpecSheet sessionId={sessionId} root={root} home={home} initialFeatureId={featureId} />;
+  if (action === 'start') {
     return <FeatureSheet action={action} sessionId={sessionId} root={root} home={home} initialFeatureId={featureId} />;
   }
   return null; // patch/fleet/audit/retro never open a sheet (FR-21).
+}
+
+function SpecSheet({ sessionId, root, home, initialFeatureId }: { sessionId: string; root: string; home: string; initialFeatureId?: string }): JSX.Element {
+  const [features, setFeatures] = useState<CohorteFeatureChoice[]>([]);
+  const [selected, setSelected] = useState(initialFeatureId ?? '');
+  const [state, setState] = useState<CohorteSpecData | null>(null);
+  const [feedback, setFeedback] = useState('');
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [contract, setContract] = useState('');
+  const [prepared, setPrepared] = useState<CohorteSpecData['preparation']>(undefined);
+  const [candidate, setCandidate] = useState<CohorteSpecData['candidate']>(undefined);
+  const [profileSnapshot, setProfileSnapshot] = useState<CohorteSpecData['profile_snapshot']>(undefined);
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void cohorteFeatures(root).then(result => {
+      if (!active || !result.ok) return;
+      const available = result.data.sort((a, b) => b.updatedAt - a.updatedAt);
+      setFeatures(available);
+      if (!initialFeatureId && available[0]) setSelected(available[0].id);
+    });
+    return () => { active = false; };
+  }, [root, initialFeatureId]);
+
+  useEffect(() => {
+    if (!selected) return;
+    let active = true;
+    setState(null);
+    setError(null);
+    setPrepared(undefined);
+    setCandidate(undefined);
+    setProfileSnapshot(undefined);
+    setConfirmed(false);
+    void cohorteActionSpec({ root, featureId: selected, action: 'show' }).then(result => {
+      if (!active) return;
+      if (result.ok) setState(result.data);
+      else setError(result.error.message);
+    });
+    return () => { active = false; };
+  }, [root, selected]);
+
+  const proposal = state?.proposal;
+  const draft = state?.draft;
+  const proposalAccepted = !!draft && !!state?.proposal_ref && state.draft_proposal_ref?.revision === state.proposal_ref.revision;
+  const surfaceIds = [...new Set(proposal?.acceptance.map(item => item.surface_id) ?? [])];
+  const canPropose = !!selected && !busy && state?.feature_status !== 'frozen' && (proposal ? !!feedback.trim() : !!state);
+
+  const action = async (kind: CohorteSpecRequest['action'], extra: Partial<CohorteSpecRequest> = {}) => {
+    if (!selected || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await cohorteActionSpec({ root, featureId: selected, action: kind, ...extra });
+      if (!result.ok) { setError(result.error.message); return; }
+      if (kind === 'prepare') {
+        setPrepared(result.data.preparation);
+        setCandidate(result.data.candidate);
+        setProfileSnapshot(result.data.profile_snapshot);
+        setConfirmed(false);
+        return;
+      }
+      const refreshed = await cohorteActionSpec({ root, featureId: selected, action: 'show' });
+      if (!refreshed.ok) { setError(refreshed.error.message); return; }
+      setState(refreshed.data);
+      setPrepared(undefined);
+      setCandidate(undefined);
+      setProfileSnapshot(undefined);
+      setConfirmed(false);
+      if (kind === 'propose') setFeedback('');
+      if (kind === 'accept') setAnswers({});
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally { setBusy(false); }
+  };
+
+  const accept = () => {
+    if (!state?.proposal_ref) return;
+    const indexedAnswers = Object.entries(answers).filter(([, value]) => value.trim()).map(([index, value]) => `${index}=${value.trim()}`);
+    void action('accept', {
+      answers: indexedAnswers,
+      ...(contract.trim() ? { contract: contract.trim() } : {}),
+      expectProposalRevision: state.proposal_ref.revision,
+      expectDraftRevision: draft?.revision ?? 0,
+    });
+  };
+
+  return <SheetShell
+    title="Préparer la spec"
+    subtitle="L'équipe propose, vous discutez et validez le contenu exact avant le gel"
+    stage={STAGE_INDEX.spec}
+    stageNote={selected || 'choisir une fonctionnalité'}
+    command={`cohorte spec-session ${selected || 'FEATURE_ID'} ${proposal ? 'propose' : 'show'}`}
+    cwd={abbreviate(root, home)}
+    footNote={draft ? `Brouillon · révision ${draft.revision}` : proposal ? `Proposition · révision ${state?.proposal_ref?.revision ?? 1}` : 'Aucune spec gelée sans approbation'}
+    primary={{ label: busy ? 'L’équipe réfléchit…' : proposal ? 'Envoyer ce retour' : 'Créer une proposition', busy, disabled: !canPropose }}
+    onRun={() => void action('propose', proposal ? { message: feedback.trim() } : {})}
+    width={760}
+  >
+    {!initialFeatureId && <Field label="Fonctionnalité" htmlFor="cohorte-spec-feature"><select id="cohorte-spec-feature" className="cohorte-sheet__input" value={selected} onChange={event => { setSelected(event.target.value); setFeedback(''); setAnswers({}); }}>{features.map(feature => <option key={feature.id} value={feature.id}>{feature.title} · {feature.id}</option>)}</select></Field>}
+    {state?.feature_status === 'frozen' && <section className="cohorte-preparation__card"><h3>Spec gelée</h3><p>Cette fonctionnalité peut démarrer son run.</p></section>}
+    {state?.feature_status === 'frozen' && state.standing_candidates?.map((candidate, index) => <section key={candidate.decision} className="cohorte-preparation__card"><h3>Décision à garder pour le projet ?</h3><p>{candidate.decision}</p><p>Motif : {candidate.reason}</p><Button size="sm" disabled={busy} onClick={() => void action('ratify', { candidateIndex: index + 1 })}>Conserver cette décision</Button></section>)}
+    {proposal && <div className="cohorte-spec-conversation">
+      {state?.feedback && state.feedback.length > 0 && <section className="cohorte-preparation__card"><h3>Échanges sur la spec</h3>{state.feedback.map((message, index) => <p key={index}>Vous : {message}</p>)}</section>}
+      {proposal.response_to_feedback && <section className="cohorte-preparation__card"><h3>Réponse de l’équipe</h3><p>{proposal.response_to_feedback}</p></section>}
+      <section className="cohorte-preparation__card"><h3>{proposal.title}</h3><p><strong>Périmètre</strong></p><ul>{proposal.in_scope.map(item => <li key={item}>{item}</li>)}</ul><p><strong>Hors périmètre</strong></p><ul>{proposal.out_of_scope.map(item => <li key={item}>{item}</li>)}</ul></section>
+      <section className="cohorte-preparation__card"><h3>Scénarios</h3>{proposal.scenarios.map(item => <p key={item.id}>{item.given} → {item.when} → {item.then}</p>)}</section>
+      <section className="cohorte-preparation__card"><h3>Critères vérifiables</h3><ul>{proposal.acceptance.map((item, index) => <li key={index}>{item.statement} <small>· {item.surface_id} · {item.check_id ?? 'revue'}</small></li>)}</ul></section>
+      <section className="cohorte-preparation__card"><h3>Tests et risques</h3><p>Tests : {proposal.test_strategy.join(' · ')}</p><p>Erreurs : {proposal.error_cases.join(' · ')}</p><p>Migration : {proposal.migrations}</p><p>Retour arrière : {proposal.rollback}</p></section>
+      {proposal.question_suggestions.map((item, index) => <section key={index} className="cohorte-preparation__card"><h3>Décision {index + 1}</h3><p>{item.question}</p><p>Piste de l’équipe : {item.suggestion}</p><p>À vérifier : {item.caveat}</p><Field label="Votre décision" htmlFor={`cohorte-spec-answer-${index}`}><textarea id={`cohorte-spec-answer-${index}`} className="cohorte-sheet__input" value={answers[index + 1] ?? ''} onChange={event => setAnswers(current => ({ ...current, [index + 1]: event.target.value }))} rows={2} /><Button size="sm" onClick={() => setAnswers(current => ({ ...current, [index + 1]: item.suggestion }))}>Choisir cette piste</Button></Field></section>)}
+      <Field label="Question, objection ou correction" htmlFor="cohorte-spec-feedback"><textarea id="cohorte-spec-feedback" className="cohorte-sheet__input" value={feedback} onChange={event => setFeedback(event.target.value)} rows={3} maxLength={4000} /></Field>
+      {surfaceIds.length > 1 && <Field label="Contrat partagé (chemin dans le projet)" htmlFor="cohorte-spec-contract"><input id="cohorte-spec-contract" className="cohorte-sheet__input" value={contract} onChange={event => setContract(event.target.value)} /></Field>}
+      {state?.feature_status !== 'frozen' && !proposalAccepted && <Button size="sm" disabled={busy || (surfaceIds.length > 1 && !contract.trim())} onClick={accept}>Accepter cette proposition comme brouillon</Button>}
+    </div>}
+    {draft && <section className="cohorte-preparation__card"><h3>Brouillon enregistré</h3><p>{draft.title} · {draft.surfaces.join(', ')}</p>{draft.open_questions.length > 0 ? <p>Questions encore ouvertes : {draft.open_questions.join(' · ')}</p> : <p>Questions tranchées. Le gel peut être préparé.</p>}{state?.feature_status !== 'frozen' && proposalAccepted && state?.draft_current && draft.open_questions.length === 0 && !prepared && <Button size="sm" disabled={busy} onClick={() => void action('prepare')}>Préparer l’approbation</Button>}</section>}
+    {prepared && candidate && profileSnapshot && <section className="cohorte-preparation__card"><h3>Approbation exacte</h3><p>Spec : {candidate.title} · révision {candidate.revision}</p><p>{candidate.problem}</p><p>Profil : {state?.profile?.project_id} · révision {state?.profile?.revision}</p><details><summary>Lire la spec complète qui sera figée</summary><pre className="cohorte-spec-snapshot">{JSON.stringify(candidate, null, 2)}</pre></details><details><summary>Lire le profil complet approuvé avec la spec</summary><pre className="cohorte-spec-snapshot">{JSON.stringify(profileSnapshot, null, 2)}</pre></details><p className="cohorte-spec-hash">Spec {prepared.spec_hash}</p><p className="cohorte-spec-hash">Profil {prepared.profile_hash}</p><label className="cohorte-spec-confirm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /> J’ai relu cette spec et ce profil ; j’approuve leur gel.</label><Button size="sm" disabled={busy || !confirmed} onClick={() => void action('freeze', { requestId: prepared.request_id, specHash: prepared.spec_hash, profileHash: prepared.profile_hash })}>Approuver et figer</Button></section>}
+    {error && <Button size="sm" onClick={() => void openCohorteTerminal(sessionId, `cohorte spec ${selected}`, { execute: false, root })}>Ouvrir le terminal Cohorte</Button>}
+    <ErrorLine message={error} />
+  </SheetShell>;
 }
 
 function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionId: string; root: string; home: string; initialFeatureId?: string }): JSX.Element {
