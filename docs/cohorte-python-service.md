@@ -24,5 +24,5 @@ directory and registered project. It displays the saved perspectives, objections
 previous project decisions and synthesis. A free-form message uses `--message`
 and remains a question or objection; the separate confirm action uses `--answer`
 and records a decision. Reopening a brainstorm loads its latest saved brief with
-`brief show`. This path requires a Python Cohorte build with `brainstorm --message`
-support. The spec and freeze controls still use Cohorte's exact approval boundary.
+`brief show`. Install `cohorte-engine==1.0.0a20` or later for `brainstorm --message`.
+The spec and freeze controls still use Cohorte's exact approval boundary.
