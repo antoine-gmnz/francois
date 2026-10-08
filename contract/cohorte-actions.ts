@@ -90,6 +90,13 @@ export interface CohorteBrainstormRequest {
   source?: 'intake' | 'continue';
   message?: string;
   answer?: string;
+  context?: string;
+}
+
+export interface CohorteIdea {
+  title: string;
+  notes: string[];
+  feature_id: string | null;
 }
 
 export interface CohorteBrainstormTurn {
