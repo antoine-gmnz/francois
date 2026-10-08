@@ -624,3 +624,11 @@
   width: 1px;
   background: var(--line-subtle);
 }
+
+/* An open PR on the session's branch — a quiet marker, not a state, so no state colour. */
+.roster-row__pr {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
