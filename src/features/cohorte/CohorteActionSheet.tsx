@@ -24,6 +24,8 @@ import { openCohorteTerminal } from './terminal';
 import { detectionFor } from './linkage';
 import { CASE_INSENSITIVE_FS } from './useCohorte';
 import { CohorteMark } from './CohorteParts';
+import { BrainstormProgress } from './BrainstormProgress';
+import { brainstormReplyFields, brainstormStartLines, elapsedLabel, type BrainstormLogLine } from './brainstorm-progress';
 import './cohorte.css';
 
 const STAGES = ['Intake', 'Brainstorm', 'Spec', 'Freeze', 'Run', 'Ship'];
@@ -193,6 +195,10 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
   const [replyKind, setReplyKind] = useState<'message' | 'answer'>('message');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [log, setLog] = useState<BrainstormLogLine[]>([]);
+  const [pending, setPending] = useState<string | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -205,54 +211,76 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
     return () => { active = false; };
   }, [root, initialFeatureId]);
 
+  // "Reprendre" shows where the brainstorm stopped: the stored brief, no panel run.
   useEffect(() => {
     if (newIdea || turn || !featureId || brainstormSource(features.find(feature => feature.id === featureId)) !== 'brainstorm') return;
     let active = true;
+    setBriefLoading(true);
+    setError(null);
     void cohorteActionBrief(root, featureId).then(result => {
-      if (active && result.ok) setTurn(result.data);
+      if (!active) return;
+      setBriefLoading(false);
+      if (result.ok) setTurn(result.data);
+      else setError(result.error.message);
     });
-    return () => { active = false; };
+    return () => { active = false; setBriefLoading(false); };
   }, [root, newIdea, featureId, features, turn]);
 
   const suggestedId = idea.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
   const selectedId = newIdea && !turn ? (featureId && !features.some(feature => feature.id === featureId) ? featureId : suggestedId) : featureId;
   const source = turn ? 'continue' : newIdea ? undefined : brainstormSource(features.find(feature => feature.id === featureId)) === 'intake' ? 'intake' : 'continue';
-  const canSend = !busy && PYTHON_FEATURE_ID.test(selectedId) && (turn ? !!reply.trim() : newIdea ? !!idea.trim() : !!featureId && source !== undefined && (source === 'intake' || !!reply.trim()));
+  const canSend = !busy && !briefLoading && PYTHON_FEATURE_ID.test(selectedId) && (newIdea && !turn ? !!idea.trim() : !!featureId && source !== undefined);
+  const command = turn ? `cohorte brainstorm --continue ${turn.brief.feature_id}` : newIdea ? 'cohorte brainstorm' : cohorteBrainstormDisplay(featureId, brainstormSource(features.find(feature => feature.id === featureId))) ?? 'cohorte brainstorm';
 
   const send = async () => {
     if (!canSend) return;
+    const replyFields = brainstormReplyFields(reply, replyKind, turn, source);
+    const started = Date.now();
     setBusy(true);
     setError(null);
+    setStartedAt(started);
+    setPending(replyFields.answer ? `décision · ${replyFields.answer}` : replyFields.message ?? (source ? null : idea.trim()));
+    setLog(brainstormStartLines(started, command, turn?.brief.contributions.map(contribution => contribution.perspective) ?? [], PANEL_NAMES));
+    const finish = (text: string) => setLog(current => [...current, { at: Date.now(), text: `${text} · ${elapsedLabel(Date.now() - started)}` }]);
     try {
       const result = await cohorteActionBrainstorm({
         root,
         featureId: selectedId,
         ...(source ? { source } : { idea: idea.trim() }),
-        ...(reply.trim() ? replyKind === 'answer' ? { answer: turn?.brief.synthesis.blocking_questions.length === 1 && !reply.includes(turn.brief.synthesis.blocking_questions[0]) ? `${turn.brief.synthesis.blocking_questions[0]} ${reply.trim()}` : reply.trim() } : { message: reply.trim() } : {}),
+        ...replyFields,
       });
-      if (!result.ok) { setError(result.error.message); return; }
+      if (!result.ok) { setError(result.error.message); finish(`Échec : ${result.error.message}`); return; }
+      finish(`Panel terminé · brief révision ${result.data.brief_ref.revision}`);
       setTurn(result.data);
       setFeatureId(result.data.brief.feature_id);
       setReply('');
       setReplyKind('message');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally { setBusy(false); }
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(message);
+      finish(`Échec : ${message}`);
+    } finally {
+      setBusy(false);
+      setStartedAt(null);
+      setPending(null);
+    }
   };
+
+  const primaryLabel = busy ? 'Le panel réfléchit…' : !turn ? 'Lancer le panel' : reply.trim() ? 'Envoyer au panel' : 'Continuer le brainstorm';
 
   return <SheetShell
     title="Brainstorm"
     subtitle="Discutez avec les perspectives du projet ; seules vos réponses confirmées deviennent des décisions"
     stage={STAGE_INDEX.brainstorm}
     stageNote={turn?.brief.feature_id ?? (newIdea ? 'nouvelle idée' : featureId)}
-    command={turn ? `cohorte brainstorm --continue ${turn.brief.feature_id}` : newIdea ? 'cohorte brainstorm' : cohorteBrainstormDisplay(featureId, brainstormSource(features.find(feature => feature.id === featureId))) ?? 'cohorte brainstorm'}
+    command={command}
     cwd={abbreviate(root, home)}
     footNote={turn ? `Brief enregistré · révision ${turn.brief_ref.revision}` : 'Le panel lit le projet en lecture seule'}
-    primary={{ label: busy ? 'Le panel réfléchit…' : turn ? 'Envoyer au panel' : 'Lancer le panel', busy, disabled: !canSend }}
+    primary={{ label: primaryLabel, busy, disabled: !canSend }}
     onRun={() => void send()}
     width={760}
   >
-    {!turn && <>
+    {!turn && !busy && <>
       <Segmented label="Source" value={newIdea ? 'new' : 'existing'} options={[["new", "Nouvelle idée"], ["existing", "Reprendre"]] as const} onChange={value => { setNewIdea(value === 'new'); setTurn(null); }} />
       {newIdea ? <>
         <Field label="Idée" htmlFor="cohorte-brainstorm-idea"><textarea id="cohorte-brainstorm-idea" className="cohorte-sheet__input" value={idea} onChange={event => setIdea(event.target.value)} rows={3} maxLength={4000} /></Field>
@@ -266,8 +294,10 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
       <section className="cohorte-preparation__card"><h3>Synthèse</h3><p>{turn.brief.synthesis.recommendation}</p>{turn.brief.synthesis.strong_objections.map(objection => <p key={objection}>À discuter : {objection}</p>)}</section>
       {turn.brief.synthesis.question_proposals.map(proposal => <section key={proposal.question} className="cohorte-preparation__card"><p>{proposal.question}</p><p>Produit : {proposal.business_option}</p><p>Code : {proposal.code_option}</p><p>À vérifier : {proposal.caveat}</p><Button size="sm" onClick={() => { setReply(`${proposal.question} ${proposal.business_option}`); setReplyKind('answer'); }}>Confirmer la piste produit</Button> <Button size="sm" onClick={() => { setReply(`${proposal.question} ${proposal.code_option}`); setReplyKind('answer'); }}>Confirmer la piste code</Button></section>)}
     </div>}
-    {(turn || !newIdea) && <Field label={replyKind === 'answer' ? 'Décision à confirmer' : 'Question ou réaction'} htmlFor="cohorte-brainstorm-reply"><textarea id="cohorte-brainstorm-reply" className="cohorte-sheet__input" value={reply} onChange={event => { setReply(event.target.value); setReplyKind('message'); }} rows={3} maxLength={4000} /><div className="cohorte-result__actions"><Button size="sm" onClick={() => setReplyKind('message')}>Discuter</Button> <Button size="sm" onClick={() => setReplyKind('answer')}>Confirmer comme décision</Button></div></Field>}
-    {turn && <Button size="sm" onClick={() => { close(); useCohorteActionsStore.getState().openSheet({ action: 'spec', sessionId, featureId: turn.brief.feature_id }); }}>Passer à la spec</Button>}
+    {briefLoading && <p className="cohorte-sheet__hint">Chargement du brainstorm…</p>}
+    <BrainstormProgress pending={pending} log={log} startedAt={startedAt} />
+    {!busy && (turn || !newIdea) && <Field label={replyKind === 'answer' ? 'Décision à confirmer' : 'Question ou réaction'} htmlFor="cohorte-brainstorm-reply"><textarea id="cohorte-brainstorm-reply" className="cohorte-sheet__input" placeholder={source === 'continue' ? 'Facultatif · laissez vide pour reprendre là où le panel s’est arrêté' : undefined} value={reply} onChange={event => { setReply(event.target.value); setReplyKind('message'); }} rows={3} maxLength={4000} /><div className="cohorte-result__actions"><Button size="sm" onClick={() => setReplyKind('message')}>Discuter</Button> <Button size="sm" onClick={() => setReplyKind('answer')}>Confirmer comme décision</Button></div></Field>}
+    {turn && !busy && <Button size="sm" onClick={() => { close(); useCohorteActionsStore.getState().openSheet({ action: 'spec', sessionId, featureId: turn.brief.feature_id }); }}>Passer à la spec</Button>}
     {error && <Button size="sm" onClick={() => void openCohorteTerminal(sessionId, `cohorte brainstorm${turn ? ` --continue ${turn.brief.feature_id}` : ''}`, { execute: false, root })}>Ouvrir le terminal Cohorte</Button>}
     <ErrorLine message={error} />
   </SheetShell>;
