@@ -135,6 +135,19 @@ import type {
 } from '../../contract/extensions';
 import type { McpApprovalState, McpAttachRequest, McpDecision, McpRegistryEntry, McpServerDetail } from '../../contract/mcp-panel';
 import type { EditorListData, OpenInEditorRequest } from '../../contract/open-in-vscode';
+import type {
+  EditorCloseRequest,
+  EditorCloseResponse,
+  EditorEvent,
+  EditorFilesRequest,
+  EditorFilesResponse,
+  EditorOpenExternalRequest,
+  EditorOpenExternalResponse,
+  EditorOpenRequest,
+  EditorOpenResponse,
+  EditorSaveRequest,
+  EditorSaveResponse,
+} from '../../contract/code-editor';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 import type {
@@ -282,6 +295,14 @@ export const sessionClearAttachments = (scope: ClearScope) =>
 export const sessionEditorList = () => ipc<Result<EditorListData>>('session_editor_list');
 export const sessionOpenInEditor = (req: OpenInEditorRequest) =>
   ipc<Result<null>>('session_open_in_editor', req);
+
+// code-editor (§5, francois:editor:*). A root is always named (FR-3) — never a path.
+export const editorFiles = (req: EditorFilesRequest) => ipc<EditorFilesResponse>('editor_files', req);
+export const editorOpen = (req: EditorOpenRequest) => ipc<EditorOpenResponse>('editor_open', req);
+export const editorSave = (req: EditorSaveRequest) => ipc<EditorSaveResponse>('editor_save', req);
+export const editorClose = (req: EditorCloseRequest) => ipc<EditorCloseResponse>('editor_close', req);
+export const editorOpenExternal = (req: EditorOpenExternalRequest) =>
+  ipc<EditorOpenExternalResponse>('editor_open_external', req);
 
 // transcript-scale FR-5/FR-9: `before`/`limit` page backwards; omitted ⇒ the
 // live tail the core holds in memory. `limit` is clamped by the core to
@@ -605,6 +626,11 @@ export const extensionsConsent = (req: ConsentRequest) => ipc<ConsentResponse>('
 /** Subscribe to francois://extensions/event (the log-tail stream, FR-44). */
 export function onExtensionEvent(cb: (e: ExtensionEvent) => void): Promise<UnlistenFn> {
   return stream<ExtensionEvent>('francois://extensions/event', cb);
+}
+
+/** code-editor FR-12: subscribe to francois://editor/event (editor.changed / editor.deleted). */
+export function onEditorEvent(cb: (e: EditorEvent) => void): Promise<UnlistenFn> {
+  return stream<EditorEvent>('francois://editor/event', cb);
 }
 
 /** Subscribe to francois://shell/event (shell.data / shell.exit). */

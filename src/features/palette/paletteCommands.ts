@@ -15,6 +15,7 @@ import { useStore } from '../../lib/store';
 import { statusNeedsAttention } from '../../../contract/fleet-board';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
+import { useCodeStore } from '../code/codeStore';
 import { createPrAvailability, requestCreatePr } from '../diff/create-pr';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
@@ -285,6 +286,34 @@ export function registerBuiltinCommands(): void {
       st.setFocusedPane('main');
       st.setMainTab(st.mainTab === 'github' ? 'session' : 'github');
       requestBodyFocusOnClose(); // FR-16 exception: don't restore into a now-hidden pane
+    },
+  });
+
+  // 5d — Code (code-editor FR-1): the fourth app-bar destination. No single-key
+  // shortcut — Code has none (FR-1), so the palette and the app bar are the doors.
+  registerPaletteCommand({
+    id: 'open-code',
+    glyph: '‹›',
+    name: 'Open Code tab',
+    hint: () => 'explorer + editor',
+    run: () => {
+      const st = useStore.getState();
+      st.setFocusedPane('main');
+      st.setMainTab(st.mainTab === 'code' ? 'session' : 'code');
+      requestBodyFocusOnClose(); // FR-16 exception: don't restore into a now-hidden pane
+    },
+  });
+  registerPaletteCommand({
+    id: 'go-to-file',
+    glyph: '⌕',
+    name: 'Go to file…',
+    hint: () => '⌘P',
+    run: () => {
+      const st = useStore.getState();
+      st.setFocusedPane('main');
+      st.setMainTab('code');
+      useCodeStore.getState().setGoToFileOpen(true);
+      requestBodyFocusOnClose();
     },
   });
 

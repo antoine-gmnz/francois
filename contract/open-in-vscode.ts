@@ -26,6 +26,10 @@ export type EditorListResponse = Result<EditorListData>;
 export interface OpenInEditorRequest {
   sessionId: SessionId;
   editorId: EditorId;
+  /** code-editor FR-15: open this file (relative to the session root) instead of the folder. */
+  file?: string;
+  /** code-editor FR-15: 1-based line, only with `file` (launches `<editor> -g <path>:<line>`). */
+  line?: number;
 }
 // invoke('session_open_in_editor', req): Promise<Result<null>>
 // FR-4/5/6: target resolution follows the filesystem (is_wsl_unc_path(session.cwd)), never the

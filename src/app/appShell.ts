@@ -180,10 +180,10 @@ export function shellFooterPath(cwd: string, shellName: string, home: string): s
  * `'workflow'` branches here and `MainPaneBody` handles those explicitly rather
  * than forcing them into the `Record<MainTab, renderer>` table.
  */
-export type MainPaneBranch = 'overview' | 'github' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow' | 'ext' | 'cohorte';
+export type MainPaneBranch = 'overview' | 'github' | 'code' | 'session' | 'diff' | 'shell' | 'panel' | 'agent' | 'workflow' | 'ext' | 'cohorte';
 
 export function mainPaneBranch(mainTab: MainTab): MainPaneBranch {
-  if (mainTab === 'overview' || mainTab === 'github' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
+  if (mainTab === 'overview' || mainTab === 'github' || mainTab === 'code' || mainTab === 'session' || mainTab === 'diff' || mainTab === 'shell') return mainTab;
   if (isPanelTab(mainTab)) return 'panel';
   // extensions FR-9: `ext:<id>` is the third dynamic-tab kind. Checked before
   // the agent fallback, which claims everything it does not recognise.
@@ -235,7 +235,7 @@ export function isPanelTab(tab: MainTab): tab is PanelTab {
  * panel tabs and `overview` are session-independent, so they are not here.
  */
 export function isSessionScopedTab(tab: MainTab): boolean {
-  return tab !== 'overview' && tab !== 'github' && !isPanelTab(tab);
+  return !isAppScopedTab(tab) && !isPanelTab(tab);
 }
 
 /**
@@ -251,7 +251,7 @@ export function isSessionScopedTab(tab: MainTab): boolean {
  * FR-1 deletes).
  */
 export function showsPanes(paneCount: number, mainTab: MainTab): boolean {
-  return paneCount > 1 && mainTab !== 'overview' && mainTab !== 'github' && cohorteRunIdFromTab(mainTab) === null;
+  return paneCount > 1 && !isAppScopedTab(mainTab) && cohorteRunIdFromTab(mainTab) === null;
 }
 
 /**
@@ -259,11 +259,17 @@ export function showsPanes(paneCount: number, mainTab: MainTab): boolean {
  * own (like the agent drill-in) but keeps the session panel beside it.
  */
 export function showsSessionHeader(mainTab: MainTab): boolean {
-  return mainTab !== 'overview' && mainTab !== 'github' && cohorteRunIdFromTab(mainTab) === null;
+  return !isAppScopedTab(mainTab) && cohorteRunIdFromTab(mainTab) === null;
 }
 
 export function showsSessionPanel(mainTab: MainTab): boolean {
-  return mainTab !== 'overview' && mainTab !== 'github';
+  return !isAppScopedTab(mainTab);
+}
+
+/** The app-bar destinations that take the whole workspace: OVERVIEW, GitHub and
+ *  Code (code-editor FR-2: no session header, no session panel, no panes). */
+export function isAppScopedTab(tab: MainTab): boolean {
+  return tab === 'overview' || tab === 'github' || tab === 'code';
 }
 
 // ---------- global shortcuts (Phase 5 dispatch table) ----------

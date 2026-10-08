@@ -3,7 +3,7 @@
 // search sits genuinely centered regardless of what either side weighs (the
 // grid is this turn's stand-in for the mock's absolute centering — same
 // result, no overlap math). Left to right:
-//  · LEFT   — the mark + wordmark, then the Overview / Sessions / GitHub nav;
+//  · LEFT   — the mark + wordmark, then the Overview / Sessions / GitHub / Code nav;
 //  · CENTER — the command search (it IS the palette's trigger);
 //  · RIGHT  — the notification-mute chip (not in the design), the plan-usage
 //             icon (opens a popover with the meters — too many Claude Code
@@ -94,7 +94,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
   const nav = activeNav(mainTab);
   const { navRef, indicator } = useNavIndicator(nav);
 
-  const go = (tab: 'overview' | 'session' | 'github') => {
+  const go = (tab: 'overview' | 'session' | 'github' | 'code') => {
     if (settingsOpen) toggleSettings(); // the nav leaves Settings
     setFocusedPane('main');
     setMainTab(tab);
@@ -156,6 +156,15 @@ export default function AppBar({ appVersion }: AppBarProps) {
             onClick={() => go('github')}
           >
             GitHub
+          </button>
+          {/* code-editor FR-1: after GitHub, no single-key shortcut. */}
+          <button
+            type="button"
+            className={nav === 'code' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
+            title="file explorer + editor"
+            onClick={() => go('code')}
+          >
+            Code
           </button>
         </nav>
       </div>

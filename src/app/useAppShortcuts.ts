@@ -4,6 +4,7 @@ import { clampPaneIndex, focusedSessionId, focusedTab, paneCount } from '../lib/
 import { sessionCapability } from '../lib/runtimeCapability';
 import { useStore, type MainTab, type Pane } from '../lib/store';
 import { buildShortcutActions } from './appShell';
+import { suppressSingleKeyShortcut } from './shortcut-guard';
 
 export interface AppShortcutState {
   newSessionOpen: boolean;
@@ -147,8 +148,6 @@ export function useAppShortcuts(state: AppShortcutState): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const activeEl = document.activeElement as HTMLElement | null;
-      const inInput = !!activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
-      const inTerminal = !!activeEl && activeEl.closest('.xterm') !== null;
       // multiple-shells FR-19: a modifier held means this keydown is one of the
       // SHELL tab's ⌘T/⌘W/⌃⇥/⌃⇧⇥ combos (or any other modified combo), never a
       // plain single-letter global — without this guard `t`'s toggleShellTab
@@ -166,8 +165,9 @@ export function useAppShortcuts(state: AppShortcutState): void {
         extensionsOpen ||
         sessionSettingsOpen ||
         updateModalOpen ||
-        inInput ||
-        inTerminal
+        // code-editor FR-14: inputs, contenteditable and the terminal are typing
+        // targets, and the Code tab suppresses every single key wherever focus is.
+        suppressSingleKeyShortcut(e, { mainTab: useStore.getState().mainTab, target: activeEl })
       )
         return;
       const actions = buildShortcutActions({

@@ -793,6 +793,23 @@ pub fn session_seed(app: &AppHandle, project_id: &str) -> Option<SessionSeed> {
     seed_of(&doc.projects, project_id)
 }
 
+/// code-editor FR-3: `(name, root)` of a registered project, or `PROJECT_NOT_FOUND`.
+pub fn name_and_root_of(projects: &[Project], id: &str) -> Result<(String, String), AppError> {
+    projects
+        .iter()
+        .find(|p| p.id == id)
+        .map(|p| (p.name.clone(), p.root.clone()))
+        .ok_or(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))
+}
+
+pub fn name_and_root(app: &AppHandle, id: &str) -> Result<(String, String), AppError> {
+    let state = app
+        .try_state::<ProjectRegistry>()
+        .ok_or(AppError::new(ErrorCode::ProjectNotFound, NOT_FOUND_MSG))?;
+    let doc = state.doc.lock().unwrap();
+    name_and_root_of(&doc.projects, id)
+}
+
 /// `(id, root)` for every registered project, in registry order.
 pub fn roots_of(projects: &[Project]) -> Vec<(String, String)> {
     projects
@@ -833,6 +850,22 @@ mod tests {
     use super::*;
     use crate::project::testutil::*;
     use serde_json::json;
+
+    #[test]
+    fn name_and_root_of_finds_the_project_or_reports_not_found() {
+        let root = if cfg!(windows) {
+            r"D:\w\orbit"
+        } else {
+            "/w/orbit"
+        };
+        let projects = vec![project_fixture("p1", "orbit", root, 0)];
+        assert_eq!(
+            name_and_root_of(&projects, "p1").unwrap(),
+            ("orbit".to_string(), normalize_root(root))
+        );
+        let e = name_and_root_of(&projects, "nope").err().unwrap();
+        assert_eq!(e.code, ErrorCode::ProjectNotFound);
+    }
 
     // ---- FR-8: normalization ----
 

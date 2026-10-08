@@ -80,6 +80,12 @@ export type ErrorCode =
   | 'UPDATE_BLOCKED' // self-update: sessions are running (detail: { running: number }) (FR-12)
   | 'EDITOR_NOT_FOUND' // open-in-vscode: the requested editorId is not installed (detail: { editorId })
   | 'EDITOR_LAUNCH_FAILED' // open-in-vscode: the launcher could not be spawned (detail: { path })
+  | 'EDITOR_OUTSIDE_ROOT' // code-editor: path escapes the root (incl. via symlink) or targets .git/
+  | 'EDITOR_FILE_NOT_FOUND' // code-editor: no such file under the root
+  | 'EDITOR_BINARY' // code-editor FR-8: NUL in the first 8 KiB, or not valid UTF-8
+  | 'EDITOR_TOO_LARGE' // code-editor FR-8: over 10 MiB (detail: { size })
+  | 'EDITOR_STALE' // code-editor FR-11: baseVersion != disk (detail: { version })
+  | 'EDITOR_WRITE_FAILED' // code-editor FR-11: atomic write failed (detail: { reason })
   | 'SHELL_NOT_FOUND' // multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
   | 'SHELL_LIMIT_REACHED' // multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
   | 'STEP_DETAIL_NOT_FOUND' // command-inspect FR-11: no record for that blockId (never captured, or swept)
