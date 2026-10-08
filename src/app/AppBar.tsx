@@ -34,6 +34,7 @@
 // the drag region toggles maximize, matching the native caption's own gesture.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Code2, GitPullRequest, LayoutDashboard, MessagesSquare } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { statusNeedsAttention } from '../../contract/fleet-board';
 import { accountDisplayLabel, accountNeedsLogin, findAccount, usageAccountId } from '../features/accounts/accounts';
@@ -127,6 +128,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
             title="cross-project dashboard · o"
             onClick={() => go('overview')}
           >
+            <LayoutDashboard className="app-bar__nav-icon" size={14} aria-hidden />
             Overview
             {waiting.length > 0 && (
               <span
@@ -147,6 +149,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
             title="the selected session · 2"
             onClick={() => go('session')}
           >
+            <MessagesSquare className="app-bar__nav-icon" size={14} aria-hidden />
             Sessions
           </button>
           <button
@@ -155,6 +158,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
             title="pull requests, commits and branches"
             onClick={() => go('github')}
           >
+            <GitPullRequest className="app-bar__nav-icon" size={14} aria-hidden />
             GitHub
           </button>
           {/* code-editor FR-1: after GitHub, no single-key shortcut. */}
@@ -164,6 +168,7 @@ export default function AppBar({ appVersion }: AppBarProps) {
             title="file explorer + editor"
             onClick={() => go('code')}
           >
+            <Code2 className="app-bar__nav-icon" size={14} aria-hidden />
             Code
           </button>
         </nav>

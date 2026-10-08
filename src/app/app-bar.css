@@ -67,6 +67,9 @@
   font: var(--type-ui);
   cursor: pointer;
 }
+.app-bar__nav-icon {
+  flex-shrink: 0;
+}
 .app-bar__nav-item:hover {
   color: var(--text-primary);
 }
