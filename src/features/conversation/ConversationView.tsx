@@ -140,7 +140,7 @@ export default function ConversationView({
   const retired = sessionIsRetired(meta);
 
   return (
-    <div className="conv-root">
+    <div className="conv-root" data-session-id={sessionId}>
       {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
           so it never scrolls away. attach-to-worktree FR-18: suppressed for an
           adopted tree — Francois made no claim about what is in it. */}

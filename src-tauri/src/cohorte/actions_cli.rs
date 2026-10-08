@@ -303,6 +303,7 @@ pub struct CohorteBrainstormRequest {
     pub message: Option<String>,
     pub answer: Option<String>,
     pub context: Option<String>,
+    pub obsidian_idea: Option<String>,
 }
 
 fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppError> {
@@ -334,6 +335,9 @@ fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppErr
     let mut args = vec!["brainstorm".into()];
     match req.source.as_deref() {
         Some("continue") => {
+            if req.obsidian_idea.is_some() {
+                return Err(invalid("An Obsidian card can only start a new brainstorm"));
+            }
             if req.message.is_none() && req.answer.is_none() {
                 return Err(invalid(
                     "A continued brainstorm needs a message or an answer",
@@ -341,7 +345,12 @@ fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppErr
             }
             args.extend(["--continue".into(), id.into()]);
         }
-        Some("intake") => args.extend(["--from-intake".into(), id.into()]),
+        Some("intake") => {
+            if req.obsidian_idea.is_some() {
+                return Err(invalid("An Obsidian card cannot be combined with intake"));
+            }
+            args.extend(["--from-intake".into(), id.into()]);
+        }
         None => {
             let idea = req.idea.as_deref().unwrap_or("").trim();
             if idea.is_empty() || idea.len() > 4000 {
@@ -355,6 +364,19 @@ fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppErr
                 "--idea".into(),
                 idea.into(),
             ]);
+            if let Some(source_id) = &req.obsidian_idea {
+                let valid = source_id.split_once(':').is_some_and(|(digest, line)| {
+                    digest.len() == 64
+                        && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        && line.parse::<usize>().is_ok_and(|number| number > 0)
+                });
+                if !valid || source_id.len() > 80 {
+                    return Err(invalid(
+                        "Obsidian idea source is invalid; refresh the idea list",
+                    ));
+                }
+                args.extend(["--obsidian-idea".into(), source_id.clone()]);
+            }
         }
         _ => return Err(invalid("Unknown brainstorm source")),
     }
@@ -487,10 +509,13 @@ fn read_ideas(runner: &dyn Runner, req: &CohorteIdeasRequest) -> Result<Value, A
     let ideas = document["data"]["ideas"]
         .as_array()
         .ok_or_else(|| cli::output_invalid(&args))?;
-    if ideas
-        .iter()
-        .any(|idea| !idea["title"].is_string() || !idea["notes"].is_array())
-    {
+    if ideas.iter().any(|idea| {
+        !idea["title"].is_string()
+            || !idea["source_id"].is_string()
+            || !idea["notes"]
+                .as_array()
+                .is_some_and(|notes| notes.iter().all(Value::is_string))
+    }) {
         return Err(cli::output_invalid(&args));
     }
     Ok(Value::Array(ideas.clone()))
@@ -521,6 +546,7 @@ mod tests {
             message: Some("Why not remote storage?".into()),
             answer: None,
             context: None,
+            obsidian_idea: None,
         };
         assert_eq!(
             brainstorm_argv(&base).unwrap(),
@@ -564,6 +590,7 @@ mod tests {
             message: None,
             answer: None,
             context: None,
+            obsidian_idea: None,
         };
         let result = run_brainstorm(&runner, &request).unwrap();
         assert_eq!(result["brief_ref"]["revision"], 1);
@@ -575,7 +602,7 @@ mod tests {
         let runner = FakeRunner::default();
         runner.on(
             "cohorte --json brainstorm-ideas --repo",
-            out(0, r##"{"ok":true,"data":{"ideas":[{"title":"Export CSV #export-csv","notes":["Pour les clients"],"feature_id":"export-csv"}]}}"##),
+            out(0, r##"{"ok":true,"data":{"ideas":[{"title":"Export CSV #export-csv","notes":["Pour les clients"],"feature_id":"export-csv","source_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:2"}]}}"##),
         );
         let ideas = read_ideas(
             &runner,
@@ -593,12 +620,12 @@ mod tests {
             source: None,
             message: None,
             answer: None,
-            context: Some("Pour les clients".into()),
+            context: None,
+            obsidian_idea: Some(ideas[0]["source_id"].as_str().unwrap().into()),
         };
         let args = brainstorm_argv(&request).unwrap();
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["--context", "Pour les clients"]));
+        assert!(args.windows(2).any(|pair| pair[0] == "--obsidian-idea"
+            && pair[1] == ideas[0]["source_id"].as_str().unwrap()));
     }
 
     #[test]
@@ -648,6 +675,7 @@ mod tests {
             message: Some("L'équipe UX peut-elle critiquer la recommandation QA et proposer un compromis ?".into()),
             answer: None,
             context: None,
+            obsidian_idea: None,
         }).unwrap();
         assert!(result["brief_ref"]["revision"]
             .as_u64()

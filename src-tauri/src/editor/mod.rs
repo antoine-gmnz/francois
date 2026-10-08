@@ -24,7 +24,10 @@ mod detect;
 mod files;
 mod listing;
 mod root;
+pub mod targets;
 mod watch;
+#[cfg(test)]
+use targets::{file_launch_argv, resolve_file_target};
 
 #[cfg(test)]
 mod tests;
@@ -195,7 +198,6 @@ pub(crate) fn wsl_folder_uri(distro: &str, linux_path: &str) -> String {
 /// (mirrors wsl-filesystem FR-5). A worktree session needs no special
 /// handling (FR-7): `SessionMeta.cwd` already IS the worktree path, so the
 /// plain FR-6 branch below opens it, never the source repo. Pure.
-#[cfg(test)]
 pub(crate) fn launch_argv(editor_path: &str, cwd: &str) -> Vec<String> {
     launch_argv_at(editor_path, cwd, None)
 }

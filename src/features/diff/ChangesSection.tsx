@@ -11,7 +11,9 @@
 // hunks are in front of you. `Create PR` is the exception that proves it — it
 // touches nothing itself, it asks the agent to (create-pr.ts).
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
+import { editorOpenTarget } from '../../lib/api';
+import { isOpenModifier } from '../../lib/open-target';
 import type { SessionMeta } from '../../../contract/common';
 import type { DiffFileSummary } from '../../../contract/diff-view';
 import type { SessionPanelSectionProps } from '../../app/session-panel/sections';
@@ -45,6 +47,7 @@ export default function ChangesSection({ session, context }: SessionPanelSection
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [filter, setFilter] = useState<string | null>(null);
   const [sendingPr, setSendingPr] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
   const prState = createPrAvailability(session);
 
   const files = useMemo(() => summary?.files ?? [], [summary]);
@@ -115,6 +118,7 @@ export default function ChangesSection({ session, context }: SessionPanelSection
       )}
 
       <SidePanelBody className="changes-section__tree">
+        {openError && <div role="status">{openError}</div>}
         {notRepo ? (
           <SidePanelEmpty>Not a git repository — nothing to track here.</SidePanelEmpty>
         ) : error ? (
@@ -126,7 +130,13 @@ export default function ChangesSection({ session, context }: SessionPanelSection
             row.node.kind === 'folder' ? (
               <FolderRow key={row.key} label={row.node.label} depth={row.depth} expanded={row.expanded} onToggle={() => toggleFolder(row.key)} />
             ) : (
-              <FileRow key={row.key} file={row.node.file} depth={row.depth} onOpen={() => openDiff(row.key)} />
+              <FileRow key={row.key} file={row.node.file} depth={row.depth} onOpen={(e) => {
+                if (isOpenModifier(e)) {
+                  void editorOpenTarget({ sessionId: session.id, target: row.key })
+                    .then(res => setOpenError(res.ok ? null : res.error.message))
+                    .catch(err => setOpenError(`Could not open file: ${String(err)}`));
+                } else openDiff(row.key);
+              }} />
             ),
           )
         )}
@@ -179,14 +189,14 @@ function FolderRow({ label, depth, expanded, onToggle }: { label: string; depth:
   );
 }
 
-function FileRow({ file, depth, onOpen }: { file: DiffFileSummary; depth: number; onOpen: () => void }) {
+function FileRow({ file, depth, onOpen }: { file: DiffFileSummary; depth: number; onOpen: (e: MouseEvent<HTMLDivElement>) => void }) {
   const status = FILE_STATUS[file.status] ?? FILE_STATUS.modified;
   return (
     <div
       role="treeitem"
       className={`changes-section__row changes-section__row--file changes-section__row--d${Math.min(depth, 6)}`}
       onClick={onOpen}
-      title={`${file.path} — open in Changes`}
+      title={`${file.path} — open in Changes · Ctrl/Cmd + click to open in IDE`}
     >
       <span className={`changes-section__status changes-section__status--${status.tone}`}>{status.ch}</span>
       <span className="changes-section__file-name truncate">{file.name}</span>

@@ -1,3 +1,4 @@
+import type { OpenTargetRequest, OpenTargetResponse } from '../../contract/open-target';
 import { invalidateRequestReplies } from './request-replies';
 import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
 // Typed wrappers over the Tauri session commands + the session event stream.
@@ -722,3 +723,5 @@ export const cohorteCancel = (req: CohorteRunControlRequest) => cohorte('cohorte
 export function listenCohorte(cb: (e: CohorteEvent) => void): Promise<UnlistenFn> {
   return stream<CohorteEvent>(COHORTE_EVENT_CHANNEL, cb);
 }
+
+export const editorOpenTarget = (req: OpenTargetRequest) => ipc<OpenTargetResponse>('editor_open_target', { req });

@@ -232,6 +232,7 @@ fn main() {
             editor::editor_close,
             editor::editor_files,
             editor::editor_open_external,
+            editor::targets::editor_open_target,
             github::github_repo_info,
             github::github_fetch,
             github::github_list_pulls,

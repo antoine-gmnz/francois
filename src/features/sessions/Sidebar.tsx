@@ -28,6 +28,7 @@ import {
     persistCollapsedStates,
 } from './state-groups';
 import { StateRosterBody } from './StateRosterBody';
+import { useRosterPulls } from './useRosterPulls';
 import { useRowCursorClamp } from './useRowCursorClamp';
 import { useSessionFleetSync } from './useSessionFleetSync';
 import { useSidebarKeyboard } from './useSidebarKeyboard';
@@ -82,6 +83,9 @@ export default function Sidebar({ home }: { home: string }) {
   // dashboard reads the same numbers and a second subscription would double
   // every diff seed.
   const derived = useStore((s) => s.derived);
+  // An open PR on a session's branch marks its row; archived rows are not probed.
+  const liveSessions = useMemo(() => sessions.filter((s) => s.status !== 'done'), [sessions]);
+  const pulls = useRosterPulls(liveSessions);
   // split-by-4: the roster badges every paned session (FR-22) and assigns a pick
   // to the FOCUSED pane (FR-19).
   const extraPanes = useStore((s) => s.extraPanes);
@@ -393,6 +397,7 @@ export default function Sidebar({ home }: { home: string }) {
           cursorIndex={focused ? rowCursor : -1}
           activeSessionId={activeSessionId}
           derived={derived}
+          pulls={pulls}
           projectLabelOf={(session) => (manyProjects ? (projectLabels.get(session.id) ?? null) : null)}
           projectDefaultModelId={(session) =>
             projects.find((p) => p.id === session.projectId)?.defaults.modelId ?? null

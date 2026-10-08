@@ -209,3 +209,35 @@ fn open_in_editor_impl_reports_launch_failed_for_an_uninstalled_since_startup_ed
         IpcResult::Ok { .. } => panic!("expected EDITOR_LAUNCH_FAILED"),
     }
 }
+
+#[test]
+fn file_targets_resolve_relative_paths_and_positions() {
+    let root = std::env::temp_dir().join(format!("francois-target-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("hello world.ts"), "test").unwrap();
+    let (path, position) =
+        resolve_file_target(root.to_str().unwrap(), "hello world.ts:12:3").unwrap();
+    assert_eq!(path, root.join("hello world.ts").to_string_lossy());
+    assert_eq!(position, Some("12:3".into()));
+    let (_, position) = resolve_file_target(root.to_str().unwrap(), "hello world.ts#L7").unwrap();
+    assert_eq!(position, Some("7".into()));
+    assert!(resolve_file_target(root.to_str().unwrap(), "missing.ts").is_err());
+    assert!(resolve_file_target(root.to_str().unwrap(), "--help").is_err());
+    assert!(resolve_file_target(root.to_str().unwrap(), "javascript:alert(1)").is_err());
+    let url = url::Url::from_file_path(root.join("hello world.ts")).unwrap();
+    let (file, _) = resolve_file_target(root.to_str().unwrap(), url.as_str()).unwrap();
+    assert_eq!(file, root.join("hello world.ts").to_string_lossy());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn file_launch_supports_goto_and_wsl_file_uris() {
+    assert_eq!(
+        file_launch_argv("code", "/tmp/a.ts", Some("12:3")),
+        vec!["code", "--goto", "/tmp/a.ts:12:3"]
+    );
+    assert_eq!(
+        file_launch_argv("code", "\\\\wsl$\\Ubuntu\\home\\a.ts", None),
+        vec!["code", "--file-uri", "vscode-remote://wsl+Ubuntu/home/a.ts"]
+    );
+}

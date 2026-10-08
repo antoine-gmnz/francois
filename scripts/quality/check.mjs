@@ -101,12 +101,18 @@ function writeOut(file, data) {
   console.log(`  wrote ${relative(ROOT, file).split(sep).join('/')}`);
 }
 
+// Rules kept out of code scanning. cross-feature-import is a tracked-count
+// warning (many hits are legitimate composition), so as inline PR alerts it
+// was pure noise from github-advanced-security. It still prints here and
+// lands in conventions.json and the report summary.
+const SARIF_EXCLUDED_RULES = new Set(['cross-feature-import']);
+
 function toSarif(findings) {
   return serializeSarif(
     buildSarif({
       toolName: 'francois-conventions',
       informationUri: 'https://github.com/antoine-gmnz/francois/blob/main/CLAUDE.md',
-      findings,
+      findings: findings.filter((f) => !SARIF_EXCLUDED_RULES.has(f.rule)),
     }),
   );
 }
