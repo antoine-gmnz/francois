@@ -190,7 +190,7 @@ export default function AgentView({ agentId, sessionId, onBack, escapeToBack = t
   const name = agent?.name ?? 'agent';
 
   return (
-    <div className="agent-view">
+    <div className="agent-view" data-session-id={sessionId}>
       <div className="agent-view__header">
         <IconButton size={30} framed title="Back to the session · Esc" onClick={onBack}>
           <Icon name="back" size={14} />

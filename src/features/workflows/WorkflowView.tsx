@@ -135,7 +135,7 @@ export default function WorkflowView({ runId, sessionId }: { runId: string; sess
   const runSpan = runWindow(run, agents, clockNow);
 
   return (
-    <div className="wfd-view">
+    <div className="wfd-view" data-session-id={sessionId}>
       <div className="scz wfd-rail">
         <RunHeader
           run={run}

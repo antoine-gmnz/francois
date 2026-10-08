@@ -15,6 +15,9 @@
 // tests.rs holds this module's cargo tests.
 
 mod detect;
+pub mod targets;
+#[cfg(test)]
+use targets::{file_launch_argv, resolve_file_target};
 
 #[cfg(test)]
 mod tests;
