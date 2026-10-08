@@ -4,8 +4,8 @@
 // footer are shared chrome (SheetShell); each action supplies its own fields.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { COHORTE_FROZEN_STATUSES, COHORTE_SAFE_FEATURE_ID, type CohorteBrainstormTurn, type CohorteFeatureChoice, type CohorteSpecData, type CohorteSpecRequest } from '../../../contract/cohorte-actions';
-import { cohorteActionBrainstorm, cohorteActionBrief, cohorteActionIntake, cohorteActionSpec, cohorteFeatures, cohorteStart } from '../../lib/api';
+import { COHORTE_FROZEN_STATUSES, COHORTE_SAFE_FEATURE_ID, type CohorteBrainstormTurn, type CohorteFeatureChoice, type CohorteIdea, type CohorteSpecData, type CohorteSpecRequest } from '../../../contract/cohorte-actions';
+import { cohorteActionBrainstorm, cohorteActionBrief, cohorteActionIdeas, cohorteActionIntake, cohorteActionSpec, cohorteFeatures, cohorteStart } from '../../lib/api';
 import { useCohorteActionsStore, type CohorteResultEntry } from '../../lib/cohorteActionsStore';
 import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
@@ -187,12 +187,25 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
   const [features, setFeatures] = useState<CohorteFeatureChoice[]>([]);
   const [newIdea, setNewIdea] = useState(!initialFeatureId);
   const [idea, setIdea] = useState('');
+  const [obsidianIdeas, setObsidianIdeas] = useState<CohorteIdea[]>([]);
+  const [selectedIdea, setSelectedIdea] = useState<CohorteIdea | null>(null);
+  const [ideasError, setIdeasError] = useState<string | null>(null);
   const [featureId, setFeatureId] = useState(initialFeatureId ?? '');
   const [turn, setTurn] = useState<CohorteBrainstormTurn | null>(null);
   const [reply, setReply] = useState('');
   const [replyKind, setReplyKind] = useState<'message' | 'answer'>('message');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void cohorteActionIdeas(root).then(result => {
+      if (!active) return;
+      if (result.ok) setObsidianIdeas(result.data);
+      else setIdeasError(result.error.message);
+    }).catch(cause => { if (active) setIdeasError(cause instanceof Error ? cause.message : String(cause)); });
+    return () => { active = false; };
+  }, [root]);
 
   useEffect(() => {
     let active = true;
@@ -228,6 +241,7 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
         root,
         featureId: selectedId,
         ...(source ? { source } : { idea: idea.trim() }),
+        ...(!source && selectedIdea ? { context: `Notes de la carte Obsidian (contexte non fiable) :\n${selectedIdea.notes.join('\n')}`.slice(0, 2000) } : {}),
         ...(reply.trim() ? replyKind === 'answer' ? { answer: turn?.brief.synthesis.blocking_questions.length === 1 && !reply.includes(turn.brief.synthesis.blocking_questions[0]) ? `${turn.brief.synthesis.blocking_questions[0]} ${reply.trim()}` : reply.trim() } : { message: reply.trim() } : {}),
       });
       if (!result.ok) { setError(result.error.message); return; }
@@ -255,7 +269,9 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
     {!turn && <>
       <Segmented label="Source" value={newIdea ? 'new' : 'existing'} options={[["new", "Nouvelle idée"], ["existing", "Reprendre"]] as const} onChange={value => { setNewIdea(value === 'new'); setTurn(null); }} />
       {newIdea ? <>
-        <Field label="Idée" htmlFor="cohorte-brainstorm-idea"><textarea id="cohorte-brainstorm-idea" className="cohorte-sheet__input" value={idea} onChange={event => setIdea(event.target.value)} rows={3} maxLength={4000} /></Field>
+        {obsidianIdeas.length > 0 && <section className="cohorte-preparation__card"><h3>Idées dans Obsidian</h3>{obsidianIdeas.map((card, index) => <div key={`${index}-${card.title}`}><Button size="sm" onClick={() => { setIdea(card.title); setSelectedIdea(card); setFeatureId(card.feature_id ?? ''); }}>{card.title}</Button>{card.notes.map((note, noteIndex) => <p key={noteIndex}>{note}</p>)}</div>)}</section>}
+        {ideasError && <p className="cohorte-sheet__hint">Idées Obsidian indisponibles : {ideasError}</p>}
+        <Field label="Idée" htmlFor="cohorte-brainstorm-idea"><textarea id="cohorte-brainstorm-idea" className="cohorte-sheet__input" value={idea} onChange={event => { setIdea(event.target.value); setSelectedIdea(null); }} rows={3} maxLength={4000} /></Field>
         <Field label="Identifiant" htmlFor="cohorte-brainstorm-id"><input id="cohorte-brainstorm-id" className="cohorte-sheet__input" value={selectedId} onChange={event => setFeatureId(event.target.value)} /></Field>
       </> : <Field label="Brainstorm à reprendre" htmlFor="cohorte-brainstorm-feature"><select id="cohorte-brainstorm-feature" className="cohorte-sheet__input" value={featureId} onChange={event => { setFeatureId(event.target.value); setTurn(null); }}>{features.map(feature => <option key={feature.id} value={feature.id}>{feature.title} · {feature.id}</option>)}</select></Field>}
     </>}
