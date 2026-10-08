@@ -17,6 +17,8 @@ use std::sync::Arc;
 #[derive(Default)]
 pub(super) struct Agents {
     children: HashMap<String, Child>,
+    activity_generation: Option<u64>,
+    activity_items: HashSet<String>,
 }
 struct Child {
     id: String,
@@ -144,6 +146,47 @@ impl Agents {
             }
         }
         output
+    }
+    /// Code-mode agents (Codex 0.159+) report identity through activity items;
+    /// their collaboration-tool acknowledgements can have no receivers.
+    pub(super) fn activity(&mut self, item: &Value, ctx: &TurnContext) -> Vec<RuntimeEvent> {
+        let Some(thread) = item["agentThreadId"].as_str().filter(|id| !id.is_empty()) else {
+            return vec![];
+        };
+        let status = match item["kind"].as_str() {
+            Some("started" | "interacted") => "running",
+            Some("completed") => "completed",
+            Some("interrupted") => "interrupted",
+            _ => return vec![],
+        };
+        let Some(id) = item["id"].as_str().filter(|id| !id.is_empty()) else {
+            return vec![];
+        };
+        if self.activity_generation != Some(ctx.scope.generation) {
+            self.activity_items.clear();
+            self.activity_generation = Some(ctx.scope.generation);
+        }
+        if !self.activity_items.insert(id.into()) {
+            return vec![];
+        }
+        let mut events = self.call(
+            &json!({
+                "receiverThreadIds": [thread],
+                "agentsStates": { (thread): { "status": status } }
+            }),
+            ctx,
+        );
+        if let Some(name) = item["agentPath"]
+            .as_str()
+            .and_then(|path| path.rsplit('/').find(|segment| !segment.is_empty()))
+        {
+            for event in &mut events {
+                if let RuntimeEvent::SubagentStarted { agent, .. } = event {
+                    agent.name = name.into();
+                }
+            }
+        }
+        events
     }
     fn set_status(&mut self, thread: &str, status: &str) -> Vec<RuntimeEvent> {
         let Some(child) = self.children.get_mut(thread) else {
@@ -439,6 +482,38 @@ impl Inner {
 mod tests {
     use super::*;
     use crate::session::adapter::codex::native::integration_tests::context;
+    #[test]
+    fn activity_items_discover_named_children_once_and_track_restarts() {
+        let mut agents = Agents::default();
+        let ctx = context(1, None);
+        let item = json!({"type":"subAgentActivity","id":"activity-1","kind":"started","agentThreadId":"child","agentPath":"/root/backend"});
+        let events = agents.activity(&item, &ctx);
+        assert!(
+            matches!(&events[0], RuntimeEvent::SubagentStarted { agent, .. } if agent.name == "backend" && agent.session_id == ctx.session_id && agent.status == "running")
+        );
+        assert!(agents.activity(&item, &ctx).is_empty());
+        assert!(agents.activity(&json!({"id":"done", "kind":"completed", "agentThreadId":"child"}), &ctx).iter().any(|event| matches!(event, RuntimeEvent::SubagentState { status, .. } if status == "done")));
+        assert!(!agents.running());
+        assert!(agents.activity(&item, &ctx).is_empty());
+        assert!(!agents.running());
+        assert!(agents.activity(&json!({"id":"followup", "kind":"interacted", "agentThreadId":"child"}), &ctx).iter().any(|event| matches!(event, RuntimeEvent::SubagentState { status, .. } if status == "running")));
+        assert!(agents
+            .activity(
+                &json!({"id":"done", "kind":"completed", "agentThreadId":"child"}),
+                &ctx
+            )
+            .is_empty());
+        assert!(agents.running());
+        assert!(agents.activity(&json!({"id":"stop", "kind":"interrupted", "agentThreadId":"child"}), &ctx).iter().any(|event| matches!(event, RuntimeEvent::SubagentState { status, .. } if status == "error")));
+        assert!(agents
+            .activity(&json!({"kind":"unknown", "agentThreadId":"unknown"}), &ctx)
+            .is_empty());
+        assert!(!agents.contains("unknown"));
+        assert!(agents
+            .activity(&json!({"kind":"started", "agentThreadId":""}), &ctx)
+            .is_empty());
+    }
+
     #[test]
     fn stale_child_completion_and_snapshot_cannot_replace_a_newer_turn() {
         let mut agents = Agents::default();

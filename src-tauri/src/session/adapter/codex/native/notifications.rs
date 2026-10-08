@@ -199,10 +199,17 @@ impl Inner {
                                 let _ = ledger.observe_file_item(&scope, params["item"].clone());
                             }
                         }
-                        if params["item"]["type"] == "collabAgentToolCall" {
+                        if matches!(
+                            params["item"]["type"].as_str(),
+                            Some("collabAgentToolCall" | "subAgentActivity")
+                        ) {
                             let existing = state.agents.threads();
                             let context = state.turn.as_ref().unwrap().context.clone();
-                            output.extend(state.agents.call(&params["item"], &context));
+                            output.extend(if params["item"]["type"] == "subAgentActivity" {
+                                state.agents.activity(&params["item"], &context)
+                            } else {
+                                state.agents.call(&params["item"], &context)
+                            });
                             if let Some(connection) = state.transport.clone() {
                                 subscriptions.extend(
                                     state
@@ -310,6 +317,7 @@ impl Inner {
                     _ => {}
                 }
             }
+            settle_waiting_turn(&mut state, &mut output);
             emitter
         };
         for event in output {
@@ -369,19 +377,7 @@ impl Inner {
                     }
                 }
                 let mut output = state.agents.notification(method, params);
-                if !state.agents.running() {
-                    if let Some(terminal) = state
-                        .turn
-                        .as_mut()
-                        .and_then(|turn| turn.pending_finish.take())
-                    {
-                        state.turn.as_mut().unwrap().finished = true;
-                        if let Some(ledger) = &mut state.ledger {
-                            output.extend(ledger.drain().into_iter().map(events::resolved));
-                        }
-                        output.push(terminal);
-                    }
-                }
+                settle_waiting_turn(&mut state, &mut output);
                 (state.turn.as_ref().map(|turn| turn.emitter.clone()), output)
             }
         };
@@ -395,6 +391,25 @@ impl Inner {
         }
         true
     }
+}
+
+/// Both child notifications and parent activity items can settle the last
+/// running child after the parent's own completion has already arrived.
+fn settle_waiting_turn(state: &mut super::runtime::State, output: &mut Vec<RuntimeEvent>) {
+    if state.agents.running() {
+        return;
+    }
+    let Some(turn) = state.turn.as_mut() else {
+        return;
+    };
+    let Some(terminal) = turn.pending_finish.take() else {
+        return;
+    };
+    turn.finished = true;
+    if let Some(ledger) = &mut state.ledger {
+        output.extend(ledger.drain().into_iter().map(events::resolved));
+    }
+    output.push(terminal);
 }
 
 /// A native `TurnError` as the failure the user reads — Codex's own message,

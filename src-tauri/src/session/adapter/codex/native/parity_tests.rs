@@ -188,3 +188,41 @@ fn remote_waits_for_enrollment_and_converts_native_epoch_seconds() {
     assert_eq!(paired["pairingCode"], "MANUAL-1");
     native.close();
 }
+
+#[test]
+fn code_mode_activity_discovers_agents_and_streams_their_transcript() {
+    let (native, _) = runtime("agent-activity");
+    let sink = Arc::new(Sink::default());
+    native.begin_turn(context(1, None), sink.clone()).unwrap();
+    sink.terminal();
+    let events = sink.events.lock().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(&event.event, RuntimeEvent::SubagentStarted { .. }))
+            .count(),
+        1
+    );
+    assert!(events.iter().any(|event| matches!(&event.event, RuntimeEvent::SubagentStarted { agent, .. } if agent.name == "backend")));
+    assert!(events.iter().any(|event| matches!(&event.event, RuntimeEvent::SubagentObserved { items, .. } if items.iter().any(|item| matches!(item, SubagentObservation::Text(text) if text == "activity child result")))));
+    assert!(events.iter().any(|event| matches!(&event.event, RuntimeEvent::SubagentState { status, .. } if status == "done")));
+    drop(events);
+    native.close();
+}
+
+#[test]
+fn parent_completion_waits_for_the_last_activity_completed_item() {
+    let (native, _) = runtime("agent-activity-parent-first");
+    let sink = Arc::new(Sink::default());
+    native.begin_turn(context(1, None), sink.clone()).unwrap();
+    sink.terminal();
+    let events = sink.events.lock().unwrap();
+    let done = events.iter().position(|event| matches!(&event.event, RuntimeEvent::SubagentState { status, .. } if status == "done")).unwrap();
+    let terminal = events
+        .iter()
+        .position(|event| matches!(&event.event, RuntimeEvent::TurnFinished))
+        .unwrap();
+    assert!(done < terminal);
+    drop(events);
+    native.close();
+}
