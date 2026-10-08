@@ -260,11 +260,14 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
         root,
         featureId: selectedId,
         ...(source ? { source } : { idea: idea.trim() }),
-        ...(!source && selectedIdea ? { context: `Notes de la carte Obsidian (contexte non fiable) :\n${selectedIdea.notes.join('\n')}`.slice(0, 2000) } : {}),
+        ...(!source && selectedIdea ? { obsidianIdea: selectedIdea.source_id } : {}),
         ...replyFields,
       });
       if (!result.ok) { setError(result.error.message); finish(`Échec : ${result.error.message}`); return; }
       finish(`Panel terminé · brief révision ${result.data.brief_ref.revision}`);
+      if (result.data.kanban?.status === 'error') {
+        finish(`Carte Obsidian non synchronisée : ${result.data.kanban.message ?? 'erreur inconnue'}`);
+      }
       setTurn(result.data);
       setFeatureId(result.data.brief.feature_id);
       setReply('');
@@ -304,6 +307,7 @@ function BrainstormSheet({ sessionId, root, home, initialFeatureId }: { sessionI
       </> : <Field label="Brainstorm à reprendre" htmlFor="cohorte-brainstorm-feature"><select id="cohorte-brainstorm-feature" className="cohorte-sheet__input" value={featureId} onChange={event => { setFeatureId(event.target.value); setTurn(null); }}>{features.map(feature => <option key={feature.id} value={feature.id}>{feature.title} · {feature.id}</option>)}</select></Field>}
     </>}
     {turn && <div className="cohorte-brainstorm-conversation">
+      {turn.kanban?.status === 'error' && <p className="cohorte-sheet__hint">Le brief est enregistré. La carte Obsidian n’a pas été déplacée : {turn.kanban.message}. Relancez <code>cohorte kanban-sync {turn.brief.feature_id} --apply</code>.</p>}
       {turn.brief.prior_decisions.length > 0 && <section className="cohorte-preparation__card"><h3>Décisions déjà prises</h3><ul>{turn.brief.prior_decisions.map(decision => <li key={decision}>{decision}</li>)}</ul></section>}
       {(turn.brief.user_messages.length > 0 || turn.brief.user_answers.length > 0) && <section className="cohorte-preparation__card"><h3>Vos échanges</h3>{turn.brief.user_messages.map((message, index) => <p key={`message-${index}`}>Question ou réaction : {message}</p>)}{turn.brief.user_answers.map((answer, index) => <p key={`answer-${index}`}>Décision confirmée : {answer}</p>)}</section>}
       {turn.brief.contributions.map(contribution => <section key={contribution.perspective} className="cohorte-preparation__card"><h3>{PANEL_NAMES[contribution.perspective] ?? contribution.perspective}</h3><p>{contribution.problem}</p>{contribution.alternatives[0] && <p><strong>Proposition :</strong> {contribution.alternatives[0]}</p>}{contribution.disagreements[0] && <p><strong>Objection :</strong> {contribution.disagreements[0]}</p>}{contribution.risks[0] && <p><strong>Risque :</strong> {contribution.risks[0]}</p>}</section>)}

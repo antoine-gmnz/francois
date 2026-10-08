@@ -91,15 +91,18 @@ export interface CohorteBrainstormRequest {
   message?: string;
   answer?: string;
   context?: string;
+  obsidianIdea?: string;
 }
 
 export interface CohorteIdea {
   title: string;
   notes: string[];
   feature_id: string | null;
+  source_id: string;
 }
 
 export interface CohorteBrainstormTurn {
+  kanban?: { status: 'applied' | 'unchanged' | 'skipped' | 'error'; stage: string; message?: string };
   brief: {
     feature_id: string;
     idea: string;
