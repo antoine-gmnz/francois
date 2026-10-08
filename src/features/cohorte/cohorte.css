@@ -1415,3 +1415,53 @@
   overflow-wrap: anywhere;
   font: var(--type-mono);
 }
+
+/* Brainstorm sheet — the panel's activity while cohorte brainstorm runs. */
+.cohorte-brainstorm-log {
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-8);
+  background: var(--bg-rail);
+}
+
+.cohorte-brainstorm-log h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font: var(--type-ui-strong);
+}
+
+.cohorte-brainstorm-log summary {
+  cursor: pointer;
+  font: var(--type-ui-strong);
+}
+
+.cohorte-brainstorm-log__pending {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.cohorte-brainstorm-log__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state-running);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.cohorte-brainstorm-log__lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+
+.cohorte-brainstorm-log__lines li {
+  overflow-wrap: anywhere;
+}
+
+.cohorte-brainstorm-log__lines time {
+  color: var(--text-secondary);
+}
