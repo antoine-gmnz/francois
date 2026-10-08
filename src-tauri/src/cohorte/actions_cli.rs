@@ -302,6 +302,7 @@ pub struct CohorteBrainstormRequest {
     pub source: Option<String>,
     pub message: Option<String>,
     pub answer: Option<String>,
+    pub context: Option<String>,
 }
 
 fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppError> {
@@ -362,6 +363,14 @@ fn brainstorm_argv(req: &CohorteBrainstormRequest) -> Result<Vec<String>, AppErr
     }
     if let Some(answer) = &req.answer {
         args.extend(["--answer".into(), answer.trim().into()]);
+    }
+    if let Some(context) = &req.context {
+        if context.len() > 8192 {
+            return Err(invalid("Brainstorm context exceeds 8192 bytes"));
+        }
+        if !context.trim().is_empty() {
+            args.extend(["--context".into(), context.clone()]);
+        }
     }
     args.extend(["--repo".into(), req.root.clone(), "--live".into()]);
     Ok(args)
@@ -451,6 +460,47 @@ pub fn cohorte_action_brainstorm(req: CohorteBrainstormRequest) -> IpcResult<Val
     run_brainstorm(&SystemRunner, &req).into()
 }
 
+#[derive(Deserialize)]
+pub struct CohorteIdeasRequest {
+    pub root: String,
+}
+
+fn read_ideas(runner: &dyn Runner, req: &CohorteIdeasRequest) -> Result<Value, AppError> {
+    let mut args = vec!["--json".into()];
+    args.extend(python_rpc::data_dir_args());
+    args.extend(["brainstorm-ideas".into(), "--repo".into(), req.root.clone()]);
+    let out = runner.run("cohorte", &req.root, &args, INTAKE_TIMEOUT, OUTPUT_CAP);
+    if let Some(error) = cli::read_failure(&args, &out, INTAKE_TIMEOUT, OUTPUT_CAP) {
+        return Err(error);
+    }
+    let document: Value =
+        serde_json::from_slice(&out.stdout).map_err(|_| cli::output_invalid(&args))?;
+    if document["ok"] != true {
+        return Err(AppError::with_detail(
+            ErrorCode::CohorteRejected,
+            document["error"]["message"]
+                .as_str()
+                .unwrap_or("Could not read Obsidian ideas"),
+            json!({"cohorteCode":document["error"]["code"]}),
+        ));
+    }
+    let ideas = document["data"]["ideas"]
+        .as_array()
+        .ok_or_else(|| cli::output_invalid(&args))?;
+    if ideas
+        .iter()
+        .any(|idea| !idea["title"].is_string() || !idea["notes"].is_array())
+    {
+        return Err(cli::output_invalid(&args));
+    }
+    Ok(Value::Array(ideas.clone()))
+}
+
+#[tauri::command(async)]
+pub fn cohorte_action_ideas(req: CohorteIdeasRequest) -> IpcResult<Value> {
+    read_ideas(&SystemRunner, &req).into()
+}
+
 #[tauri::command(async)]
 pub fn cohorte_action_brief(req: CohorteBriefRequest) -> IpcResult<Value> {
     read_brief(&SystemRunner, &req).into()
@@ -470,6 +520,7 @@ mod tests {
             source: Some("continue".into()),
             message: Some("Why not remote storage?".into()),
             answer: None,
+            context: None,
         };
         assert_eq!(
             brainstorm_argv(&base).unwrap(),
@@ -487,6 +538,7 @@ mod tests {
         let approved = CohorteBrainstormRequest {
             message: None,
             answer: Some("Keep exports local".into()),
+            context: None,
             ..base.clone()
         };
         assert_eq!(
@@ -511,10 +563,42 @@ mod tests {
             source: None,
             message: None,
             answer: None,
+            context: None,
         };
         let result = run_brainstorm(&runner, &request).unwrap();
         assert_eq!(result["brief_ref"]["revision"], 1);
         assert_eq!(runner.count("cohorte --json brainstorm --feature-id"), 1);
+    }
+
+    #[test]
+    fn obsidian_ideas_are_read_and_notes_reach_the_panel() {
+        let runner = FakeRunner::default();
+        runner.on(
+            "cohorte --json brainstorm-ideas --repo",
+            out(0, r##"{"ok":true,"data":{"ideas":[{"title":"Export CSV #export-csv","notes":["Pour les clients"],"feature_id":"export-csv"}]}}"##),
+        );
+        let ideas = read_ideas(
+            &runner,
+            &CohorteIdeasRequest {
+                root: "/repo".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(ideas[0]["notes"][0], "Pour les clients");
+
+        let request = CohorteBrainstormRequest {
+            root: "/repo".into(),
+            feature_id: "export-csv".into(),
+            idea: Some("Export CSV #export-csv".into()),
+            source: None,
+            message: None,
+            answer: None,
+            context: Some("Pour les clients".into()),
+        };
+        let args = brainstorm_argv(&request).unwrap();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--context", "Pour les clients"]));
     }
 
     #[test]
@@ -563,6 +647,7 @@ mod tests {
             source: Some("continue".into()),
             message: Some("L'équipe UX peut-elle critiquer la recommandation QA et proposer un compromis ?".into()),
             answer: None,
+            context: None,
         }).unwrap();
         assert!(result["brief_ref"]["revision"]
             .as_u64()

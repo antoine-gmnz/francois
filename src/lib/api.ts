@@ -39,7 +39,7 @@ import type {
     GithubWorktreeDiskUsageResponse,
 } from '../../contract/github-page';
 import { COHORTE_EVENT_CHANNEL, type CohorteApproveRequest, type CohorteCommandMap, type CohorteDenyRequest, type CohorteDetectRequest, type CohorteEvent, type CohorteInitRequest, type CohorteRootRequest, type CohorteRunControlRequest, type CohorteRunLogRequest, type CohorteRunRequest, type CohorteSendToFixRequest, type CohorteWatchRequest } from '../../contract/cohorte-integration';
-import type { CohorteBrainstormRequest, CohorteBrainstormTurn, CohorteFeatureChoice, CohorteIntakeRequest, CohorteIntakeResponse, CohortePreviewResponse, CohorteSpecData, CohorteSpecRequest } from '../../contract/cohorte-actions';
+import type { CohorteBrainstormRequest, CohorteBrainstormTurn, CohorteFeatureChoice, CohorteIdea, CohorteIntakeRequest, CohorteIntakeResponse, CohortePreviewResponse, CohorteSpecData, CohorteSpecRequest } from '../../contract/cohorte-actions';
 import type {
     AccountAddCodexPayload,
     AccountAddCodexResponse,
@@ -668,6 +668,8 @@ export const cohorteActionIntake = (req: CohorteIntakeRequest) => ipc<CohorteInt
 export const cohorteActionPreview = (req: CohorteIntakeRequest) => ipc<CohortePreviewResponse>('cohorte_action_preview', { req });
 export const cohorteActionBrainstorm = (req: CohorteBrainstormRequest) =>
   ipc<Result<CohorteBrainstormTurn>>('cohorte_action_brainstorm', { req });
+export const cohorteActionIdeas = (root: string) =>
+  ipc<Result<CohorteIdea[]>>('cohorte_action_ideas', { req: { root } });
 export const cohorteActionBrief = (root: string, featureId: string) =>
   ipc<Result<CohorteBrainstormTurn>>('cohorte_action_brief', { req: { root, featureId } });
 export const cohorteActionSpec = (req: CohorteSpecRequest) =>
