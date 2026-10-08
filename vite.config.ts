@@ -28,6 +28,12 @@ export default defineConfig({
   build: {
     assetsInlineLimit: 0,
   },
+  // code-editor FR-7: Monaco's workers (editor, ts, json, css, html) are emitted by
+  // `?worker` as same-origin files. ES format, because the ts worker code-splits and
+  // Rollup refuses an IIFE build that does.
+  worker: {
+    format: 'es',
+  },
   // Unit tests target the pure helpers in contract/ + src/ — node env, no DOM needed.
   // packaging/ holds the dependency-free npm distribution package (plain CJS, so
   // its tests are .mjs and reach it through createRequire). scripts/ holds the CI

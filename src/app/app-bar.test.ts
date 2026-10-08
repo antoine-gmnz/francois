@@ -37,4 +37,9 @@ describe('activeNav', () => {
   it('reads GitHub only on the github tab', () => {
     expect(activeNav('github')).toBe('github');
   });
+
+  // code-editor FR-1: the Code pill, after GitHub.
+  it('reads Code only on the code tab', () => {
+    expect(activeNav('code')).toBe('code');
+  });
 });

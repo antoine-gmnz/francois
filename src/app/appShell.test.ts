@@ -4,6 +4,7 @@ import {
   clampToPaneTab,
   dividerGridArea,
   hostedTab,
+  isAppScopedTab,
   mainPaneBranch,
   paneGridArea,
   paneMenuEntries,
@@ -138,6 +139,18 @@ describe('mainPaneBranch', () => {
     expect(showsPanes(2, 'cohorte:run_x')).toBe(false);
     expect(showsSessionHeader('session')).toBe(true);
     expect(showsSessionPanel('overview')).toBe(false);
+  });
+
+  // code-editor FR-2: Code takes the workspace — no header, no panel, no panes.
+  it('routes the code tab to its own branch, app-scoped like overview/github', () => {
+    expect(mainPaneBranch('code')).toBe('code');
+    expect(hostedTab('code')).toBeNull();
+    expect(isAppScopedTab('code')).toBe(true);
+    expect(isAppScopedTab('github')).toBe(true);
+    expect(isAppScopedTab('session')).toBe(false);
+    expect(showsSessionHeader('code')).toBe(false);
+    expect(showsSessionPanel('code')).toBe(false);
+    expect(showsPanes(2, 'code')).toBe(false);
   });
 
   // workflow-details FR-11: the second dynamic tab kind gets its own branch.

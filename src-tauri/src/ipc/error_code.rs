@@ -119,6 +119,18 @@ pub enum ErrorCode {
     EditorNotFound,
     /// open-in-vscode: the launcher could not be spawned (detail: { path })
     EditorLaunchFailed,
+    /// code-editor: EDITOR_OUTSIDE_ROOT
+    EditorOutsideRoot,
+    /// code-editor: EDITOR_FILE_NOT_FOUND
+    EditorFileNotFound,
+    /// code-editor: EDITOR_BINARY
+    EditorBinary,
+    /// code-editor: EDITOR_TOO_LARGE
+    EditorTooLarge,
+    /// code-editor: EDITOR_STALE
+    EditorStale,
+    /// code-editor: EDITOR_WRITE_FAILED
+    EditorWriteFailed,
     /// multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
     ShellNotFound,
     /// multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
@@ -311,6 +323,12 @@ impl ErrorCode {
         ErrorCode::UpdateBlocked,
         ErrorCode::EditorNotFound,
         ErrorCode::EditorLaunchFailed,
+        ErrorCode::EditorOutsideRoot,
+        ErrorCode::EditorFileNotFound,
+        ErrorCode::EditorBinary,
+        ErrorCode::EditorTooLarge,
+        ErrorCode::EditorStale,
+        ErrorCode::EditorWriteFailed,
         ErrorCode::ShellNotFound,
         ErrorCode::ShellLimitReached,
         ErrorCode::StepDetailNotFound,
@@ -436,6 +454,12 @@ impl ErrorCode {
             ErrorCode::UpdateBlocked => "UPDATE_BLOCKED",
             ErrorCode::EditorNotFound => "EDITOR_NOT_FOUND",
             ErrorCode::EditorLaunchFailed => "EDITOR_LAUNCH_FAILED",
+            ErrorCode::EditorOutsideRoot => "EDITOR_OUTSIDE_ROOT",
+            ErrorCode::EditorFileNotFound => "EDITOR_FILE_NOT_FOUND",
+            ErrorCode::EditorBinary => "EDITOR_BINARY",
+            ErrorCode::EditorTooLarge => "EDITOR_TOO_LARGE",
+            ErrorCode::EditorStale => "EDITOR_STALE",
+            ErrorCode::EditorWriteFailed => "EDITOR_WRITE_FAILED",
             ErrorCode::ShellNotFound => "SHELL_NOT_FOUND",
             ErrorCode::ShellLimitReached => "SHELL_LIMIT_REACHED",
             ErrorCode::StepDetailNotFound => "STEP_DETAIL_NOT_FOUND",

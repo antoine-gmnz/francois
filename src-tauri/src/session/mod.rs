@@ -1517,6 +1517,11 @@ impl Engine {
         self.with_session(session_id, |s| s.cwd.clone())
     }
 
+    /// The display name of a session (code-editor FR-3: the root picker's label). None if unknown.
+    pub fn name_of(&self, session_id: &str) -> Option<String> {
+        self.with_session(session_id, |s| s.name.clone())
+    }
+
     /// projects FR-9: clear `project_id` on every session that referenced the
     /// removed project. Returns the fresh meta of each session that changed — one
     /// `session.meta` emission each. Nothing under the project's root is touched;

@@ -42,6 +42,9 @@ export type MainTab =
   // github-page FR-1: the app-bar "GitHub" destination — app-scoped, full main
   // pane, no session header/panel, exactly like 'overview'.
   | 'github'
+  // code-editor FR-1/FR-2: the app-bar "Code" destination — app-scoped like
+  // 'github', and it also trades the roster for the explorer (App.tsx).
+  | 'code'
   | 'agents'
   | 'mcp'
   | 'skills'

@@ -3,6 +3,8 @@ import { startAccountFeed } from '../features/accounts/accounts';
 import AgentsPanel from '../features/agents/AgentsPanel';
 import { agentIdFromTab, tabsForSession } from '../lib/agent-tab';
 import AdoptCloudSessionModal from '../features/cloud-sessions/AdoptCloudSessionModal';
+import CodeBackground from '../features/code/CodeBackground';
+import CodeView from '../features/code/CodeView';
 import CohorteActionSheet from '../features/cohorte/CohorteActionSheet';
 import { initCohorteFeed } from '../features/cohorte/cohorteFeed';
 import { registerCohortePaletteCommands } from '../features/cohorte/cohortePaletteCommands';
@@ -320,6 +322,7 @@ export default function App() {
   // own, but keeps the session panel beside it (frame 26).
   const sessionView = showsSessionHeader(mainTab);
   const panelView = showsSessionPanel(mainTab);
+  const codeView = mainTab === 'code' && !settingsOpen;
 
   return (
     <div className="app-root">
@@ -336,7 +339,11 @@ export default function App() {
           of its flags is up (settings/settings-nav.ts). The grid stays mounted
           underneath — the roster owns the session-cache subscriptions. */}
       {settingsOpen && <SettingsView home={home} paneSessionId={paneSessionId} />}
-      <div className="app-grid" style={{ gridTemplateColumns: columns.template, display: settingsOpen ? 'none' : undefined }}>
+      {/* code-editor FR-2: the Code tab replaces the body too — explorer + editor,
+          no roster, no session panel. The grid stays mounted underneath, exactly
+          as under Settings. */}
+      {codeView && <CodeView />}
+      <div className="app-grid" style={{ gridTemplateColumns: columns.template, display: settingsOpen || codeView ? 'none' : undefined }}>
         {/* The folded roster — split-by-4 FR-6's 56px tile rail. Rendered BEFORE
             the column so it takes the first track: a `display:none` element
             generates no grid item. */}
@@ -569,6 +576,10 @@ export default function App() {
       {/* self-update FR-10: opened by the app row's version chip and by the
           palette's `Check for updates`. Needs no session. */}
       {updateModalOpen && <UpdateModal onClose={() => setUpdateModalOpen(false)} />}
+
+      {/* code-editor FR-12/FR-13/§7: the editor event feed, the window close
+          guard and its prompts — app-wide, because dirty buffers outlive the tab. */}
+      <CodeBackground />
 
       <PaletteRoot />
     </div>

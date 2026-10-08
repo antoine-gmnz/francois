@@ -3,13 +3,14 @@
 
 import type { MainTab } from '../lib/store';
 
-/** The three nav pills. Everything that is not one of the two app-scoped
- *  destinations (Overview, GitHub) is "Sessions". */
-export type AppNav = 'overview' | 'github' | 'sessions';
+/** The four nav pills. Everything that is not one of the three app-scoped
+ *  destinations (Overview, GitHub, Code) is "Sessions". */
+export type AppNav = 'overview' | 'github' | 'code' | 'sessions';
 
 export function activeNav(mainTab: MainTab): AppNav {
   if (mainTab === 'overview') return 'overview';
   if (mainTab === 'github') return 'github';
+  if (mainTab === 'code') return 'code';
   return 'sessions';
 }
 

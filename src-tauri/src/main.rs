@@ -24,6 +24,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(shell::Registry::default())
+        .manage(editor::EditorState::default())
         .manage(session::Engine::default())
         // projects §6: the registry is loaded once at startup (see setup below)
         // and is memory-authoritative thereafter — Francois is its only writer.
@@ -63,7 +64,10 @@ fn main() {
             // wired together. FIRST in `.setup()` — every later step can create
             // sessions, and a session removed before this ran would orphan its
             // PTYs silently.
-            session::register_teardown(vec![Box::new(shell::ShellTeardown)]);
+            session::register_teardown(vec![
+                Box::new(shell::ShellTeardown),
+                Box::new(editor::EditorTeardown),
+            ]);
             // Same wiring, the other direction: removing an account repoints the
             // sessions bound to it, and `account` no longer names `session` to
             // say so.
@@ -223,6 +227,11 @@ fn main() {
             session::session_worktree_remove,
             editor::session_editor_list,
             editor::session_open_in_editor,
+            editor::editor_open,
+            editor::editor_save,
+            editor::editor_close,
+            editor::editor_files,
+            editor::editor_open_external,
             github::github_repo_info,
             github::github_fetch,
             github::github_list_pulls,

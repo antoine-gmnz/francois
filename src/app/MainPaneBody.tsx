@@ -139,6 +139,8 @@ function MainPaneBranchBody({
     panel: () => null,
     overview: () => <OverviewView home={home} />,
     github: () => <GitHubView />,
+    // code-editor FR-2: App.tsx renders the Code view in place of the whole grid.
+    code: () => null,
     // SESSION/SHELL: the body itself is the host's (see MainPaneBody above) —
     // only the sessionless prompt is rendered here.
     // loaders: "nothing to show yet" while the fleet's first hydration is

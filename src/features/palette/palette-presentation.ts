@@ -57,6 +57,9 @@ const LOOK: Record<string, CommandLook> = {
   'open-skills-panel': { icon: 'spark', section: 'goto', keycap: '5' },
   'open-workflows-panel': { icon: 'flow', section: 'goto', keycap: '6' },
   'manage-projects': { icon: 'folder', section: 'goto' },
+  // code-editor FR-1: the Code tab and its Go to file picker.
+  'open-code': { icon: 'code', section: 'goto' },
+  'go-to-file': { icon: 'search', section: 'goto' },
   'manage-profiles': { icon: 'doc', section: 'goto' },
   'manage-accounts': { icon: 'key', section: 'goto' },
   'manage-permissions': { icon: 'lock', section: 'goto' },
