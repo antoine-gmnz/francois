@@ -223,6 +223,7 @@ fn main() {
             session::session_worktree_remove,
             editor::session_editor_list,
             editor::session_open_in_editor,
+            editor::targets::editor_open_target,
             github::github_repo_info,
             github::github_fetch,
             github::github_list_pulls,

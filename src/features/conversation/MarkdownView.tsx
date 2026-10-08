@@ -1,51 +1,51 @@
 import { memo, useMemo } from 'react';
+import { codeTarget } from '../../lib/open-target';
+import { TargetLink, TargetText } from '../../ui/TargetText';
 import { parseInline, parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './markdown';
 import './conversation.css';
 
 // Renders the Markdown AST with the terminal palette. The whole app is set in
 // Geist Mono, so code is set apart by a panel/background rather than a font
-// switch. Links are shown styled but do NOT navigate the webview (no opener
-// plugin is wired) — the full URL rides in the title tooltip.
+// switch. Modifier-click opens targets externally without navigating the webview.
 
-function Inline({ nodes }: { nodes: MdInline[] }) {
+function Inline({ nodes, autolink = true }: { nodes: MdInline[]; autolink?: boolean }) {
   return (
     <>
       {nodes.map((n, i) => {
         switch (n.type) {
           case 'text':
-            return <span key={i}>{n.value}</span>;
+            return <span key={i}>{autolink ? <TargetText text={n.value} /> : n.value}</span>;
           case 'br':
             return <br key={i} />;
           case 'strong':
             return (
               <strong key={i} className="md-strong">
-                <Inline nodes={n.children} />
+                <Inline nodes={n.children} autolink={autolink} />
               </strong>
             );
           case 'em':
             return (
               <em key={i} className="md-em">
-                <Inline nodes={n.children} />
+                <Inline nodes={n.children} autolink={autolink} />
               </em>
             );
           case 'del':
             return (
               <span key={i} className="md-del">
-                <Inline nodes={n.children} />
+                <Inline nodes={n.children} autolink={autolink} />
               </span>
             );
           case 'code':
             return (
               <code key={i} className="md-code">
-                {n.value}
+                {autolink ? (codeTarget(n.value) ? <TargetLink target={n.value}>{n.value}</TargetLink> : <TargetText text={n.value} />) : n.value}
               </code>
             );
           case 'link':
             return (
-              // Non-navigating on purpose (no opener plugin) — the URL is in the tooltip.
-              <a key={i} href={n.href} title={n.href} onClick={(e) => e.preventDefault()} className="md-link">
-                <Inline nodes={n.children} />
-              </a>
+              <TargetLink key={i} target={n.href}>
+                <Inline nodes={n.children} autolink={false} />
+              </TargetLink>
             );
         }
       })}
@@ -94,7 +94,7 @@ function BlockView({ block, first }: { block: MdBlock; first: boolean }) {
         <div className="md-code-wrap" style={{ marginTop: mt }}>
           {block.lang && <div className="md-lang-tag">{block.lang}</div>}
           <pre className="md-code-block">
-            <code>{block.value}</code>
+            <code><TargetText text={block.value} /></code>
           </pre>
         </div>
       );

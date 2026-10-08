@@ -1,3 +1,4 @@
+import { TargetText } from '../../ui/TargetText';
 // One rendered ConversationBlock (conversation-view §8). Extracted verbatim from
 // ConversationView so the agent-tab body renders a subagent's transcript with the
 // SAME vocabulary — glyphs, colors, markdown, tool-card layout — instead of
@@ -126,7 +127,7 @@ function UserBodyImpl({ b }: { b: UserConversationBlock }) {
   // this body could read.
   return (
     <>
-      <div className="block-user__body">{b.text}</div>
+      <div className="block-user__body"><TargetText text={b.text} /></div>
       {/* pi-transcript-events FR-7: attachments resolved against the existing
           ingest/asset scopes; a missing one renders a named placeholder
           rather than dropping the reference silently (design brief). */}
