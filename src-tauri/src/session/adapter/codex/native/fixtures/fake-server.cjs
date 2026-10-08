@@ -63,6 +63,25 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         return;
       }
       if (scenario === 'skill-prefix') { message(JSON.stringify(msg.params.input)); finish(); return; }
+      if (scenario === 'agent-activity' || scenario === 'agent-activity-parent-first') {
+        // Codex 0.159.2 code-mode agents: collab receiverThreadIds is empty;
+        // the real child identity is carried by subAgentActivity items.
+        note('item/completed', { threadId: thread, turnId: turn, item: { type: 'collabAgentToolCall', id: 'wait-1', tool: 'wait', status: 'completed', senderThreadId: thread, receiverThreadIds: [], agentsStates: {} } });
+        const activity = (kind, id) => note('item/completed', { threadId: thread, turnId: turn, item: { type: 'subAgentActivity', id, kind, agentThreadId: 'child-thread', agentPath: '/root/backend' } });
+        activity('started', 'activity-start');
+        activity('started', 'activity-start'); // replay, never two agents
+        if (scenario === 'agent-activity-parent-first') {
+          finish();
+          activity('completed', 'activity-complete');
+        } else {
+          note('turn/started', { threadId: 'child-thread', turn: { id: 'child-turn', status: 'inProgress' } });
+          note('item/completed', { threadId: 'child-thread', turnId: 'child-turn', item: { type: 'agentMessage', id: 'child-message', text: 'activity child result' } });
+          note('turn/completed', { threadId: 'child-thread', turn: { id: 'child-turn', status: 'completed', items: [], error: null } });
+          activity('completed', 'activity-complete');
+          finish();
+        }
+        return;
+      }
       if (scenario === 'agents' || scenario === 'child-subscribe-fail') {
         note('item/completed', { threadId: thread, turnId: turn, item: { type: 'collabAgentToolCall', id: 'spawn-1', tool: 'spawnAgent', status: 'completed', senderThreadId: thread, receiverThreadIds: ['child-thread'], prompt: 'Audit files', model: 'fixture-model', agentsStates: { 'child-thread': { status: 'running', message: null } } } });
         if (scenario === 'child-subscribe-fail') { finish(); return; }
