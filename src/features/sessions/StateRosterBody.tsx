@@ -14,6 +14,7 @@
 // as per heading. What the redesign took off the rows (cwd, branch, model,
 // context) lives in the row's hover title (rowTitle) — moved, not lost.
 
+import { GitPullRequest, GitPullRequestDraft } from 'lucide-react';
 import { useState } from 'react';
 import type { PermissionDecision, SessionMeta } from '../../../contract/common';
 import { formatRelativeTime, type SessionDerived } from '../../../contract/fleet-board';
@@ -26,10 +27,12 @@ import { Button } from '../../ui/Button';
 import { StateIcon } from '../../ui/StateIcon';
 import { Tag } from '../../ui/Tag';
 import type { CohorteRun } from '../../../contract/cohorte-integration';
+import type { PullSummary } from '../../../contract/github-page';
 import { sessionAccountBadge } from '../accounts/accounts';
 import { CohorteRosterCard } from '../cohorte/CohorteRosterCard';
 import '../accounts/accounts.css';
 import type { RosterGroupTier } from './group-tier';
+import { pullMarkerTitle } from './roster-pulls';
 import { askLine, formatLineCount, rowTitle, workLine } from './roster-row';
 import './sidebar.css';
 import type { RosterStateNode, SessionState } from './state-groups';
@@ -50,6 +53,8 @@ export interface StateRowContext {
    *  none. Kept for the hover title's sake; the redesign draws no model chip. */
   projectDefaultModelId: (session: SessionMeta) => string | null;
   paneLabelOf: (session: SessionMeta) => { label: string; accent: boolean; focused: boolean } | null;
+  /** session id → the open/draft PR on its branch (useRosterPulls). */
+  pulls: ReadonlyMap<string, PullSummary>;
   onSelect: (id: string) => void;
   onContext: (id: string, x: number, y: number) => void;
   /** cohorte-integration FR-85/FR-86 — absent ⇒ no Cohorte change to the roster. */
@@ -185,7 +190,15 @@ function StateRow({ session, state, index, ...ctx }: { session: SessionMeta; sta
   if (pane?.focused) classNames.push('roster-row--pane-focus');
 
   const runTag = ctx.cohorte?.runTags.get(session.id) ?? null;
-  const tags = <RowTags session={session} pane={pane} projectLabel={ctx.projectLabelOf(session)} runTag={runTag} />;
+  const tags = (
+    <RowTags
+      session={session}
+      pane={pane}
+      projectLabel={ctx.projectLabelOf(session)}
+      runTag={runTag}
+      pull={ctx.pulls.get(session.id) ?? null}
+    />
+  );
   const gatedRun = state === 'attention' ? ctx.cohorte?.gated.get(session.id) : undefined;
   if (gatedRun && !card) classNames.push('roster-row--card');
   const nested = ctx.cohorte?.nested.has(session.id) ?? false;
@@ -217,25 +230,34 @@ function StateRow({ session, state, index, ...ctx }: { session: SessionMeta; sta
   );
 }
 
-/** The badges a row carries whatever its shape: a non-default account, the
- *  project (only when more than one is open) and which pane holds the session. */
+/** The badges a row carries whatever its shape: an open PR on its branch, a
+ *  non-default account, the project (only when more than one is open) and
+ *  which pane holds the session. */
 function RowTags({
   session,
   pane,
   projectLabel,
   runTag,
+  pull,
 }: {
   session: SessionMeta;
   pane: { label: string; accent: boolean; focused: boolean } | null;
   projectLabel: string | null;
   /** cohorte-integration FR-86: a step session whose run's origin is in another group */
   runTag: string | null;
+  pull: PullSummary | null;
 }) {
   const accounts = useStore((s) => s.accounts);
   const accountBadge = sessionAccountBadge(accounts, session);
-  if (!accountBadge && !projectLabel && !pane && !runTag) return null;
+  if (!accountBadge && !projectLabel && !pane && !runTag && !pull) return null;
+  const PullIcon = pull?.state === 'draft' ? GitPullRequestDraft : GitPullRequest;
   return (
     <>
+      {pull && (
+        <span className="roster-row__pr" title={pullMarkerTitle(pull)} aria-label={pullMarkerTitle(pull)}>
+          <PullIcon size={12} aria-hidden />
+        </span>
+      )}
       {runTag && <Tag title="Cohorte run">{runTag}</Tag>}
       {accountBadge && (
         <span className="acc-badge" title={accountBadge.title}>
