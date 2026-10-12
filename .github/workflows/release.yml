@@ -104,6 +104,9 @@ jobs:
 
   build:
     needs: version
+    # Vite's Monaco bundle exceeds Node's ~2 GiB default on macOS runners.
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     strategy:
       fail-fast: false
       matrix:
