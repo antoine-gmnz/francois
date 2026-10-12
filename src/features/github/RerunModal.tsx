@@ -1,6 +1,7 @@
 // github-ci-logs FR-16 — "Re-run failed" confirm. Calls `github_rerun_failed`
 // once per distinct runId; PR-detail-only (not offered in commit detail).
 
+import { useRepositoryLabels } from './repository-context';
 import { useState } from 'react';
 import { githubRerunFailed } from '../../lib/api';
 import { Button } from '../../ui/Button';
@@ -16,6 +17,7 @@ export interface RerunModalProps {
 }
 
 export function RerunModal({ cwd, targets, onClose, onRerun }: RerunModalProps): JSX.Element {
+  const labels = useRepositoryLabels();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const names = targets.flatMap((t) => t.names);
@@ -39,7 +41,7 @@ export function RerunModal({ cwd, targets, onClose, onRerun }: RerunModalProps):
 
   return (
     <Modal onClose={onClose} width={420} align="center" closeOnEscape={!busy} closeOnBackdropClick={!busy}>
-      <ModalHeader>Re-run failed jobs?</ModalHeader>
+      <ModalHeader>{labels.provider === 'gitlab' ? 'Retry failed pipeline jobs?' : 'Re-run failed jobs?'}</ModalHeader>
       <ModalBody>
         <p className="merge-modal__title">{names.join(', ')}</p>
         <p className="merge-modal__ref">
@@ -52,7 +54,7 @@ export function RerunModal({ cwd, targets, onClose, onRerun }: RerunModalProps):
           Cancel
         </Button>
         <Button variant="primary" busy={busy} onClick={() => void confirm()}>
-          Re-run
+          {labels.provider === 'gitlab' ? 'Retry' : 'Re-run'}
         </Button>
       </ModalFooter>
     </Modal>

@@ -3,6 +3,9 @@
 // confirm, MergeModal), and two ways out — the PR on github.com, and the same
 // PR on Francois' GitHub page.
 
+import { repositoryLabels, providerFromRequestUrl } from '../../lib/repository-provider';
+import { useRepositoryInfo } from '../../lib/hooks/useRepositoryInfo';
+import { RepositoryContext } from './repository-context';
 import { useState } from 'react';
 import type { SessionMeta } from '../../../contract/common';
 import { useStore } from '../../lib/store';
@@ -19,6 +22,7 @@ import './pulls.css';
 import './session-pull.css';
 
 export function SessionPullCard({ session }: { session: SessionMeta }): JSX.Element | null {
+  const repo = useRepositoryInfo(session.cwd);
   const { pull, refresh } = useSessionPull(session.id, session.cwd);
   const setMainTab = useStore((s) => s.setMainTab);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
@@ -26,6 +30,8 @@ export function SessionPullCard({ session }: { session: SessionMeta }): JSX.Elem
 
   if (!pull) return null;
 
+  const provider = repo?.provider ?? providerFromRequestUrl(pull.url);
+  const labels = repositoryLabels(provider);
   const cwd = session.cwd;
   const state = pullStateChip(pull.state);
   const checks = checkRollupChip(pull.checks);
@@ -39,39 +45,41 @@ export function SessionPullCard({ session }: { session: SessionMeta }): JSX.Elem
   };
 
   return (
-    <section className="session-pull" aria-label={`Pull request #${pull.number}`}>
-      <SidePanelLabel>Pull request</SidePanelLabel>
-      <div className="session-pull__title" title={pull.title}>
-        <Icon name={pullStateIcon(pull.state)} size={13} />
-        <span className="session-pull__number">#{pull.number}</span>
-        <span className="truncate">{pull.title}</span>
-      </div>
-      <div className="session-pull__status">
-        <span className={`pull-state-chip pull-state-chip--${state.tone}`}>{state.label}</span>
-        {checks && <span className={`session-pull__note session-pull__note--${checks.tone}`}>{checks.label}</span>}
-        {mergeable && <span className={`session-pull__note session-pull__note--${mergeable.tone}`}>{mergeable.text}</span>}
-      </div>
-      <div className="session-pull__actions">
-        {pull.state === 'open' && (
-          <Button
-            variant="primary"
-            size="sm"
-            title={canMergeInApp(pull) ? `Merge #${pull.number} into ${pull.base}` : 'Not mergeable here — opens the PR on GitHub'}
-            onClick={() => (canMergeInApp(pull) ? setMerging(true) : void openOnGithub(cwd, pull.url))}
-          >
-            {mergeButtonLabel(pull.mergeable)}
+    <RepositoryContext.Provider value={provider}>
+      <section className="session-pull" aria-label={`${labels.request} #${pull.number}`}>
+        <SidePanelLabel>{labels.request}</SidePanelLabel>
+        <div className="session-pull__title" title={pull.title}>
+          <Icon name={pullStateIcon(pull.state)} size={13} />
+          <span className="session-pull__number">#{pull.number}</span>
+          <span className="truncate">{pull.title}</span>
+        </div>
+        <div className="session-pull__status">
+          <span className={`pull-state-chip pull-state-chip--${state.tone}`}>{state.label}</span>
+          {checks && <span className={`session-pull__note session-pull__note--${checks.tone}`}>{checks.label}</span>}
+          {mergeable && <span className={`session-pull__note session-pull__note--${mergeable.tone}`}>{mergeable.text}</span>}
+        </div>
+        <div className="session-pull__actions">
+          {pull.state === 'open' && (
+            <Button
+              variant="primary"
+              size="sm"
+              title={canMergeInApp(pull) ? `Merge #${pull.number} into ${pull.base}` : `Not mergeable here — opens the ${labels.shortRequest} on ${labels.name}`}
+              onClick={() => (canMergeInApp(pull) ? setMerging(true) : void openOnGithub(cwd, pull.url))}
+            >
+              {mergeButtonLabel(pull.mergeable)}
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" title={`Open the ${labels.request.toLowerCase()} on ${labels.name}`} onClick={() => void openOnGithub(cwd, pull.url)}>
+            {labels.name} <Icon name="external" size={11} />
           </Button>
+          <Button variant="ghost" size="sm" title={`Open in Francois' ${labels.name} page`} onClick={openInFrancois}>
+            Details
+          </Button>
+        </div>
+        {merging && (
+          <MergeModal cwd={cwd} pull={pull} onClose={() => setMerging(false)} onMerged={() => refresh(pull.number)} />
         )}
-        <Button variant="ghost" size="sm" title="Open the pull request on github.com" onClick={() => void openOnGithub(cwd, pull.url)}>
-          GitHub <Icon name="external" size={11} />
-        </Button>
-        <Button variant="ghost" size="sm" title="Open in Francois' GitHub page" onClick={openInFrancois}>
-          Details
-        </Button>
-      </div>
-      {merging && (
-        <MergeModal cwd={cwd} pull={pull} onClose={() => setMerging(false)} onMerged={() => refresh(pull.number)} />
-      )}
-    </section>
+      </section>
+    </RepositoryContext.Provider>
   );
 }

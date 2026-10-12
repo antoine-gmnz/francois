@@ -3,6 +3,7 @@
 // detail); the wrapper decides that, this component only owns the toolbar +
 // the folded lines.
 
+import { useRepositoryLabels } from './repository-context';
 import { useEffect, useRef, useState } from 'react';
 import type { CheckJob, JobStep, StepLog } from '../../../contract/github-page';
 import { githubGetStepLog } from '../../lib/api';
@@ -26,6 +27,7 @@ interface Loaded {
 type LoadState = { status: 'loading' } | { status: 'error'; code: string; message: string } | Loaded;
 
 export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element {
+  const labels = useRepositoryLabels();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [collapsedGroups, setCollapsedGroups] = useState<Record<number, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -63,7 +65,7 @@ export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element
     if (state.status !== 'loaded') return;
     const lines: string[] = [];
     if (state.log.droppedLines > 0) {
-      lines.push(`Showing the last ${state.log.lines.length} of ${state.log.totalLines} lines · Open on GitHub for the full log`);
+      lines.push(`Showing the last ${state.log.lines.length} of ${state.log.totalLines} lines · Open on ${labels.name} for the full log`);
     }
     lines.push(...state.log.lines.map((l) => l.text));
     try {
@@ -74,7 +76,7 @@ export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element
     }
   }
 
-  const title = state.status === 'loaded' && state.log.stepNumber === 0 ? 'Full job log' : `Step ${step.number} · ${step.name}`;
+  const title = labels.provider === 'gitlab' ? 'Job log' : state.status === 'loaded' && state.log.stepNumber === 0 ? 'Full job log' : `Step ${step.number} · ${step.name}`;
 
   return (
     <div className="ci-log">
@@ -89,8 +91,8 @@ export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element
         <button
           type="button"
           className="ci-log__icon-btn"
-          title="Open on GitHub"
-          aria-label="Open on GitHub"
+          title={`Open on ${labels.name}`}
+          aria-label={`Open on ${labels.name}`}
           onClick={() => void openOnGithub(cwd, job.htmlUrl)}
         >
           <Icon name="external" size={13} />
@@ -98,7 +100,7 @@ export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element
       </div>
       {state.status === 'loaded' && state.log.droppedLines > 0 && (
         <p className="ci-log__notice">
-          Showing the last {state.log.lines.length} of {state.log.totalLines} lines · Open on GitHub for the full log
+          Showing the last {state.log.lines.length} of {state.log.totalLines} lines · Open on {labels.name} for the full log
         </p>
       )}
       <div className={state.status === 'loaded' ? 'ci-log__body ci-fade-in' : 'ci-log__body'} ref={scrollRef}>
@@ -126,13 +128,14 @@ export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element
 }
 
 function LogError({ code, message, onRetry, onOpen }: { code: string; message: string; onRetry: () => void; onOpen: () => void }): JSX.Element {
+  const labels = useRepositoryLabels();
   if (code === 'GH_LOG_NOT_READY') return <p className="ci-log__state">Log available when the job finishes</p>;
   if (code === 'GH_LOG_GONE') {
     return (
       <p className="ci-log__state">
-        GitHub no longer keeps this log.
+        {labels.name} no longer keeps this log.
         <Button variant="ghost" size="sm" onClick={onOpen}>
-          Open on GitHub
+          Open on {labels.name}
         </Button>
       </p>
     );
@@ -142,7 +145,7 @@ function LogError({ code, message, onRetry, onOpen }: { code: string; message: s
       <p className="ci-log__state">
         Log too large to show (&gt; 32 MiB).
         <Button variant="ghost" size="sm" onClick={onOpen}>
-          Open on GitHub
+          Open on {labels.name}
         </Button>
       </p>
     );

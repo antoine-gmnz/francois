@@ -127,15 +127,20 @@ pub fn allow_tool_response(request_id: &str, input: &Value) -> Value {
         "response": { "behavior": "allow", "updatedInput": input } } })
 }
 
-/// True iff a Bash `can_use_tool` input invokes git/gh directly — the first
-/// whitespace token of `input.command` is `git` or `gh`. Compound commands
+/// True iff a Bash `can_use_tool` input invokes git/gh/glab directly — the first
+/// whitespace token of `input.command` is `git`, `gh` or `glab`. Compound commands
 /// (`cd x && git …`) are intentionally NOT matched: only the leading program
 /// counts, so nothing else can ride along on an auto-approval.
 pub fn is_git_command(input: &Value) -> bool {
     input
         .get("command")
         .and_then(|c| c.as_str())
-        .map(|cmd| matches!(cmd.split_whitespace().next(), Some("git") | Some("gh")))
+        .map(|cmd| {
+            matches!(
+                cmd.split_whitespace().next(),
+                Some("git") | Some("gh") | Some("glab")
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -343,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn allow_git_auto_approves_only_direct_git_and_gh_calls() {
+    fn allow_git_auto_approves_only_direct_git_gh_and_glab_calls() {
         let bash = |cmd: &str| {
             json!({ "type": "control_request", "request_id": "g", "request": {
                 "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": cmd } } })
@@ -369,6 +374,9 @@ mod tests {
             commit["request"]["input"]
         );
         assert!(!parks(&bash("gh pr create"), true));
+        assert!(!parks(&bash("glab mr list"), true));
+        assert!(parks(&bash("glab mr list"), false));
+        assert!(parks(&bash("sh -c \"glab mr list\""), true));
 
         // allowGit on but NOT a direct git call → no fast path; the user decides.
         assert!(parks(&bash("rm -rf /"), true));

@@ -144,6 +144,7 @@ pub(crate) fn map_actions_check_run(item: &GhCheckRunItem) -> CheckRun {
         (None, None)
     };
     CheckRun {
+        external: None,
         name: item.name.clone(),
         state,
         duration_ms,
@@ -163,6 +164,7 @@ fn map_status_item(item: &GhStatusItem) -> CheckRun {
         _ => CheckState::Pending,
     };
     CheckRun {
+        external: None,
         name: item.context.clone(),
         state,
         duration_ms: None,
@@ -243,6 +245,9 @@ pub(crate) fn do_list_checks(cwd: &str, sha: &str) -> Result<Vec<CheckRun>, AppE
             "sha must be a full 40-character hex sha",
         ));
     }
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab_ci::do_list_checks(cwd, sha);
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let Some((owner, name, _)) = remote_owner_name_host(&host, &root) else {
@@ -265,6 +270,9 @@ pub(crate) fn do_get_job(cwd: &str, job_id: u64) -> Result<CheckJob, AppError> {
             "jobId must be positive",
         ));
     }
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab_ci::do_get_job(cwd, job_id);
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let Some((owner, name, _)) = remote_owner_name_host(&host, &root) else {
@@ -284,6 +292,9 @@ pub(crate) fn do_rerun_failed(cwd: &str, run_id: u64) -> Result<(), AppError> {
             ErrorCode::InvalidInput,
             "runId must be positive",
         ));
+    }
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab_ci::do_rerun_failed(cwd, run_id);
     }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;

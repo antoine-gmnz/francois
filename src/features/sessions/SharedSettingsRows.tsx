@@ -50,7 +50,7 @@ export function GitRow({ value, onChange }: { value: boolean; onChange: (allow: 
         </Chip>
       </div>
       <div className="new-session-modal__hint new-session-modal__hint--below-chips">
-        auto-approve git &amp; gh commands (commit, push, PRs) without a prompt — other tools still follow the permission setting above
+        auto-approve git, gh &amp; glab commands (commit, push, PRs/MRs) without a prompt — other tools still follow the permission setting above
       </div>
     </div>
   );

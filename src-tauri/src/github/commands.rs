@@ -220,12 +220,17 @@ pub fn github_rerun_failed(req: GithubRerunFailedRequest) -> IpcResult<Option<()
 /// Pure: is `url` an `https://` URL whose host matches `repo_host` exactly?
 /// Unit-tested directly.
 pub(crate) fn is_allowed_repo_url(url: &str, repo_host: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
+    let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
-    let host_part = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = host_part.split(':').next().unwrap_or(host_part);
-    !host.is_empty() && host.eq_ignore_ascii_case(repo_host)
+    let Ok(repo) = url::Url::parse(&format!("https://{repo_host}")) else {
+        return false;
+    };
+    parsed.scheme() == "https"
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.host_str() == repo.host_str()
+        && parsed.port_or_known_default() == repo.port_or_known_default()
 }
 
 #[cfg(target_os = "windows")]
@@ -304,5 +309,20 @@ mod tests {
             "github.com"
         ));
         assert!(!is_allowed_repo_url("javascript:alert(1)", "github.com"));
+    }
+    #[test]
+    fn permits_same_gitlab_port_and_refuses_credentials_or_other_ports() {
+        assert!(is_allowed_repo_url(
+            "https://gitlab.test:8443/team/repo/-/merge_requests/1",
+            "gitlab.test:8443"
+        ));
+        assert!(!is_allowed_repo_url(
+            "https://gitlab.test:9443/team/repo",
+            "gitlab.test:8443"
+        ));
+        assert!(!is_allowed_repo_url(
+            "https://user:secret@gitlab.test/team/repo",
+            "gitlab.test"
+        ));
     }
 }

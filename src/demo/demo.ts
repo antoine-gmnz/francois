@@ -10,6 +10,7 @@
 // agent steps, a rising context meter — so a recording started at any moment
 // catches something happening, and loops rather than settling into a still.
 
+import { gitlabChecks, gitlabCommit, gitlabJob, gitlabLog, gitlabPull, gitlabRepo } from './gitlab-fixtures';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { AgentInfo, AgentStep, Result, SessionEvent, SessionMeta } from '../../contract/common';
 import type { AgentBlock, AgentEvent } from '../../contract/agent-tab';
@@ -467,14 +468,16 @@ function route(cmd: string, a: Args): unknown {
     // exactly one repo, whatever project/session scope resolved it. The core
     // commands take one `req` struct, so the fields arrive under `a.req`.
     case 'github_repo_info':
-      return ok(GITHUB_REPO);
+      return ok(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabRepo(GITHUB_REPO) : GITHUB_REPO);
     case 'github_fetch':
-      return ok({ ...GITHUB_REPO, lastFetchedAt: Date.now() });
-    case 'github_list_pulls':
-      return ok(g?.state === 'open' ? GITHUB_PULLS.filter((p) => p.state === 'open' || p.state === 'draft') : GITHUB_PULLS);
+      return ok({ ...(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabRepo(GITHUB_REPO) : GITHUB_REPO), lastFetchedAt: Date.now() });
+    case 'github_list_pulls': {
+      const pulls = g?.state === 'open' ? GITHUB_PULLS.filter((p) => p.state === 'open' || p.state === 'draft') : GITHUB_PULLS;
+      return ok(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? pulls.map(gitlabPull) : pulls);
+    }
     case 'github_get_pull': {
       const detail = GITHUB_PULL_DETAILS[Number(g?.number)];
-      return detail ? ok(detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such pull request.' } };
+      return detail ? ok(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabPull(detail) : detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such request.' } };
     }
     case 'github_update_pull_branch':
       return ok(null);
@@ -495,7 +498,7 @@ function route(cmd: string, a: Args): unknown {
     }
     case 'github_get_commit': {
       const detail = githubCommitDetail(String(g?.sha ?? ''));
-      return detail ? ok(detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such commit.' } };
+      return detail ? ok(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabCommit(detail) : detail) : { ok: false, error: { code: 'NOT_FOUND', message: 'No such commit.' } };
     }
     case 'github_list_branches':
       return ok(GITHUB_BRANCHES);
@@ -516,11 +519,11 @@ function route(cmd: string, a: Args): unknown {
       return ok(null);
     case 'github_list_checks': {
       const checks = githubChecksForSha(String(g?.sha ?? ''));
-      return ok(checks ?? []);
+      return ok(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabChecks(checks ?? []) : checks ?? []);
     }
     case 'github_get_job': {
       const job = githubJobById(Number(g?.jobId));
-      return job ? ok(job) : { ok: false, error: { code: 'GH_FAILED', message: 'No such job.' } };
+      return job ? ok(import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabJob(job) : job) : { ok: false, error: { code: 'GH_FAILED', message: 'No such job.' } };
     }
     case 'github_get_step_log': {
       const jobId = Number(g?.jobId);
@@ -531,7 +534,7 @@ function route(cmd: string, a: Args): unknown {
       if (!job.completed || step?.state === 'queued') {
         return { ok: false, error: { code: 'GH_LOG_NOT_READY', message: 'Log available when the job finishes.' } };
       }
-      const log = githubStepLogFor(jobId, stepNumber);
+      const log = import.meta.env.VITE_FRANCOIS_DEMO_PROVIDER === 'gitlab' ? gitlabLog(jobId, stepNumber) : githubStepLogFor(jobId, stepNumber);
       return log ? ok(log) : { ok: false, error: { code: 'GH_FAILED', message: 'No log for this step.' } };
     }
     case 'github_rerun_failed':

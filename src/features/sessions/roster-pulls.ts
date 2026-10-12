@@ -3,6 +3,7 @@
 // (session-pull.ts): an open or draft PR whose head is the branch its cwd has
 // checked out. The roster asks `gh` once per repo, not once per session.
 
+import { providerFromRequestUrl, repositoryLabels } from '../../lib/repository-provider';
 import type { SessionMeta } from '../../../contract/common';
 import type { PullSummary } from '../../../contract/github-page';
 import { pullForBranch } from '../github/session-pull';
@@ -30,5 +31,6 @@ export function joinRosterPulls(
 
 /** The icon's hover title: `PR #42 · Fix the thing` (draft PRs say so). */
 export function pullMarkerTitle(pull: PullSummary): string {
-  return `${pull.state === 'draft' ? 'Draft PR' : 'PR'} #${pull.number} · ${pull.title}`;
+  const label = repositoryLabels(providerFromRequestUrl(pull.url)).shortRequest;
+  return `${pull.state === 'draft' ? `Draft ${label}` : label} #${pull.number} · ${pull.title}`;
 }

@@ -52,6 +52,8 @@ import { IconButton } from '../ui/IconButton';
 import { Kbd } from '../ui/Kbd';
 import { Logo } from '../ui/Logo';
 import { accountInitials, activeNav } from './app-bar';
+import { useActiveRepositoryInfo } from '../lib/hooks/useRepositoryInfo';
+import { repositoryLabels } from '../lib/repository-provider';
 import './app-bar.css';
 import { layoutDisplay, topbarTier } from './topbar';
 import { WindowControls } from './WindowControls';
@@ -73,6 +75,8 @@ export interface AppBarProps {
 }
 
 export default function AppBar({ appVersion }: AppBarProps) {
+  const repo = useActiveRepositoryInfo();
+  const repository = repositoryLabels(repo ? repo.provider : 'unknown');
   const sessions = useStore((s) => s.sessions);
   const mainTab = useStore((s) => s.mainTab);
   const setMainTab = useStore((s) => s.setMainTab);
@@ -155,11 +159,11 @@ export default function AppBar({ appVersion }: AppBarProps) {
           <button
             type="button"
             className={nav === 'github' ? 'app-bar__nav-item app-bar__nav-item--on' : 'app-bar__nav-item'}
-            title="pull requests, commits and branches"
+            title={`${repository.requests.toLowerCase()}, commits and branches`}
             onClick={() => go('github')}
           >
             <GitPullRequest className="app-bar__nav-icon" size={14} aria-hidden />
-            GitHub
+            {repository.name}
           </button>
           {/* code-editor FR-1: after GitHub, no single-key shortcut. */}
           <button

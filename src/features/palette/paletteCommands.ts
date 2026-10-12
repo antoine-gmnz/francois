@@ -22,6 +22,8 @@ import { lspLanguageForPath } from '../code/lsp-status';
 import { lspKey, useLspStore } from '../code/lspStore';
 import { createPrAvailability, requestCreatePr } from '../diff/create-pr';
 import { requestWorktreePreset } from '../sessions/worktree';
+import { activeRepositoryInfo, repositoryInfoForCwd } from '../../lib/hooks/useRepositoryInfo';
+import { repositoryLabels } from '../../lib/repository-provider';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
 import { skillRowKey } from '../skills/skills-loaded';
 import { buildSkillsRunRequest } from '../skills/skills-run';
@@ -283,8 +285,14 @@ export function registerBuiltinCommands(): void {
   registerPaletteCommand({
     id: 'open-github',
     glyph: '⌬',
-    name: 'Open GitHub',
-    hint: () => 'pull requests, commits, branches',
+    get name() {
+      const repo = activeRepositoryInfo();
+      return `Open ${repositoryLabels(repo ? repo.provider : 'unknown').name}`;
+    },
+    hint: () => {
+      const repo = activeRepositoryInfo();
+      return `${repositoryLabels(repo ? repo.provider : 'unknown').requests.toLowerCase()}, commits, branches`;
+    },
     run: () => {
       const st = useStore.getState();
       st.setFocusedPane('main');
@@ -401,18 +409,24 @@ export function registerBuiltinCommands(): void {
   registerPaletteCommand({
     id: 'create-pull-request',
     glyph: '⎇',
-    name: 'Create pull request',
+    get name() {
+      const session = useStore.getState().sessions.find(meta => meta.id === useStore.getState().activeSessionId);
+      const repo = session ? repositoryInfoForCwd(session.cwd) : null;
+      return repo ? `Create ${repositoryLabels(repo.provider).request.toLowerCase()}` : 'Create request';
+    },
     hint: () => {
       const st = useStore.getState();
       const cap = createPrAvailability(st.sessions.find((x) => x.id === st.activeSessionId));
-      return cap.reason ?? 'agent commits, pushes, opens the PR';
+      const session = st.sessions.find(meta => meta.id === st.activeSessionId);
+      const repo = session ? repositoryInfoForCwd(session.cwd) : null;
+      return cap.reason ?? `agent commits, pushes, opens the ${repo ? repositoryLabels(repo.provider).shortRequest : 'request'}`;
     },
     enabled: (ctx) => createPrAvailability(useStore.getState().sessions.find((x) => x.id === ctx.activeSessionId)).available,
     run: (ctx) => {
       const sid = ctx.activeSessionId;
       if (!sid) return;
       void requestCreatePr(sid).then((ok) => {
-        if (!ok) showToast('Could not send — the prompt is in the composer.', 'error');
+        if (!ok) showToast('Could not create a request. Check the repository remote and CLI authentication.', 'error');
       });
     },
   });

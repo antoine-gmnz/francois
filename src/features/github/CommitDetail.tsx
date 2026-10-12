@@ -4,8 +4,10 @@
 // that session's transcript is already in memory — this feature never fetches
 // a transcript just to fill the card (see the handoff note at the bottom).
 
+import { useRepositoryLabels } from './repository-context';
 import { useEffect, useState } from 'react';
 import type { CheckRun, CommitDetail as CommitDetailData, GithubRepoInfo } from '../../../contract/github-page';
+import { commitUrl } from '../../lib/repository-provider';
 import { githubGetCommit } from '../../lib/api';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
@@ -30,6 +32,7 @@ export interface CommitDetailProps {
 }
 
 export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailProps): JSX.Element {
+  const labels = useRepositoryLabels();
   const sessions = useStore((s) => s.sessions);
   const [detail, setDetail] = useState<CommitDetailData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -127,9 +130,9 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
             size="sm"
             disabled={!repo.webUrl}
             title={repo.webUrl ? undefined : 'No web URL available for this repo'}
-            onClick={() => repo.webUrl && void openOnGithub(cwd, `${repo.webUrl}/commit/${detail.sha}`)}
+            onClick={() => { const url = commitUrl(repo, detail.sha); if (url) void openOnGithub(cwd, url); }}
           >
-            Open on GitHub
+            Open on {labels.name}
           </Button>
         </div>
       </div>
@@ -236,7 +239,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
         <div className="pull-detail__col pull-detail__col--right">
           {detail.checkRuns && detail.checkRuns.length > 0 && (
             <div className="pull-side-card">
-              <p className="pull-side-card__label">Checks on this commit</p>
+              <p className="pull-side-card__label">{labels.ci} on this commit</p>
               <CheckRunList cwd={cwd} sha={detail.sha} initialChecks={detail.checkRuns} variant="commit" />
             </div>
           )}
@@ -247,7 +250,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
             <KeyValue label="Signed" value={detail.signed} />
             <KeyValue label="Branch" value={detail.branches[0] ?? '—'} />
             <KeyValue label="On main" value={detail.onDefaultBranch ? 'yes' : 'no'} />
-            <KeyValue label="Pull request" value={detail.pullNumber !== undefined ? `#${detail.pullNumber}` : '—'} />
+            <KeyValue label={labels.request} value={detail.pullNumber !== undefined ? `#${detail.pullNumber}` : '—'} />
           </div>
 
           <div className="pull-side-card">
@@ -262,7 +265,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
               Copy sha
             </Button>
             <p className="pull-side-card__foot">
-              François never rewrites history — revert and force-push stay on GitHub or in your terminal.
+              François never rewrites history — revert and force-push stay on {labels.name} or in your terminal.
             </p>
           </div>
         </div>

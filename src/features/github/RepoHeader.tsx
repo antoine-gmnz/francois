@@ -3,6 +3,7 @@
 // Figma frames 29/30/31 share this bar verbatim (`160:15836` / `161:15989` /
 // `162:16108`).
 
+import { useRepositoryLabels } from './repository-context';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
@@ -24,6 +25,7 @@ export interface RepoHeaderProps {
 }
 
 export function RepoHeader({ repo, tab, onSelectTab, pullCount, branchCount, fetching, onFetch, onNewPullRequest }: RepoHeaderProps) {
+  const labels = useRepositoryLabels();
   const title = repoTitleParts(repo.owner, repo.name);
   const fetched = fetchedText(repo.lastFetchedAt);
   return (
@@ -58,9 +60,9 @@ export function RepoHeader({ repo, tab, onSelectTab, pullCount, branchCount, fet
 
       <span className="gh-header__sp" />
 
-      <TabGroup className="gh-header__tabs" label="GitHub view">
+      <TabGroup className="gh-header__tabs" label={`${labels.name} view`}>
         <Tab selected={tab === 'pulls'} onSelect={() => onSelectTab('pulls')} count={pullCount ?? undefined}>
-          Pull requests
+          {labels.requests}
         </Tab>
         <Tab selected={tab === 'commits'} onSelect={() => onSelectTab('commits')}>
           Commits
@@ -69,7 +71,7 @@ export function RepoHeader({ repo, tab, onSelectTab, pullCount, branchCount, fet
           Branches
         </Tab>
         <Tab selected={false} onSelect={() => {}} title="Coming soon" className="gh-header__tab--disabled">
-          Checks
+          {labels.ci}
         </Tab>
       </TabGroup>
 
@@ -77,8 +79,8 @@ export function RepoHeader({ repo, tab, onSelectTab, pullCount, branchCount, fet
         <Icon name="refresh" size={15} />
       </IconButton>
 
-      <Button variant="primary" disabled={!repo.webUrl} onClick={onNewPullRequest}>
-        New pull request
+      <Button variant="primary" disabled={!repo.webUrl || !repo.currentBranch || repo.provider === 'unknown'} onClick={onNewPullRequest}>
+        New {labels.request.toLowerCase()}
       </Button>
     </div>
   );
