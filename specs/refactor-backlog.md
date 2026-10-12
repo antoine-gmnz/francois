@@ -392,3 +392,7 @@ filtering relative PATH entries is right for extension spawns, it is right every
 - [ ] LOW · src-tauri/src/session/adapter/pi/recovery.rs (version-transition backup) · complexity · hand-rolled 3-tuple semver parse duplicates `discovery.rs`'s private `parse_semver` — share one helper · deferred:pi-session-durability
 - [ ] LOW · src-tauri/src/process_util.rs · quality · 999/1000 lines after `CommandBuilder::exact_env` — split by concern (spawn facade / PATH resolution / bounded run / tree kill) before the next change crosses the cap · deferred:pi-session-durability
 - [ ] LOW · src/features/conversation/PiRecoveryBanner.tsx · spec-follow-up · "Create new session" does not carry the source session's composer draft into the new session (spec silent; the source's own draft is preserved) · deferred:pi-session-durability
+
+## github linkage
+
+- [ ] HIGH · src/features/github/linkage.ts:14 · quality · Restrict session candidates to the current repository before matching branch names · deferred:gitlab-integration

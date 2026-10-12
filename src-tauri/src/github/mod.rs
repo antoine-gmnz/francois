@@ -25,6 +25,8 @@ mod branches;
 mod commands;
 mod commits;
 pub(crate) mod gh;
+mod gitlab;
+mod gitlab_ci;
 mod pulls;
 mod repo;
 
@@ -59,6 +61,7 @@ pub struct AheadBehind {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GithubRepoInfo {
+    pub provider: String,
     pub root: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
@@ -90,6 +93,8 @@ pub enum CheckState {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckRun {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<bool>,
     pub name: String,
     pub state: CheckState,
     #[serde(skip_serializing_if = "Option::is_none")]

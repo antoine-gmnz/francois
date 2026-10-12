@@ -3,6 +3,7 @@
 // in-app log viewer. Replaces both the PR detail "Checks" card body and the
 // commit detail "Checks on this commit" side card.
 
+import { useRepositoryLabels } from './repository-context';
 import { useEffect, useRef, useState } from 'react';
 import type { CheckJob, CheckRun } from '../../../contract/github-page';
 import { githubGetJob, githubListChecks } from '../../lib/api';
@@ -12,7 +13,8 @@ import { Button } from '../../ui/Button';
 import { LoaderCaret, Orbit } from '../../ui/Loaders';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { openOnGithub } from './actions';
-import { canOpenStep, checkCountLine, checkKey, checkRowOrder, currentStep, firstFailedStep, pollingActive } from './ci-logs';
+import { canOpenStep, checkCountLine, checkKey, checkRowOrder, currentStep, firstFailedStep, pollingActive, checkListRefreshAllowed, mergePolledChecks } from './ci-logs';
+import { checkRollupChip } from './pulls';
 import { CollapsibleCard } from './CollapsibleCard';
 import { StepLogPanel } from './StepLogPanel';
 import './ci-logs.css';
@@ -45,6 +47,7 @@ function useDocumentVisible(): boolean {
 }
 
 export function CheckRunList({ cwd, sha, initialChecks, variant, onChecksChange }: CheckRunListProps): JSX.Element | null {
+  const labels = useRepositoryLabels();
   const [checks, setChecks] = useState<CheckRun[]>(initialChecks);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [jobs, setJobs] = useState<Record<string, JobState>>({});
@@ -108,10 +111,10 @@ export function CheckRunList({ cwd, sha, initialChecks, variant, onChecksChange 
   // FR-13: poll the list every 10s while any check is pending and the view
   // is visible; keeps expansion state (keyed by checkKey).
   useEffect(() => {
-    if (!pollingActive(checks.some((c) => c.state === 'pending'), visible)) return undefined;
+    if (!pollingActive(checkListRefreshAllowed(checks, true), visible)) return undefined;
     const id = setInterval(() => {
       void githubListChecks({ cwd, sha }).then((res) => {
-        if (res.ok) setChecks(res.data);
+        if (res.ok) setChecks(current => mergePolledChecks(current, res.data));
       });
     }, LIST_POLL_MS);
     return () => clearInterval(id);
@@ -121,13 +124,13 @@ export function CheckRunList({ cwd, sha, initialChecks, variant, onChecksChange 
   // FR-14: coming back visible re-fetches immediately.
   const wasVisible = useRef(visible);
   useEffect(() => {
-    if (!wasVisible.current && visible) {
+    if (!wasVisible.current && visible && checkListRefreshAllowed(checks, false)) {
       void githubListChecks({ cwd, sha }).then((res) => {
-        if (res.ok) setChecks(res.data);
+        if (res.ok) setChecks(current => mergePolledChecks(current, res.data));
       });
     }
     wasVisible.current = visible;
-  }, [visible, cwd, sha]);
+  }, [visible, cwd, sha, checks]);
 
   // FR-7: poll each expanded, not-yet-completed job every 5s.
   useEffect(() => {
@@ -153,18 +156,17 @@ export function CheckRunList({ cwd, sha, initialChecks, variant, onChecksChange 
   if (checks.length === 0) return null;
 
   const ordered = checkRowOrder(checks);
-  const failed = checks.find((c) => c.state === 'failed');
+  const chip = checkRollupChip({
+    total: checks.length,
+    passed: checks.filter(check => check.state === 'passed').length,
+    failed: checks.filter(check => check.state === 'failed').length,
+    pending: checks.filter(check => check.state === 'pending').length,
+  });
 
   const sectionId = variant === 'pr' ? 'checks' : 'commit-checks';
   const head = (
     <>
-      {failed ? (
-        <span className="pull-chip pull-chip--danger">{checks.filter((c) => c.state === 'failed').length} check{checks.filter((c) => c.state === 'failed').length === 1 ? '' : 's'} failing</span>
-      ) : checks.some((c) => c.state === 'pending') ? (
-        <span className="pull-chip pull-chip--faint">checks pending</span>
-      ) : (
-        <span className="pull-chip pull-chip--success">checks passed</span>
-      )}
+      {chip && <span className={`pull-chip pull-chip--${chip.tone}`}>{labels.provider === 'gitlab' ? chip.label.replace(/checks?/g, 'CI jobs') : chip.label}</span>}
       <span className="pull-row__sp" />
       <span className="pull-card__faint">{checkCountLine(checks)}</span>
     </>
@@ -240,6 +242,7 @@ function CheckRow({
   expanded: boolean;
   onToggle: () => void;
 }): JSX.Element {
+  const labels = useRepositoryLabels();
   const isActionsJob = check.jobId !== undefined;
   return (
     <div
@@ -264,7 +267,7 @@ function CheckRow({
           ▸
         </span>
       )}
-      {check.state === 'pending' ? <Orbit size={14} label={`${check.name} running`} /> : <Icon name={check.state === 'failed' ? 'x' : 'check'} size={13} />}
+      {check.state === 'pending' ? <Orbit size={14} label={`${check.name} running`} /> : <Icon name={check.state === 'failed' ? 'x' : check.state === 'skipped' ? 'stop' : 'check'} size={13} />}
       <span className="pull-check-row__name">{check.name}</span>
       <span className="pull-row__sp" />
       {check.state === 'pending' && isActionsJob && step ? (
@@ -277,7 +280,7 @@ function CheckRow({
           {check.durationMs !== undefined ? ` · ${formatDuration(check.durationMs)}` : ''}
         </span>
       ) : (
-        <span className="pull-card__faint">{check.durationMs !== undefined ? formatDuration(check.durationMs) : ''}</span>
+        <span className="pull-card__faint">{check.state === 'skipped' ? (check.summary ?? 'skipped') : check.durationMs !== undefined ? formatDuration(check.durationMs) : ''}</span>
       )}
       {!isActionsJob && check.detailsUrl && (
         <Button
@@ -288,7 +291,7 @@ function CheckRow({
             void openOnGithub(cwd, check.detailsUrl!);
           }}
         >
-          Open on GitHub
+          Open on {labels.name}
         </Button>
       )}
     </div>
@@ -312,6 +315,7 @@ function ExpandedJob({
   onRetry: () => void;
   onToggleStep: (stepNumber: number) => void;
 }): JSX.Element {
+  const labels = useRepositoryLabels();
   if (!jobState || jobState.status === 'loading') {
     return (
       <div className="ci-job__body">
@@ -344,7 +348,7 @@ function ExpandedJob({
         {job.runAttempt > 1 && <span className="pull-chip pull-chip--faint">attempt {job.runAttempt}</span>}
         <span className="pull-row__sp" />
         <Button variant="ghost" size="sm" onClick={() => void openOnGithub(cwd, job.htmlUrl)}>
-          Open on GitHub
+          Open on {labels.name}
         </Button>
       </div>
       {job.steps.map((s) => {
@@ -360,11 +364,11 @@ function ExpandedJob({
               onClick={() => openable && onToggleStep(s.number)}
             >
               {s.state === 'running' ? <Orbit size={12} label={`${s.name} running`} /> : <StepGlyph state={s.state} />}
-              <span className="ci-step__no">{s.number}</span>
+              {labels.provider !== 'gitlab' && <span className="ci-step__no">{s.number}</span>}
               <span className="ci-step__name">{s.name}</span>
               <span className="pull-row__sp" />
               <span className="ci-step__dur">
-                {s.state === 'running' ? formatDuration(now - (s.startedAt ?? now)) : s.durationMs !== undefined ? formatDuration(s.durationMs) : ''}
+                {labels.provider === 'gitlab' ? '' : s.state === 'running' ? formatDuration(now - (s.startedAt ?? now)) : s.durationMs !== undefined ? formatDuration(s.durationMs) : ''}
               </span>
             </button>
             {openStepNumber === s.number &&

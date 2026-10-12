@@ -176,3 +176,14 @@ export function pollingActive(hasPending: boolean, visible: boolean): boolean {
 export function nextPollDelayMs(baseMs: number, consecutiveFailures: number): number {
   return consecutiveFailures >= 2 ? 60_000 : baseMs;
 }
+
+/** External fork pipelines cannot be refreshed through the target commit SHA. */
+export function checkListRefreshAllowed(checks: CheckRun[], pendingOnly: boolean): boolean {
+  return checks.some(check => !check.external && (!pendingOnly || check.state === 'pending'));
+}
+
+/** A target SHA response must retain browser-only statuses it cannot observe. */
+export function mergePolledChecks(current: CheckRun[], refreshed: CheckRun[]): CheckRun[] {
+  const refreshedKeys = new Set(refreshed.map(checkKey));
+  return [...refreshed, ...current.filter(check => check.external && !refreshedKeys.has(checkKey(check)))];
+}

@@ -15,7 +15,9 @@ import { CommitsTab } from './CommitsTab';
 import { PullsTab } from './PullsTab';
 import { getGithubTab, selectPullInTab, setGithubTab, type GithubTab } from './github-tab-state';
 import { RepoHeader } from './RepoHeader';
-import { useLatestRequest } from './useLatestRequest';
+import { resolveLatestRequest, useLatestRequest } from './useLatestRequest';
+import { RepositoryContext } from './repository-context';
+import { newRequestUrl } from '../../lib/repository-provider';
 import './github.css';
 
 /** FR: the active project's root, else the active session's cwd, else null. */
@@ -33,7 +35,8 @@ function useScopeCwd(): string | null {
 
 export default function GitHubView(): JSX.Element {
   const cwd = useScopeCwd();
-  const [repo, setRepo] = useState<GithubRepoInfo | null>(null);
+  const [loadedRepo, setLoadedRepo] = useState<{ cwd: string; repo: GithubRepoInfo } | null>(null);
+  const repo = loadedRepo?.cwd === cwd ? loadedRepo.repo : null;
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -41,8 +44,8 @@ export default function GitHubView(): JSX.Element {
   const [refreshKey, setRefreshKey] = useState(0);
   const [pullCount, setPullCount] = useState<number | null>(null);
   const [branchCount, setBranchCount] = useState<number | null>(null);
-  const beginRepoRequest = useLatestRequest();
-  const beginCountsRequest = useLatestRequest();
+  const beginRepoRequest = useLatestRequest(cwd);
+  const beginCountsRequest = useLatestRequest(cwd);
 
   const selectTab = (t: GithubTab) => {
     setGithubTab(t);
@@ -56,14 +59,13 @@ export default function GitHubView(): JSX.Element {
   };
 
   async function loadRepo(activeCwd: string): Promise<void> {
-    const isCurrent = beginRepoRequest();
     setLoading(true);
     setError(null);
-    const res = await githubRepoInfo(activeCwd);
-    if (!isCurrent()) return;
-    setLoading(false);
-    if (res.ok) setRepo(res.data);
-    else setError(res.error.message);
+    await resolveLatestRequest(beginRepoRequest, () => githubRepoInfo(activeCwd), (res) => {
+      setLoading(false);
+      if (res.ok) setLoadedRepo({ cwd: activeCwd, repo: res.data });
+      else setError(res.error.message);
+    });
   }
 
   async function loadCounts(activeCwd: string, r: GithubRepoInfo): Promise<void> {
@@ -81,10 +83,16 @@ export default function GitHubView(): JSX.Element {
   }
 
   useEffect(() => {
+    beginCountsRequest();
+    setFetching(false);
     if (!cwd) {
-      setRepo(null);
+      beginRepoRequest();
+      setLoadedRepo(null);
       return;
     }
+    setLoadedRepo(null);
+    setPullCount(null);
+    setBranchCount(null);
     void loadRepo(cwd);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
   }, [cwd]);
@@ -125,37 +133,40 @@ export default function GitHubView(): JSX.Element {
 
   const doFetch = async () => {
     setFetching(true);
-    const res = await githubFetch(cwd);
-    setFetching(false);
-    if (res.ok) setRepo(res.data);
-    setRefreshKey((k) => k + 1);
+    await resolveLatestRequest(beginRepoRequest, () => githubFetch(cwd), (res) => {
+      setFetching(false);
+      if (res.ok) setLoadedRepo({ cwd, repo: res.data });
+      setRefreshKey((k) => k + 1);
+    });
   };
 
   const newPullRequest = () => {
-    if (!repo.webUrl || !repo.currentBranch) return;
-    void githubOpenUrl({ cwd, url: `${repo.webUrl}/compare/${repo.currentBranch}?expand=1` });
+    const url = newRequestUrl(repo);
+    if (url) void githubOpenUrl({ cwd, url });
   };
 
   return (
-    <div className="gh-root">
-      {fetching && <LoaderStitch edge="top" label="Fetching" />}
-      <RepoHeader
-        repo={repo}
-        tab={tab}
-        onSelectTab={selectTab}
-        pullCount={pullCount}
-        branchCount={branchCount}
-        fetching={fetching}
-        onFetch={() => void doFetch()}
-        onNewPullRequest={newPullRequest}
-      />
-      <div className="gh-body">
-        {tab === 'pulls' && <PullsTab cwd={cwd} repo={repo} refreshKey={refreshKey} />}
-        {tab === 'commits' && <CommitsTab cwd={cwd} repo={repo} refreshKey={refreshKey} />}
-        {tab === 'branches' && (
-          <BranchesTab cwd={cwd} repo={repo} refreshKey={refreshKey} onPruned={() => setRefreshKey((k) => k + 1)} onOpenPull={openPull} />
-        )}
+    <RepositoryContext.Provider value={repo.provider ?? 'github'}>
+      <div className="gh-root">
+        {fetching && <LoaderStitch edge="top" label="Fetching" />}
+        <RepoHeader
+          repo={repo}
+          tab={tab}
+          onSelectTab={selectTab}
+          pullCount={pullCount}
+          branchCount={branchCount}
+          fetching={fetching}
+          onFetch={() => void doFetch()}
+          onNewPullRequest={newPullRequest}
+        />
+        <div className="gh-body">
+          {tab === 'pulls' && <PullsTab cwd={cwd} repo={repo} refreshKey={refreshKey} />}
+          {tab === 'commits' && <CommitsTab cwd={cwd} repo={repo} refreshKey={refreshKey} />}
+          {tab === 'branches' && (
+            <BranchesTab cwd={cwd} repo={repo} refreshKey={refreshKey} onPruned={() => setRefreshKey((k) => k + 1)} onOpenPull={openPull} />
+          )}
+        </div>
       </div>
-    </div>
+    </RepositoryContext.Provider>
   );
 }

@@ -3,6 +3,7 @@
 // "Prune merged worktrees") → table (BRANCH · AHEAD/BEHIND · WORKTREE ·
 // SESSION · PULL REQUEST · LAST COMMIT · ⋯) → footer (prune hint).
 
+import { useRepositoryLabels } from './repository-context';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BranchInfo, GithubRepoInfo, PullSummary } from '../../../contract/github-page';
 import { githubCreateWorktree, githubListBranches, githubListPulls, githubOpenUrl, githubWorktreeDiskUsage } from '../../lib/api';
@@ -54,6 +55,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: BranchesTabProps): JSX.Element {
+  const labels = useRepositoryLabels();
   const sessions = useStore((s) => s.sessions);
   const [branches, setBranches] = useState<BranchInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -171,7 +173,7 @@ export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: Bra
           <span className="branches-col branches-col--ahead">Ahead / behind</span>
           <span className="branches-col branches-col--worktree">Worktree</span>
           <span className="branches-col branches-col--session">Session</span>
-          <span className="branches-col branches-col--pr">Pull request</span>
+          <span className="branches-col branches-col--pr">{labels.request}</span>
           <span className="branches-col branches-col--last">Last commit</span>
           <span className="branches-col branches-col--menu" />
         </div>
@@ -278,7 +280,7 @@ export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: Bra
                           setOpenMenuFor(null);
                         }}
                       >
-                        Open on GitHub
+                        Open on {labels.name}
                       </button>
                     )}
                   </div>

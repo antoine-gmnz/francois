@@ -187,6 +187,7 @@ fn map_check_runs(items: &[GhCheckItem]) -> Vec<CheckRun> {
                 .map(|(r, j)| (Some(j), Some(r)))
                 .unwrap_or((None, None));
             CheckRun {
+                external: None,
                 name: item
                     .name
                     .clone()
@@ -419,6 +420,9 @@ pub(crate) fn do_list_pulls(
     limit: u32,
     open_only: bool,
 ) -> Result<Vec<PullSummary>, AppError> {
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab::do_list_pulls(cwd, limit, open_only);
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let limit = limit.clamp(1, 100);
@@ -446,6 +450,9 @@ pub(crate) fn do_list_pulls(
 }
 
 pub(crate) fn do_get_pull(cwd: &str, number: u64) -> Result<PullDetail, AppError> {
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab::do_get_pull(cwd, number);
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let pr: GhPr = gh_json(
@@ -474,6 +481,12 @@ pub(crate) fn do_get_pull(cwd: &str, number: u64) -> Result<PullDetail, AppError
 }
 
 pub(crate) fn do_update_pull_branch(cwd: &str, number: u64) -> Result<(), AppError> {
+    if super::gitlab::is_gitlab(cwd)? {
+        return Err(AppError::new(
+            ErrorCode::GhUnavailable,
+            "Updating the source branch is not supported for GitLab; update it locally",
+        ));
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let out = gh_routed(&host, &root, &["pr", "update-branch", &number.to_string()]);
@@ -605,6 +618,9 @@ pub(crate) fn do_merge_pull(
     delete_branch: bool,
 ) -> Result<MergeOutcome, AppError> {
     let args = merge_args(number, method)?;
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab::do_merge_pull(cwd, number, method, delete_branch);
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let target: GhMergeTarget = gh_json(

@@ -8,6 +8,9 @@
 import type { SessionId, SessionMeta } from '../../../contract/common';
 import { isBusyStatus } from '../../../contract/fleet-board';
 import { sessionIsRetired } from '../../lib/runtimeCapability';
+import type { RepositoryProvider } from '../../../contract/gitlab-integration';
+import { githubRepoInfo } from '../../lib/api';
+import { useStore } from '../../lib/store';
 import { sendPrompt } from '../../lib/send-prompt';
 
 export const CREATE_PR_PROMPT = [
@@ -35,6 +38,17 @@ export function createPrAvailability(meta: Pick<SessionMeta, 'status' | 'agentRu
 }
 
 /** Ask the session's agent to commit, push and open the PR. Resolves `true` once the turn is sent. */
-export function requestCreatePr(sessionId: SessionId): Promise<boolean> {
-  return sendPrompt(sessionId, CREATE_PR_PROMPT);
+export function createRequestPrompt(provider: RepositoryProvider = 'github'): string | null {
+  if (provider === 'unknown') return null;
+  if (provider === 'github') return CREATE_PR_PROMPT;
+  return CREATE_PR_PROMPT.replace(/pull request/g, 'merge request').replace(/PR URL/g, 'MR URL').replace('gh pr create', 'glab mr create');
+}
+
+export async function requestCreatePr(sessionId: SessionId): Promise<boolean> {
+  const session = useStore.getState().sessions.find(meta => meta.id === sessionId);
+  if (!session) return false;
+  const repo = await githubRepoInfo(session.cwd).catch(() => null);
+  if (!repo?.ok) return false;
+  const prompt = createRequestPrompt(repo.data.provider);
+  return prompt ? sendPrompt(sessionId, prompt) : false;
 }

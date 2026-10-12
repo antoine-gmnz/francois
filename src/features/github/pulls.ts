@@ -11,6 +11,8 @@ import type {
   PullState,
   PullSummary,
 } from '../../../contract/github-page';
+import type { RepositoryProvider } from '../../../contract/gitlab-integration';
+import { repositoryUnavailableMessage } from '../../lib/repository-provider';
 import type { IconName } from '../../ui/icons';
 
 // ---------- FR-4: row state icon ----------
@@ -56,6 +58,7 @@ export function checkRollupChip(checks: CheckRollup): { label: string; tone: Ton
   if (checks.total === 0) return null;
   if (checks.failed > 0) return { label: `${checks.failed} check${checks.failed === 1 ? '' : 's'} failing`, tone: 'danger' };
   if (checks.pending > 0) return { label: 'checks pending', tone: 'faint' };
+  if (checks.passed < checks.total) return { label: 'checks skipped', tone: 'faint' };
   return { label: 'checks passed', tone: 'success' };
 }
 
@@ -64,6 +67,7 @@ export function checkRollupHeadline(checks: CheckRollup): { label: string; tone:
   if (checks.total === 0) return null;
   if (checks.failed > 0) return { label: `${checks.failed} of ${checks.total} checks failing`, tone: 'danger' };
   if (checks.pending > 0) return { label: 'checks pending', tone: 'faint' };
+  if (checks.passed < checks.total) return { label: 'checks skipped', tone: 'faint' };
   return { label: 'checks passed', tone: 'success' };
 }
 
@@ -152,7 +156,8 @@ export function canMergeInApp(detail: Pick<PullDetail, 'state' | 'mergeable'>): 
 }
 
 /** FR-5a: GitHub's own wording for each method. */
-export function mergeMethodLabel(method: MergeMethod): string {
+export function mergeMethodLabel(method: MergeMethod, provider: RepositoryProvider = 'github'): string {
+  if (provider === 'gitlab' && method === 'merge') return 'Merge';
   switch (method) {
     case 'squash':
       return 'Squash and merge';
@@ -169,8 +174,8 @@ export function defaultMergeMethod(methods: MergeMethod[]): MergeMethod {
 }
 
 /** FR-5a: the line shown after a merge, or null when there is nothing to add. */
-export function mergeOutcomeNote(outcome: MergeOutcome, head: string, deleteRequested: boolean): string | null {
-  if (outcome.branchDeleted) return `Merged. ${head} was deleted on GitHub.`;
+export function mergeOutcomeNote(outcome: MergeOutcome, head: string, deleteRequested: boolean, providerName = 'GitHub'): string | null {
+  if (outcome.branchDeleted) return `Merged. ${head} was deleted on ${providerName}.`;
   if (deleteRequested) return `Merged, but ${head} was not deleted: ${outcome.branchDeleteError ?? 'unknown error'}`;
   return null;
 }
@@ -187,17 +192,8 @@ export function pullOpenedBy(pull: PullSummary): string {
 
 // ---------- FR-2: gh unavailability copy ----------
 
-export function ghUnavailableMessage(status: GhStatus): string {
-  switch (status) {
-    case 'missing':
-      return 'Install the GitHub CLI (gh) to see pull requests.';
-    case 'unauthenticated':
-      return 'Run `gh auth login` to see pull requests.';
-    case 'not-github':
-      return "This repository's remote isn't on GitHub.";
-    default:
-      return '';
-  }
+export function ghUnavailableMessage(status: GhStatus, provider?: RepositoryProvider, host?: string): string {
+  return repositoryUnavailableMessage(status, provider, host);
 }
 
 /**

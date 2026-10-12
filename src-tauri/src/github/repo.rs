@@ -138,13 +138,14 @@ pub(crate) fn compute_repo_info(cwd: &str) -> Result<GithubRepoInfo, AppError> {
         .unwrap_or_else(|| basename(&root));
     let remote_host = parsed.as_ref().map(|p| p.host.clone());
 
-    let gh = super::gh::gh_status_cached(&host, &root, remote_host.as_deref());
+    let (provider, gh) = super::gitlab::provider_status(&host, &root, remote_host.as_deref());
     let upstream = current
         .as_ref()
         .and_then(|_| upstream_ahead_behind(&host, &root));
     let last_fetched_at = fetch_head_mtime(&host, &root);
 
     Ok(GithubRepoInfo {
+        provider,
         root,
         owner: parsed.as_ref().and_then(|p| p.owner.clone()),
         name,

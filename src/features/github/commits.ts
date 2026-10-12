@@ -104,7 +104,7 @@ export function commitOrigin(commit: CommitSummary, linkedSession: SessionMeta |
 export function commitChecksIcon(checkRuns: readonly CheckRun[] | undefined): IconName | null {
   if (!checkRuns || checkRuns.length === 0) return null;
   if (checkRuns.some((r) => r.state === 'failed')) return 'x';
-  if (checkRuns.every((r) => r.state === 'passed' || r.state === 'skipped')) return 'check';
+  if (checkRuns.every((r) => r.state === 'passed')) return 'check';
   return null;
 }
 
@@ -115,6 +115,7 @@ export function commitChecksChip(checkRuns: readonly CheckRun[] | undefined): { 
   if (!checkRuns || checkRuns.length === 0) return null;
   if (checkRuns.some((r) => r.state === 'failed')) return { label: 'checks failing', tone: 'danger' };
   if (checkRuns.some((r) => r.state === 'pending')) return { label: 'checks pending', tone: 'faint' };
+  if (checkRuns.some((r) => r.state === 'skipped')) return { label: 'checks skipped', tone: 'faint' };
   return { label: 'checks passed', tone: 'success' };
 }
 

@@ -20,12 +20,21 @@ export interface GenerationGuard {
   begin: () => () => boolean;
   /** Invalidates every run started so far (used on unmount). */
   invalidate: () => void;
+  /** Invalidates pending requests when the repository scope changes. */
+  setScope: (scope: unknown) => void;
 }
 
 /** Pure factory: a mutable generation counter. No React. */
 export function createGenerationGuard(): GenerationGuard {
   const generation = { current: 0 };
+  let currentScope: unknown;
   return {
+    setScope: (scope) => {
+      if (!Object.is(scope, currentScope)) {
+        currentScope = scope;
+        generation.current += 1;
+      }
+    },
     begin: () => {
       generation.current += 1;
       const id = generation.current;
@@ -53,9 +62,10 @@ export function createGenerationGuard(): GenerationGuard {
  * }, [cwd, ref, refreshKey]);
  * ```
  */
-export function useLatestRequest(): () => () => boolean {
+export function useLatestRequest(scope?: unknown): () => () => boolean {
   const guard = useRef<GenerationGuard>();
   if (!guard.current) guard.current = createGenerationGuard();
+  guard.current.setScope(scope);
 
   useEffect(() => {
     const g = guard.current!;
@@ -63,4 +73,15 @@ export function useLatestRequest(): () => () => boolean {
   }, []);
 
   return guard.current.begin;
+}
+
+/** Loads and Fetch share this boundary so every completion mutation is guarded. */
+export async function resolveLatestRequest<T>(
+  begin: () => () => boolean,
+  request: () => Promise<T>,
+  apply: (result: T) => void,
+): Promise<void> {
+  const isCurrent = begin();
+  const result = await request();
+  if (isCurrent()) apply(result);
 }

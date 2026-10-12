@@ -11,6 +11,8 @@ import {
   foldGroups,
   nextPollDelayMs,
   pollingActive,
+  checkListRefreshAllowed,
+  mergePolledChecks,
   rerunTargets,
 } from './ci-logs';
 
@@ -205,5 +207,32 @@ describe('nextPollDelayMs', () => {
     expect(nextPollDelayMs(10_000, 1)).toBe(10_000);
     expect(nextPollDelayMs(10_000, 2)).toBe(60_000);
     expect(nextPollDelayMs(10_000, 5)).toBe(60_000);
+  });
+});
+
+describe('external GitLab pipeline polling', () => {
+  const external: CheckRun = { name: 'Fork pipeline', state: 'pending', external: true, detailsUrl: 'https://gitlab.test/fork/-/pipelines/1' };
+  const downstream: CheckRun = { name: 'Downstream pipeline', state: 'pending' };
+
+  it('never polls an external-only pipeline, including the visibility refresh', () => {
+    expect(checkListRefreshAllowed([external], true)).toBe(false);
+    expect(checkListRefreshAllowed([external], false)).toBe(false);
+  });
+  it('keeps local downstream synthetic pending checks pollable without job IDs', () => {
+    expect(checkListRefreshAllowed([downstream], true)).toBe(true);
+    expect(checkListRefreshAllowed([external, downstream], true)).toBe(true);
+  });
+  it('retains visibility refresh for completed local checks', () => {
+    expect(checkListRefreshAllowed([{ name: 'lint', state: 'passed' }], true)).toBe(false);
+    expect(checkListRefreshAllowed([{ name: 'lint', state: 'passed' }], false)).toBe(true);
+  });
+  it('preserves external browser fallback when a mixed target SHA poll omits it', () => {
+    const fresh: CheckRun = { name: 'Downstream pipeline', state: 'passed' };
+    expect(mergePolledChecks([external, downstream], [fresh])).toEqual([fresh, external]);
+    expect(mergePolledChecks([external], [])).toEqual([external]);
+  });
+  it('replaces an external fallback when the response explicitly refreshes it', () => {
+    const fresh = { ...external, state: 'passed' as const };
+    expect(mergePolledChecks([external], [fresh])).toEqual([fresh]);
   });
 });

@@ -1,6 +1,7 @@
 // github-page — Pull request detail (specs/github-page.md FR-5..FR-6, frame
 // 29 `160:16062`). Rendered by PullsTab for the selected PR.
 
+import { useRepositoryLabels } from './repository-context';
 import { useEffect, useState } from 'react';
 import type { CheckRun, PullDetail as PullDetailData } from '../../../contract/github-page';
 import { githubGetPull, githubUpdatePullBranch } from '../../lib/api';
@@ -39,6 +40,7 @@ export interface PullDetailProps {
 }
 
 export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Element {
+  const labels = useRepositoryLabels();
   const sessions = useStore((s) => s.sessions);
   const setMainTab = useStore((s) => s.setMainTab);
   const [detail, setDetail] = useState<PullDetailData | null>(null);
@@ -73,7 +75,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
   if (number === null) {
     return (
       <div className="pull-detail pull-detail--empty">
-        <EmptyPane>No pull requests to show.</EmptyPane>
+        <EmptyPane>No {labels.requests.toLowerCase()} to show.</EmptyPane>
       </div>
     );
   }
@@ -81,7 +83,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
   if (loading && !detail) {
     return (
       <div className="pull-detail pull-detail--empty">
-        <LoaderPane label="Loading pull request…" />
+        <LoaderPane label={`Loading ${labels.request.toLowerCase()}…`} />
       </div>
     );
   }
@@ -111,7 +113,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
   async function onFixInNewSession(): Promise<void> {
     setFixing(true);
     const failing = liveChecks.filter((r) => r.state === 'failed').map((r) => r.name);
-    const base = `Fix the failing checks on PR #${detail!.number}: ${failing.join(', ')}.`;
+    const base = `Fix the failing checks on ${labels.shortRequest} #${detail!.number}: ${failing.join(', ')}.`;
     const message = await fixFailingChecksMessage(cwd, base, liveChecks);
     setFixing(false);
     void startSessionOnBranch(cwd, detail!.head, message);
@@ -148,7 +150,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
           </p>
           <span className="pull-row__sp" />
           <Button variant="ghost" size="sm" onClick={() => void openOnGithub(cwd, detail.url)}>
-            Open on GitHub
+            Open on {labels.name}
           </Button>
         </div>
       </div>
@@ -167,7 +169,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
                   <span className="pull-row__sp" />
                   {rerun.length > 0 && (
                     <Button variant="ghost" size="sm" onClick={() => setRerunning(true)}>
-                      Re-run failed
+                      {labels.provider === 'gitlab' ? 'Retry failed' : 'Re-run failed'}
                     </Button>
                   )}
                   <Button variant="primary" size="sm" busy={fixing} onClick={() => void onFixInNewSession()}>
@@ -279,7 +281,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
           )}
 
           <div className="pull-side-card">
-            <p className="pull-side-card__label">Pull request</p>
+            <p className="pull-side-card__label">{labels.request}</p>
             <KeyValue label="Reviewers" value={detail.reviewers.length > 0 ? detail.reviewers.join(', ') : '—'} />
             <KeyValue label="Labels" value={detail.labels.length > 0 ? detail.labels.join(', ') : '—'} />
             <KeyValue label="Milestone" value={detail.milestone ?? '—'} />
@@ -296,9 +298,9 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
             >
               {mergeButtonLabel(detail.mergeable)}
             </Button>
-            <Button variant="secondary" disabled={!canUpdateBranch(detail.mergeable) || updating} onClick={() => void onUpdateBranch()}>
-              Update branch from main
-            </Button>
+            {labels.provider === 'github' && <Button variant="secondary" disabled={!canUpdateBranch(detail.mergeable) || updating} onClick={() => void onUpdateBranch()}>
+              Update branch from {detail.base}
+            </Button>}
             <Button
               variant="secondary"
               onClick={() => {
@@ -309,7 +311,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
               Open a session on this branch
             </Button>
             <p className="pull-side-card__foot">
-              A clean PR merges here, after a confirm. Anything blocked opens on GitHub.
+              A clean {labels.shortRequest} merges here, after a confirm. Anything blocked opens on {labels.name}.
             </p>
           </div>
         </div>

@@ -36,6 +36,8 @@ export interface AheadBehind {
 // ---------- francois:github:repoInfo → github_repo_info ----------
 
 export interface GithubRepoInfo {
+  /** Optional for backwards compatibility; absent means GitHub. */
+  provider?: 'github' | 'gitlab' | 'unknown';
   root: string; // absolute repo root (main worktree), host dialect
   /** `owner` / `name` parsed from the remote URL; `name` falls back to basename(root). */
   owner?: string;
@@ -62,6 +64,8 @@ export type GithubFetchResponse = Result<GithubRepoInfo>;
 export type CheckState = 'passed' | 'failed' | 'pending' | 'skipped';
 
 export interface CheckRun {
+  /** Pipeline owned by another project; browser-only, never poll/retry through this repository. */
+  external?: boolean;
   name: string; // e.g. 'unit tests'
   state: CheckState;
   durationMs?: number; // completedAt − startedAt when both are known

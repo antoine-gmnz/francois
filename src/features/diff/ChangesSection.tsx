@@ -24,6 +24,8 @@ import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
 import { MeterRow, SidePanelBody, SidePanelEmpty, SidePanelFooter } from '../../ui/SidePanel';
 import './changes-section.css';
+import { useRepositoryInfo } from '../../lib/hooks/useRepositoryInfo';
+import { repositoryLabels } from '../../lib/repository-provider';
 import { createPrAvailability, requestCreatePr } from './create-pr';
 import { requestDiffFile } from './diff-focus';
 import { buildDiffTree, flattenVisibleRows, type DiffTreeNode } from './diff-tree';
@@ -41,6 +43,8 @@ function folderKeys(nodes: DiffTreeNode[]): string[] {
 }
 
 export default function ChangesSection({ session, context }: SessionPanelSectionProps) {
+  const repo = useRepositoryInfo(session.cwd);
+  const requestLabels = repositoryLabels(repo ? repo.provider : 'unknown');
   const { summary, error, refresh, refreshing } = useDiffSummary(session.id);
   const setMainTab = useStore((s) => s.setMainTab);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
@@ -156,13 +160,15 @@ export default function ChangesSection({ session, context }: SessionPanelSection
             <Button
               busy={sendingPr}
               disabled={!prState.available}
-              title={prState.reason ?? 'Ask the agent to commit, push and open a pull request'}
+              title={prState.reason ?? `Ask the agent to commit, push and open a ${requestLabels.request.toLowerCase()}`}
               onClick={() => {
                 setSendingPr(true);
-                void requestCreatePr(session.id).finally(() => setSendingPr(false));
+                void requestCreatePr(session.id).then(ok => {
+                  if (!ok) setOpenError('Could not create a request. Check the repository remote and CLI authentication.');
+                }).finally(() => setSendingPr(false));
               }}
             >
-              Create PR
+              Create {repo ? requestLabels.shortRequest : 'request'}
             </Button>
           </div>
         )}

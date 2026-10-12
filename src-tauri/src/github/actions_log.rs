@@ -283,6 +283,9 @@ pub(crate) fn do_get_step_log(
             "jobId must be positive",
         ));
     }
+    if super::gitlab::is_gitlab(cwd)? {
+        return super::gitlab_ci::do_get_step_log(cwd, job_id, step_number);
+    }
     let (host, root, remote_host) = resolve_scope(cwd)?;
     require_gh(&host, &root, remote_host.as_deref())?;
     let Some((owner, name, _)) = remote_owner_name_host(&host, &root) else {

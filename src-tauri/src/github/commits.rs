@@ -3,7 +3,7 @@
 //! owning PR number on the detail call.
 
 use super::actions::fetch_actions_check_runs;
-use super::gh::{gh_json, gh_status_cached, git_routed};
+use super::gh::{gh_json, git_routed};
 use super::{
     remote_owner_name_host, resolve_scope, CheckRun, CommitDetail, CommitFile, CommitPage,
     CommitSummary, GhStatus, SignedState,
@@ -237,8 +237,14 @@ pub(crate) fn do_get_commit(cwd: &str, sha: &str) -> Result<CommitDetail, AppErr
         crate::diff::file_diff_from_patch(&String::from_utf8_lossy(&patch_out.stdout))
     });
 
-    let gh_ok = gh_status_cached(&host, &root, remote_host.as_deref()) == GhStatus::Ok;
-    let (check_runs, pull_number) = if gh_ok {
+    let (provider, status) = super::gitlab::provider_status(&host, &root, remote_host.as_deref());
+    let gh_ok = provider == "github" && status == GhStatus::Ok;
+    let (check_runs, pull_number) = if provider == "gitlab" && status == GhStatus::Ok {
+        (
+            super::gitlab_ci::do_list_checks(cwd, &summary.sha).ok(),
+            super::gitlab::commit_pull(cwd, &summary.sha),
+        )
+    } else if gh_ok {
         match remote_owner_name_host(&host, &root) {
             Some((owner, name, _)) => (
                 fetch_check_runs(&host, &root, &owner, &name, &summary.sha),

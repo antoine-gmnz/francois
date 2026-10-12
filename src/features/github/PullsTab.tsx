@@ -1,6 +1,7 @@
 // github-page — Pull requests tab (specs/github-page.md FR-4..FR-6, frame 29
 // `160:15836`). Left rail 432px (filter + rows) + detail pane (PullDetail).
 
+import { useRepositoryLabels } from './repository-context';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GithubRepoInfo, PullSummary } from '../../../contract/github-page';
 import { githubListPulls } from '../../lib/api';
@@ -23,6 +24,7 @@ export interface PullsTabProps {
 }
 
 export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element {
+  const labels = useRepositoryLabels();
   const sessions = useStore((s) => s.sessions);
   const [pulls, setPulls] = useState<PullSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,7 +80,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
   if (!ghAvailable) {
     return (
       <div className="pulls-tab pulls-tab--empty">
-        <EmptyPane>{ghUnavailableMessage(repo.gh)}</EmptyPane>
+        <EmptyPane>{ghUnavailableMessage(repo.gh, repo.provider, repo.remoteHost)}</EmptyPane>
       </div>
     );
   }
@@ -96,7 +98,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
         ref={railRef}
         className="pulls-rail"
         role="listbox"
-        aria-label="Pull requests"
+        aria-label={labels.requests}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') {
@@ -115,8 +117,8 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
               className="pulls-search__input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter pull requests…"
-              aria-label="Filter pull requests"
+              placeholder={`Filter ${labels.requests.toLowerCase()}…`}
+              aria-label={`Filter ${labels.requests.toLowerCase()}`}
             />
           </div>
           <button type="button" className="pulls-rail__filter-btn" title="Filters" disabled>
@@ -125,7 +127,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
         </div>
 
         <div className="pulls-rail__rows">
-          {loading && !pulls && <LoaderPane size={16} label="Loading pull requests…" />}
+          {loading && !pulls && <LoaderPane size={16} label={`Loading ${labels.requests.toLowerCase()}…`} />}
           {error && (
             <div className="pulls-rail__status pulls-rail__status--error">
               {error}{' '}
@@ -134,7 +136,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
               </button>
             </div>
           )}
-          {!loading && !error && filtered.length === 0 && <div className="pulls-rail__status">No pull requests.</div>}
+          {!loading && !error && filtered.length === 0 && <div className="pulls-rail__status">No {labels.requests.toLowerCase()}.</div>}
           {filtered.map((pull) => (
             <PullRow
               key={pull.number}
@@ -148,7 +150,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
         </div>
 
         <div className="pulls-rail__hint">
-          <HintBar items={[{ key: 'ⓘ', label: 'Pull requests opened from a session keep the link to it.' }]} />
+          <HintBar items={[{ key: 'ⓘ', label: `${labels.requests} opened from a session keep the link to it.` }]} />
         </div>
       </div>
 
