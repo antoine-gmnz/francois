@@ -1705,3 +1705,17 @@
 .ansi-bg-bright-white {
   background: var(--text-bright);
 }
+
+/* code-editor-agents FR-14 (design brief flow 6): a transcript path that opens in
+   the Code tab — plain text until hovered, then underlined like a link. */
+.code-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.code-link:hover,
+.code-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: var(--text-primary);
+}

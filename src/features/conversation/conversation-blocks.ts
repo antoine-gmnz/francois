@@ -781,6 +781,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'agent.step': ignoreEvent,
   'mcp.update': ignoreEvent,
   'workflow.update': ignoreEvent,
+  'file.touched': ignoreEvent, // code-editor-agents: owned by features/code/agent-touch.ts (live only, never a block)
 };
 
 /** Apply one SessionEvent to the transcript reducer / component setters. */

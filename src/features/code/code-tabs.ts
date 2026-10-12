@@ -21,6 +21,8 @@ export interface CodeTab {
   conflict: { version: FileVersion } | null;
   /** FR-12: the file vanished from disk; the buffer is kept, ⌘S recreates it. */
   deleted: boolean;
+  /** code-editor-agents FR-10: the tab shows Monaco's inline diff against HEAD. */
+  review: boolean;
 }
 
 export interface RootTabs {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gutterMarks } from './gutter-diff';
+import { changedLines, gutterMarks } from './gutter-diff';
 
 describe('gutterMarks (FR-9)', () => {
   it('has no marks for identical text', () => {
@@ -31,5 +31,13 @@ describe('gutterMarks (FR-9)', () => {
     const head = ['1', '2', '3', '4', '5', '6'].join('\n');
     const text = ['1', 'two', '3', '5', '6', '7'].join('\n');
     expect(gutterMarks(head, text)).toEqual({ added: [6], modified: [2], deleted: [4] });
+  });
+});
+
+describe('changedLines (code-editor-agents FR-8)', () => {
+  it('lists every line of the new text that differs, in order, with a deletion as its anchor line', () => {
+    expect(changedLines('a\nb\nc\n', 'a\nB\nc\nd\n')).toEqual([2, 4]);
+    expect(changedLines('a\nb\nc\n', 'a\nc\n')).toEqual([2]);
+    expect(changedLines('a\n', 'a\n')).toEqual([]);
   });
 });

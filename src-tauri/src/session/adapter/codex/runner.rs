@@ -54,6 +54,15 @@ pub(super) fn normalize<F: FnMut() -> String>(
                 affects_workspace: tool == "Edit",
             }
         }
+        Effect::FileTouched {
+            block_id,
+            path,
+            kind,
+        } => RuntimeEvent::FileTouched {
+            block_id,
+            path,
+            kind,
+        },
         Effect::Usage(used) => RuntimeEvent::Usage {
             context_used_tokens: Some(used),
             input_tokens: None,

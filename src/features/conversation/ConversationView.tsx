@@ -22,6 +22,7 @@ import UsageLimitBanner from './UsageLimitBanner';
 import { useConversationTranscript } from './useConversationTranscript';
 import WelcomeBlock from './WelcomeBlock';
 import WorktreeNotice from './WorktreeNotice';
+import { TranscriptSession } from './transcript-session';
 import { sessionIsRetired } from '../../lib/runtimeCapability';
 
 // transcript-perf: this component now owns ONLY the transcript's own state
@@ -140,133 +141,135 @@ export default function ConversationView({
   const retired = sessionIsRetired(meta);
 
   return (
-    <div className="conv-root" data-session-id={sessionId}>
-      {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
-          so it never scrolls away. attach-to-worktree FR-18: suppressed for an
-          adopted tree — Francois made no claim about what is in it. */}
-      {meta?.worktree && !meta.worktree.adopted && !worktreeNoticeDismissed && (
-        <WorktreeNotice
-          worktree={meta.worktree}
-          onDismiss={() => {
-            dismissWorktreeNotice(sessionId);
-            setWorktreeNoticeDismissed(true);
-          }}
-        />
-      )}
+    <TranscriptSession.Provider value={sessionId}>
+      <div className="conv-root" data-session-id={sessionId}>
+        {/* session-worktree FR-14: pinned bare-checkout notice, above the transcript
+            so it never scrolls away. attach-to-worktree FR-18: suppressed for an
+            adopted tree — Francois made no claim about what is in it. */}
+        {meta?.worktree && !meta.worktree.adopted && !worktreeNoticeDismissed && (
+          <WorktreeNotice
+            worktree={meta.worktree}
+            onDismiss={() => {
+              dismissWorktreeNotice(sessionId);
+              setWorktreeNoticeDismissed(true);
+            }}
+          />
+        )}
 
-      {/* resume-fail banner (durable-sessions FR-14) — Claude only; unrelated
-          to Pi's own recovery below (`recovery` is never set on a session this
-          event fires for). */}
-      {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
+        {/* resume-fail banner (durable-sessions FR-14) — Claude only; unrelated
+            to Pi's own recovery below (`recovery` is never set on a session this
+            event fires for). */}
+        {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
 
-      {/* pi-session-durability §8: missing/corrupt/incompatible/account-missing
-          refuse resume with one cause plus Retry/Create new session (FR-3/7).
-          `ready`/`disconnected` render nothing — resume then happens
-          transparently on the next send. */}
-      {retired && <div className="resume-fail-banner" role="status">Pi is unavailable in this version. Saved history is read-only.</div>}
+        {/* pi-session-durability §8: missing/corrupt/incompatible/account-missing
+            refuse resume with one cause plus Retry/Create new session (FR-3/7).
+            `ready`/`disconnected` render nothing — resume then happens
+            transparently on the next send. */}
+        {retired && <div className="resume-fail-banner" role="status">Pi is unavailable in this version. Saved history is read-only.</div>}
 
-      {/* plan usage-limit notice — the session stays live behind it */}
-      {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}
+        {/* plan usage-limit notice — the session stays live behind it */}
+        {limitNotice !== null && <UsageLimitBanner message={limitNotice} onDismiss={dismissLimitNotice} />}
 
-      {/* session-switch-loader FR-7: the ONLY motion in the pane besides the
-          composer caret — mounts/unmounts with the skeleton below (same gate,
-          same suppression). Indeterminate: no aria-valuenow. */}
-      {showSkeleton && (
-        <div className="conv-hydrating-bar" role="progressbar" aria-label="restoring transcript">
-          <Stitch />
+        {/* session-switch-loader FR-7: the ONLY motion in the pane besides the
+            composer caret — mounts/unmounts with the skeleton below (same gate,
+            same suppression). Indeterminate: no aria-valuenow. */}
+        {showSkeleton && (
+          <div className="conv-hydrating-bar" role="progressbar" aria-label="restoring transcript">
+            <Stitch />
+          </div>
+        )}
+
+        {/* transcript */}
+        <div className="conv-transcript-wrap">
+          <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            className="scz conv-scroll"
+            // mac-text-selection FR-1: .conv-scroll already sets `user-select: text`;
+            // WKWebView needs the -webkit- prefixed form too — see
+            // TRANSCRIPT_TEXT_SELECT_STYLE.
+            style={TRANSCRIPT_TEXT_SELECT_STYLE}
+          >
+            {hydrationError ? (
+              <Centered>
+                <span className="conv-error-text">{hydrationError}</span>
+              </Centered>
+            ) : showSkeleton ? (
+              // session-switch-loader FR-1: the third branch — ordered after the
+              // error branch and before the welcome branch (FR-1's literal
+              // ordering), so a session that later resolves EMPTY still shows
+              // the welcome header, not a frozen skeleton.
+              <TranscriptSkeleton />
+            ) : hydrated && state.blocks.length === 0 ? (
+              // design 7a: the framed welcome block stands in for the transcript
+              // until the first turn — see WelcomeBlock for what it states.
+              <div className="conv-item">
+                {retired ? <Centered>No saved transcript is available.</Centered> : <WelcomeBlock sessionId={sessionId} />}
+              </div>
+            ) : (
+              // design 9a: the transcript is a list of TURNS. A card (approval,
+              // question, command output) still renders at this level — it is the
+              // transcript stopping, not a paragraph of a reply.
+              <>
+                {/* transcript-scale FR-12: the earlier-blocks row, first child of
+                    the reading column, above the oldest rendered block. */}
+                {earlierRow.visible && (
+                  <EarlierBlocksRow count={earlierRow.count} onActivate={activateEarlier} inert={inert} />
+                )}
+                {items.map((item) => (
+                  <div key={item.kind === 'turn' ? item.turnId : item.block.blockId} className="conv-item">
+                    {item.kind === 'turn' ? (
+                      // transcript-perf FR-4: the ticking clock reaches only the
+                      // turn actually streaming; every settled turn gets a frozen
+                      // value `turnSpanMs` never reads, so Turn's memo bails and a
+                      // 1s tick re-renders exactly one Turn.
+                      <Turn
+                        turn={item}
+                        model={meta?.model.label}
+                        now={turnIsStreaming(item) ? transcriptClock : 0}
+                        sessionId={sessionId}
+                        onOpenShell={onOpenShell}
+                      />
+                    ) : (
+                      <Block b={item.block} sessionId={sessionId} onOpenShell={onOpenShell} />
+                    )}
+                  </div>
+                ))}
+                {/* cohorte-integration FR-61: a pending Cohorte gate, in the trailing
+                    slot after the last turn — never persisted into the transcript. */}
+                <CohorteInlineGate sessionId={sessionId} keysActive={visible && !inert} />
+                {/* cohorte-actions FR-51: intake result cards, same trailing slot, after the gate. */}
+                <CohorteActionResultCards sessionId={sessionId} keysActive={visible && !inert} />
+              </>
+            )}
+          </div>
+
+          {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
         </div>
-      )}
 
-      {/* transcript */}
-      <div className="conv-transcript-wrap">
-        <div
-          ref={scrollRef}
-          onScroll={onScroll}
-          className="scz conv-scroll"
-          // mac-text-selection FR-1: .conv-scroll already sets `user-select: text`;
-          // WKWebView needs the -webkit- prefixed form too — see
-          // TRANSCRIPT_TEXT_SELECT_STYLE.
-          style={TRANSCRIPT_TEXT_SELECT_STYLE}
-        >
-          {hydrationError ? (
-            <Centered>
-              <span className="conv-error-text">{hydrationError}</span>
-            </Centered>
-          ) : showSkeleton ? (
-            // session-switch-loader FR-1: the third branch — ordered after the
-            // error branch and before the welcome branch (FR-1's literal
-            // ordering), so a session that later resolves EMPTY still shows
-            // the welcome header, not a frozen skeleton.
-            <TranscriptSkeleton />
-          ) : hydrated && state.blocks.length === 0 ? (
-            // design 7a: the framed welcome block stands in for the transcript
-            // until the first turn — see WelcomeBlock for what it states.
-            <div className="conv-item">
-              {retired ? <Centered>No saved transcript is available.</Centered> : <WelcomeBlock sessionId={sessionId} />}
-            </div>
-          ) : (
-            // design 9a: the transcript is a list of TURNS. A card (approval,
-            // question, command output) still renders at this level — it is the
-            // transcript stopping, not a paragraph of a reply.
-            <>
-              {/* transcript-scale FR-12: the earlier-blocks row, first child of
-                  the reading column, above the oldest rendered block. */}
-              {earlierRow.visible && (
-                <EarlierBlocksRow count={earlierRow.count} onActivate={activateEarlier} inert={inert} />
-              )}
-              {items.map((item) => (
-                <div key={item.kind === 'turn' ? item.turnId : item.block.blockId} className="conv-item">
-                  {item.kind === 'turn' ? (
-                    // transcript-perf FR-4: the ticking clock reaches only the
-                    // turn actually streaming; every settled turn gets a frozen
-                    // value `turnSpanMs` never reads, so Turn's memo bails and a
-                    // 1s tick re-renders exactly one Turn.
-                    <Turn
-                      turn={item}
-                      model={meta?.model.label}
-                      now={turnIsStreaming(item) ? transcriptClock : 0}
-                      sessionId={sessionId}
-                      onOpenShell={onOpenShell}
-                    />
-                  ) : (
-                    <Block b={item.block} sessionId={sessionId} onOpenShell={onOpenShell} />
-                  )}
-                </div>
-              ))}
-              {/* cohorte-integration FR-61: a pending Cohorte gate, in the trailing
-                  slot after the last turn — never persisted into the transcript. */}
-              <CohorteInlineGate sessionId={sessionId} keysActive={visible && !inert} />
-              {/* cohorte-actions FR-51: intake result cards, same trailing slot, after the gate. */}
-              <CohorteActionResultCards sessionId={sessionId} keysActive={visible && !inert} />
-            </>
-          )}
-        </div>
-
-        {!isPinned && <JumpToLatestChip onClick={jumpToLatest} />}
+        {/* input bar — split-session FR-6: an unfocused pane renders the SAME
+            composer, not a substitute strip. transcript-perf FR-1: every bit of
+            composer-owned state (input, popup, history walk, attachments, the
+            pending-queue strip) now lives inside ComposerPane, so a keystroke
+            never reaches this component's own render. */}
+        {!retired && <ComposerPane
+          sessionId={sessionId}
+          inert={inert}
+          visible={visible}
+          onFocusRequest={onFocusRequest}
+          inertFooter={inertFooter}
+          status={status}
+          errorMessage={errorMessage}
+          hasPendingQuestion={hasPendingQuestion}
+          hasPendingPermission={hasPendingPermission}
+          commands={commands}
+          meta={meta}
+          dispatch={dispatch}
+          setPinned={setPinned}
+          showSkeleton={showSkeleton}
+        />}
       </div>
-
-      {/* input bar — split-session FR-6: an unfocused pane renders the SAME
-          composer, not a substitute strip. transcript-perf FR-1: every bit of
-          composer-owned state (input, popup, history walk, attachments, the
-          pending-queue strip) now lives inside ComposerPane, so a keystroke
-          never reaches this component's own render. */}
-      {!retired && <ComposerPane
-        sessionId={sessionId}
-        inert={inert}
-        visible={visible}
-        onFocusRequest={onFocusRequest}
-        inertFooter={inertFooter}
-        status={status}
-        errorMessage={errorMessage}
-        hasPendingQuestion={hasPendingQuestion}
-        hasPendingPermission={hasPendingPermission}
-        commands={commands}
-        meta={meta}
-        dispatch={dispatch}
-        setPinned={setPinned}
-        showSkeleton={showSkeleton}
-      />}
-    </div>
+    </TranscriptSession.Provider>
   );
 }
 

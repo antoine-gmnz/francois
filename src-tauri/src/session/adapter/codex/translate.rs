@@ -9,9 +9,10 @@
 
 use super::wire::{CodexEvent, ItemKind, PatchChange, Todo};
 use crate::ids::now_ms;
+use crate::session::FileTouchKind;
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ---------- the pure translation (FR-13/FR-14) ----------
 
@@ -36,6 +37,13 @@ pub(super) enum Effect {
     Assistant {
         block_id: String,
         text: String,
+    },
+    /// code-editor-agents FR-1: one path of a `file_change`, once per
+    /// (block, path), on the first sighting that names it.
+    FileTouched {
+        block_id: String,
+        path: String,
+        kind: FileTouchKind,
     },
     /// FR-15: context window occupancy.
     Usage(u64),
@@ -358,6 +366,9 @@ pub(super) struct Translator<F: FnMut() -> String> {
     /// The session cwd, as every path spelling Codex may report it in (host
     /// and, under WSL, Linux) — row titles are relative to it, like Claude's.
     roots: Vec<String>,
+    /// code-editor-agents FR-1: the (block, path) pairs already announced, so
+    /// an item's `started` and `completed` touch each path once.
+    touched: HashSet<(String, String)>,
 }
 
 impl<F: FnMut() -> String> Translator<F> {
@@ -367,7 +378,24 @@ impl<F: FnMut() -> String> Translator<F> {
             open: HashMap::new(),
             captures: Vec::new(),
             roots: Vec::new(),
+            touched: HashSet::new(),
         }
+    }
+
+    /// code-editor-agents FR-1: a `file_change`'s not-yet-announced paths.
+    fn touch_effects(&mut self, block_id: &str, kind: &ItemKind) -> Vec<Effect> {
+        let ItemKind::FileChange { changes, .. } = kind else {
+            return Vec::new();
+        };
+        changes
+            .iter()
+            .filter(|c| self.touched.insert((block_id.to_string(), c.path.clone())))
+            .map(|c| Effect::FileTouched {
+                block_id: block_id.to_string(),
+                path: c.path.clone(),
+                kind: FileTouchKind::from_patch_kind(&c.kind),
+            })
+            .collect()
     }
 
     /// command-inspect: claim the capture stashed for `block_id`, if any —
@@ -385,12 +413,13 @@ impl<F: FnMut() -> String> Translator<F> {
         match event {
             CodexEvent::ThreadStarted { thread_id } => vec![Effect::Anchor(thread_id)],
             CodexEvent::ItemStarted { item } | CodexEvent::ItemUpdated { item } => {
-                match tool_view(&item.kind, &self.roots) {
+                let mut effects = match tool_view(&item.kind, &self.roots) {
                     // Opening is idempotent: `item.updated` for an item already
                     // live must not produce a second card.
                     Some((tool, summary)) if !self.open.contains_key(&item.id) => {
                         let block_id = (self.new_id)();
-                        self.open.insert(item.id, (block_id.clone(), now_ms()));
+                        self.open
+                            .insert(item.id.clone(), (block_id.clone(), now_ms()));
                         vec![Effect::ToolStart {
                             block_id,
                             tool,
@@ -398,7 +427,11 @@ impl<F: FnMut() -> String> Translator<F> {
                         }]
                     }
                     _ => Vec::new(),
+                };
+                if let Some((block_id, _)) = self.open.get(&item.id).cloned() {
+                    effects.extend(self.touch_effects(&block_id, &item.kind));
                 }
+                effects
             }
             CodexEvent::ItemCompleted { item } => match &item.kind {
                 ItemKind::AgentMessage { text } if !text.trim().is_empty() => {
@@ -427,6 +460,7 @@ impl<F: FnMut() -> String> Translator<F> {
                             (id, now_ms())
                         }
                     };
+                    effects.extend(self.touch_effects(&block_id, kind));
                     let (input, output, exit_code, is_error) = capture_for(kind);
                     self.captures.push((
                         block_id.clone(),
@@ -561,6 +595,11 @@ mod tests {
                     tool: "Edit".into(),
                     summary: "src/a.ts".into()
                 },
+                Effect::FileTouched {
+                    block_id: "b1".into(),
+                    path: "src/a.ts".into(),
+                    kind: FileTouchKind::Edit,
+                },
                 Effect::ToolDone {
                     block_id: "b1".into(),
                     tool: "Edit".into(),
@@ -568,6 +607,63 @@ mod tests {
                 },
             ]
         );
+    }
+
+    // ---------- code-editor-agents FR-1: file.touched ----------
+
+    fn touched(effects: &[Effect]) -> Vec<(String, String, FileTouchKind)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::FileTouched {
+                    block_id,
+                    path,
+                    kind,
+                } => Some((block_id.clone(), path.clone(), *kind)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_file_change_touches_each_path_once_across_start_and_complete() {
+        let effects = translate_all(
+            r#"{"type":"item.started","item":{"id":"i1","type":"file_change","changes":[{"path":"a.ts","kind":"update"},{"path":"b.ts","kind":"add"}]}}
+{"type":"item.updated","item":{"id":"i1","type":"file_change","changes":[{"path":"a.ts","kind":"update"},{"path":"b.ts","kind":"add"}]}}
+{"type":"item.completed","item":{"id":"i1","type":"file_change","changes":[{"path":"a.ts","kind":"update"},{"path":"b.ts","kind":"add"},{"path":"c.ts","kind":"delete"}],"status":"completed"}}"#,
+        );
+        assert_eq!(
+            touched(&effects),
+            vec![
+                ("b1".into(), "a.ts".into(), FileTouchKind::Edit),
+                ("b1".into(), "b.ts".into(), FileTouchKind::Write),
+                ("b1".into(), "c.ts".into(), FileTouchKind::Delete),
+            ]
+        );
+        // On the start, right behind its card.
+        assert!(matches!(effects[0], Effect::ToolStart { .. }));
+        assert!(matches!(effects[1], Effect::FileTouched { .. }));
+    }
+
+    #[test]
+    fn a_change_list_that_only_arrives_on_completion_touches_then() {
+        let effects = translate_all(
+            r#"{"type":"item.started","item":{"id":"i1","type":"file_change"}}
+{"type":"item.completed","item":{"id":"i1","type":"file_change","changes":[{"path":"a.ts","kind":"update"}],"status":"failed"}}"#,
+        );
+        assert_eq!(
+            touched(&effects),
+            vec![("b1".into(), "a.ts".into(), FileTouchKind::Edit)],
+            "a failed patch is not retracted"
+        );
+    }
+
+    #[test]
+    fn commands_never_touch() {
+        let effects = translate_all(
+            r#"{"type":"item.completed","item":{"id":"i1","type":"command_execution","command":"sed -i x a","aggregated_output":"","exit_code":0}}"#,
+        );
+        assert!(touched(&effects).is_empty());
     }
 
     /// FR-14: the name is load-bearing, not cosmetic — `apply` keys the
@@ -578,7 +674,7 @@ mod tests {
         let effects = translate_all(
             r#"{"type":"item.completed","item":{"id":"i1","type":"file_change","changes":[{"path":"a"},{"path":"b"},{"path":"c"}]}}"#,
         );
-        match &effects[1] {
+        match effects.last().unwrap() {
             Effect::ToolDone { tool, meta, .. } => {
                 assert_eq!(tool, "Edit");
                 assert_eq!(meta, "+0 \u{2212}0");

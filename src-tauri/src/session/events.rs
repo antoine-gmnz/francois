@@ -236,6 +236,18 @@ pub enum SessionEvent {
         #[serde(rename = "sessionId")]
         session_id: String,
     },
+    /// code-editor-agents FR-1: a file-mutating tool call announced its path
+    /// (absolute, normalised per FR-2). Live only — never persisted or replayed.
+    #[serde(rename = "file.touched")]
+    FileTouched {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+        path: String,
+        kind: FileTouchKind,
+        at: u64,
+    },
     #[serde(rename = "session.cleared")]
     Cleared {
         #[serde(rename = "sessionId")]
@@ -279,6 +291,25 @@ mod tests {
     use crate::ipc::RuntimeFailure;
     use crate::session::testutil::*;
     use serde_json::json;
+
+    #[test]
+    fn file_touched_event_serializes_to_contract_shape() {
+        let ev = serde_json::to_value(SessionEvent::FileTouched {
+            session_id: "s1".into(),
+            block_id: "b1".into(),
+            path: "C:/repo/src/a.ts".into(),
+            kind: FileTouchKind::Write,
+            at: 42,
+        })
+        .unwrap();
+        assert_eq!(
+            ev,
+            json!({
+                "type": "file.touched", "sessionId": "s1", "blockId": "b1",
+                "path": "C:/repo/src/a.ts", "kind": "write", "at": 42
+            })
+        );
+    }
 
     #[test]
     fn session_cleared_event_serializes_to_contract_shape() {

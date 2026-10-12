@@ -1,0 +1,377 @@
+/* code-editor-workspace FR-6 / FR-7 / FR-8 / FR-10 — Monaco's own widgets in the
+   Graphite identity (Figma 53 · 54 · 55). The colours ride on the theme
+   (monaco-theme.ts, from the same tokens); this sheet adds what a colour id cannot:
+   radius, type, spacing, the status-bar hint and the sparkle lightbulb.
+
+   Every selector is rooted at `.code-monaco .monaco-editor` — one class more than
+   Monaco's own `.monaco-editor …` rules, so these win without !important. With
+   `fixedOverflowWidgets` the suggest/hover widgets still live inside the editor's
+   DOM node (position: fixed), so the scope reaches them. Tokens only: both themes
+   follow `data-theme`. */
+
+/* ── FR-6 completion ─────────────────────────────────────────────── */
+
+.code-monaco .monaco-editor .suggest-widget {
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-dropdown);
+  overflow: hidden;
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-list {
+  border-radius: 0;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row {
+  padding-right: 8px;
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row:not(.focused) > .contents > .main .monaco-icon-label {
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-highlighted-label .highlight,
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main .monaco-highlighted-label .highlight {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* The kind glyph in the code-blue of Figma 53. */
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row .suggest-icon,
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused .suggest-icon {
+  color: var(--hue-blue);
+}
+
+/* The type column: dim, right-aligned. */
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main > .right {
+  margin-left: auto;
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main > .right > .details-label,
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused > .contents > .main > .right > .details-label {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-align: right;
+}
+
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main > .left > .qualifier-label,
+.code-monaco .monaco-editor .suggest-widget .monaco-list .monaco-list-row > .contents > .main > .left > .signature-label {
+  color: var(--text-faint);
+  opacity: 1;
+}
+
+/* The status bar: Monaco's action labels give way to the Figma hint. */
+.code-monaco .monaco-editor .suggest-widget .suggest-status-bar {
+  align-items: center;
+  border-top: 1px solid var(--line-subtle);
+  padding: 0 12px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.code-monaco .monaco-editor .suggest-widget .suggest-status-bar > * {
+  display: none;
+}
+
+.code-monaco .monaco-editor .suggest-widget .suggest-status-bar::before {
+  content: '⏎ / ⇥ accept · ^Space toggle details';
+}
+
+/* The details pane: Geist prose, the signature in Geist Mono. */
+.code-monaco .monaco-editor .suggest-details {
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-dropdown);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.code-monaco .monaco-editor .suggest-details > .monaco-scrollable-element > .body > .header > .type {
+  padding: 10px 12px 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  opacity: 1;
+}
+
+.code-monaco .monaco-editor .suggest-details > .monaco-scrollable-element > .body > .docs {
+  padding: 0 12px 10px;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .suggest-details code,
+.code-monaco .monaco-editor .suggest-details > .monaco-scrollable-element > .body > .docs .code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* ── FR-7 inline blame ───────────────────────────────────────────── */
+
+.code-blame {
+  color: var(--text-faint);
+  font-style: normal;
+  pointer-events: none;
+}
+
+/* ── FR-8 squiggles, hover, quick fix ────────────────────────────── */
+
+.code-monaco .monaco-editor .monaco-hover {
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-dropdown);
+  color: var(--text-secondary);
+  font: var(--type-small);
+  max-width: 500px;
+  overflow: hidden;
+}
+
+.code-monaco .monaco-editor .monaco-hover .hover-row:not(:first-child):not(:empty) {
+  border-top: 1px solid var(--line-subtle);
+}
+
+.code-monaco .monaco-editor .monaco-hover .hover-contents {
+  padding: 10px 12px 8px;
+}
+
+/* The problem line: message in the primary ink, `ts(code)` dim after it. */
+.code-monaco .monaco-editor .monaco-hover .marker.hover-contents {
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+/* The type signature: a `--bg-input` band, full-bleed inside the card. */
+.code-monaco .monaco-editor .monaco-hover .markdown-hover > .hover-contents.code-hover-contents,
+.code-monaco .monaco-editor .monaco-hover .markdown-hover .code {
+  background: var(--bg-input);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .monaco-hover .markdown-hover .code {
+  margin: 0 -12px;
+  padding: 6px 12px;
+}
+
+.code-monaco .monaco-editor .monaco-hover code {
+  background: var(--bg-input);
+  border-radius: var(--radius-base);
+  font-family: var(--font-mono);
+}
+
+/* Quick fixes + footer links. */
+.code-monaco .monaco-editor .monaco-hover .hover-row.status-bar {
+  background: var(--bg-popover);
+  border-top: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.code-monaco .monaco-editor .monaco-hover .hover-row.status-bar .actions .action-container .action,
+.code-monaco .monaco-editor .monaco-hover .hover-row.status-bar .actions .action-container a {
+  color: var(--text-muted);
+}
+
+.code-monaco .monaco-editor .monaco-hover .hover-row.status-bar .actions .action-container:hover .action,
+.code-monaco .monaco-editor .monaco-hover .hover-row.status-bar .actions .action-container:hover a {
+  color: var(--text-primary);
+}
+
+/* The lightbulb, drawn as the sparkle (codicon `sparkle`, U+EC10). */
+.code-monaco .monaco-editor .lightBulbWidget::before,
+.code-monaco .monaco-editor .glyph-margin-widgets .cgmr[class*='light-bulb']::before,
+.code-monaco .monaco-editor .glyph-margin-widgets .cgmr[class*='lightbulb']::before {
+  content: '\ec10';
+}
+
+.code-monaco .monaco-editor .lightBulbWidget,
+.code-monaco .monaco-editor .glyph-margin-widgets .cgmr[class*='light-bulb'],
+.code-monaco .monaco-editor .glyph-margin-widgets .cgmr[class*='lightbulb'] {
+  color: var(--text-secondary);
+}
+
+/* The quick-fix menu (Monaco's action widget mounts in a context view, which may
+   sit outside the editor — hence the body scope). */
+body .action-widget {
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-dropdown);
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+
+body .action-widget .monaco-list .monaco-list-row.action {
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+}
+
+body .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+  outline: none;
+}
+
+/* ── FR-10 find & replace ────────────────────────────────────────── */
+
+.code-monaco .monaco-editor .find-widget {
+  margin-top: 6px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-dropdown);
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .find-widget .monaco-sash {
+  display: none;
+}
+
+.code-monaco .monaco-editor .find-widget .monaco-inputbox {
+  background: var(--bg-input);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-md);
+}
+
+.code-monaco .monaco-editor .find-widget .monaco-inputbox.synthetic-focus {
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.code-monaco .monaco-editor .find-widget .monaco-inputbox .input {
+  color: var(--text-primary);
+  font: var(--type-mono);
+}
+
+/* Aa / ab / .* and preserve-case AB. */
+.code-monaco .monaco-editor .find-widget .monaco-custom-toggle {
+  border-radius: var(--radius-base);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.code-monaco .monaco-editor .find-widget .monaco-custom-toggle.checked {
+  background: var(--bg-selected);
+  border-color: var(--line-default);
+  color: var(--text-primary);
+}
+
+/* `2 of 5` */
+.code-monaco .monaco-editor .find-widget .matchesCount {
+  color: var(--text-muted);
+  font: var(--type-mono-small);
+}
+
+.code-monaco .monaco-editor .find-widget.no-results .matchesCount {
+  color: var(--state-danger-text);
+}
+
+/* ↑ ↓ ✕ and the replace buttons. */
+.code-monaco .monaco-editor .find-widget .button {
+  border-radius: var(--radius-base);
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .find-widget .button:not(.disabled):hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+
+/* The current match outlined in --state-info; the others a muted wash (theme). */
+.code-monaco .monaco-editor .currentFindMatch {
+  border: 1px solid var(--state-info);
+  border-radius: 2px;
+}
+
+/* ── code-editor-lsp FR-13 peek references / definitions ─────────── */
+/* Styled like the hover card. Monaco's zone widget paints its frame colour inline,
+   hence the !important on the border. */
+
+.code-monaco .monaco-editor .peekview-widget {
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default) !important;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-dropdown);
+  overflow: hidden;
+}
+
+.code-monaco .monaco-editor .zone-widget .zone-widget-arrow {
+  display: none;
+}
+
+.code-monaco .monaco-editor .peekview-widget .head {
+  background: var(--bg-popover);
+  border-bottom: 1px solid var(--line-subtle);
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .peekview-widget .head .peekview-title .filename {
+  color: var(--text-primary);
+}
+
+.code-monaco .monaco-editor .peekview-widget .head .peekview-title .dirname,
+.code-monaco .monaco-editor .peekview-widget .head .peekview-title .meta {
+  color: var(--text-muted);
+}
+
+.code-monaco .monaco-editor .peekview-widget .ref-tree {
+  background: var(--bg-popover);
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+
+.code-monaco .monaco-editor .peekview-widget .ref-tree .monaco-list-row.focused,
+.code-monaco .monaco-editor .peekview-widget .ref-tree .monaco-list-row.selected {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+
+.code-monaco .monaco-editor .peekview-widget .ref-tree .reference-file .count {
+  color: var(--text-muted);
+  font: var(--type-mono-small);
+}
+
+/* ── the right-click menu ────────────────────────────────────────────────
+   Monaco mounts it in a context view outside the editor (inside a shadow root),
+   where the editor's own `--vscode-*` colour variables are not defined — so it
+   painted with no background at all. Custom properties DO inherit into a shadow
+   root, so define the ones its menu styles read on the shadow host (and on the
+   context view itself for when Monaco renders without shadow DOM). */
+.shadow-root-host,
+.context-view.monaco-component {
+  --vscode-menu-background: var(--bg-popover);
+  --vscode-menu-foreground: var(--text-secondary);
+  --vscode-menu-border: var(--line-default);
+  --vscode-menu-separatorBackground: var(--line-subtle);
+  --vscode-menu-selectionBorder: transparent;
+  --vscode-list-hoverBackground: var(--bg-selected);
+  --vscode-list-hoverForeground: var(--text-primary);
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.35);
+  --vscode-scrollbarSlider-background: var(--line-default);
+  --vscode-scrollbarSlider-hoverBackground: var(--line-strong);
+  --vscode-scrollbarSlider-activeBackground: var(--line-strong);
+}

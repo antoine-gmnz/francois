@@ -19,11 +19,17 @@
 // `editor_*` commands; root.rs resolves an EditorRoot to a directory; files.rs
 // owns path safety, decode and atomic save; listing.rs owns the explorer list,
 // branch and git status; watch.rs owns the per-file debounced watches.
+//
+// code-editor-workspace (specs/code-editor-workspace.md) adds search.rs
+// (search + replace-all + include globs, FR-14/FR-15) and blame.rs (FR-16);
+// their shapes mirror contract/code-editor-workspace.ts and live with them.
 
+mod blame;
 mod detect;
 mod files;
 mod listing;
 mod root;
+mod search;
 pub mod targets;
 mod watch;
 #[cfg(test)]
@@ -411,6 +417,9 @@ pub struct EditorFilesData {
     pub paths: Vec<String>,
     pub truncated: bool,
     pub changes: BTreeMap<String, GitChange>,
+    /// code-editor-agents FR-2: the root, absolute and normalised by the same
+    /// helper as `file.touched.path`.
+    pub root_dir: String,
 }
 
 /// `francois://editor/event`.
@@ -443,6 +452,16 @@ fn live_root(app: &AppHandle, engine: &Engine, root: &EditorRoot) -> CoreResult<
     root::resolve_root(root, engine, |id| crate::project::name_and_root(app, id))
 }
 
+/// code-editor-lsp: the absolute directory an EditorRoot names — servers are
+/// keyed by it, not by the root (two roots on one directory share a server).
+pub(crate) fn resolve_root_dir(
+    app: &AppHandle,
+    engine: &Engine,
+    root: &EditorRoot,
+) -> CoreResult<String> {
+    live_root(app, engine, root).map(|d| d.dir)
+}
+
 fn event_emitter(app: &AppHandle) -> watch::Emitter {
     let app = app.clone();
     Arc::new(move |ev| {
@@ -465,6 +484,7 @@ pub(crate) fn files_impl(dir: &root::RootDir) -> CoreResult<EditorFilesData> {
         paths: l.paths,
         truncated: l.truncated,
         changes: l.changes,
+        root_dir: crate::fs_util::norm_path(&dir.dir),
     })
 }
 
@@ -600,6 +620,73 @@ pub fn editor_open_external(
         Ok(d) => open_external_impl(&cached_editors(), &d.dir, editor_id, Some(&file), line),
         Err(e) => e.into(),
     }
+}
+
+// ---------- code-editor-workspace: search / replace / blame ----------
+
+/// francois:editor:search (FR-14). `async fn` + `spawn_blocking`: the walk
+/// reads every listed file, which must not hold an async-runtime worker.
+/// `Engine` comes from `app.state()` — a borrowed `State` cannot cross the `.await`.
+#[tauri::command]
+pub async fn editor_search(
+    app: AppHandle,
+    root: EditorRoot,
+    query: String,
+    options: search::EditorSearchOptions,
+    include: String,
+) -> IpcResult<search::EditorSearchData> {
+    let dir = match live_root(&app, &app.state::<Engine>(), &root) {
+        Ok(d) => d.dir,
+        Err(e) => return e.into(),
+    };
+    let job = move || search::search(&dir, &query, options, &include);
+    match tauri::async_runtime::spawn_blocking(job).await {
+        Ok(r) => to_ipc(r),
+        Err(e) => err(ErrorCode::Internal, format!("search failed: {e}")),
+    }
+}
+
+/// francois:editor:replace (FR-15). Writes are deliberately NOT recorded in
+/// `EditorState`: open clean tabs reload through the watcher's `editor.changed`.
+#[tauri::command]
+pub async fn editor_replace(
+    app: AppHandle,
+    root: EditorRoot,
+    query: String,
+    options: search::EditorSearchOptions,
+    replacement: String,
+    preserve_case: bool,
+    files: Vec<search::EditorReplaceFileTarget>,
+) -> IpcResult<search::EditorReplaceData> {
+    let dir = match live_root(&app, &app.state::<Engine>(), &root) {
+        Ok(d) => d.dir,
+        Err(e) => return e.into(),
+    };
+    let job = move || {
+        let spec = search::ReplaceSpec {
+            query: &query,
+            options,
+            replacement: &replacement,
+            preserve_case,
+        };
+        search::replace(&dir, &spec, &files)
+    };
+    match tauri::async_runtime::spawn_blocking(job).await {
+        Ok(r) => to_ipc(r),
+        Err(e) => err(ErrorCode::Internal, format!("replace failed: {e}")),
+    }
+}
+
+/// francois:editor:blame (FR-16).
+#[tauri::command(async)]
+pub fn editor_blame(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    root: EditorRoot,
+    path: String,
+    line: u32,
+) -> IpcResult<Option<blame::EditorBlameLine>> {
+    to_ipc(live_root(&app, &engine, &root).and_then(|d| blame::blame(&d.dir, &path, line)))
 }
 
 /// Registered with the session teardown seam: a session root's watches die with it.

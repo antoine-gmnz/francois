@@ -1,26 +1,39 @@
-// code-editor FR-2: the Code tab's body — Explorer (288px) + Editor, in place of the
-// roster, the main column and the session panel (Figma 45 · Code / Editor, 46 · No
-// file open). Owns the root resolution (FR-3), the tree refresh triggers (FR-5),
-// the ⌘S / ⌘W / ⌘P chords, and the FR-14 single-key fence.
+// code-editor FR-2: the Code tab's body, in place of the roster, the main column and
+// the session panel (Figma 45 · Code / Editor, 46 · No file open). Owns the root
+// resolution (FR-3), the tree refresh triggers (FR-5), the chords, and the FR-14
+// single-key fence. code-editor-workspace (Figma 52): the activity bar, the sidebar
+// switching between Explorer and Search (FR-1/FR-12), and the workspace chords —
+// ⌘S / ⌘W / ⌘P on the focused group, ⌘\ split, ⌘⇧F search, ⌘⇧M problems.
 
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useStore } from '../../lib/store';
 import { isSingleKey } from '../../app/shortcut-guard';
-import { useCodeStore } from './codeStore';
+import { groupsOfRoot, useCodeStore } from './codeStore';
 import { defaultRoot, rootExists, rootKey } from './editor-root';
+import ActivityBar from './ActivityBar';
 import EditorArea from './EditorArea';
 import Explorer from './Explorer';
-import GoToFile from './GoToFile';
+import SearchView from './SearchView';
+import ChangesView from './ChangesView';
+import ExtensionsView from './ExtensionsView';
 import { CloseTabPrompt } from './CloseTabPrompt';
+import { codeChord } from './code-chords';
+import { useMarkerFeed } from './useMarkerFeed';
+import { useWorkspaceStore } from './workspaceStore';
+import { useVsxStore } from './vsxStore';
 import './code.css';
+import './code-workspace.css';
 
 export default function CodeView(): JSX.Element {
   const root = useCodeStore((s) => s.root);
   const setRoot = useCodeStore((s) => s.setRoot);
-  const goToFileOpen = useCodeStore((s) => s.goToFileOpen);
   const projects = useStore((s) => s.projects);
   const sessions = useStore((s) => s.sessions);
+  const sidebar = useWorkspaceStore((s) => s.sidebar);
   const [closing, setClosing] = useState<string | null>(null);
+  const rk = root ? rootKey(root) : null;
+  const hasTabs = useCodeStore((s) => (rk ? (s.tabsByRootKey[rk]?.tabs.length ?? 0) > 0 : false));
+  useMarkerFeed(rk, hasTabs);
 
   // FR-3 / flow 1: first entry (or a root that vanished) picks the default root;
   // re-entering keeps whatever was chosen (FR-2).
@@ -31,9 +44,14 @@ export default function CodeView(): JSX.Element {
     if (next) setRoot(next);
   }, [root, projects, sessions, setRoot]);
 
+  // code-editor-vsx FR-10: the enabled extensions' contributions, read on every mount
+  // (local, no network); vsx-apply.ts applies them once Monaco is up.
+  useEffect(() => {
+    void useVsxStore.getState().reloadContributions();
+  }, []);
+
   // FR-5: refresh when the Code tab gains focus (mount / root change) and when the
   // window regains focus.
-  const rk = root ? rootKey(root) : null;
   useEffect(() => {
     if (!rk) return;
     const refresh = () => void useCodeStore.getState().refreshFiles();
@@ -42,25 +60,30 @@ export default function CodeView(): JSX.Element {
     return () => window.removeEventListener('focus', refresh);
   }, [rk]);
 
-  // ⌘S save · ⌘W close tab · ⌘P go to file. Capture phase, so they win over Monaco
-  // and every bubble listener; ⌘K stays the app's (useAppShortcuts' own capture).
+  // Capture phase, so they win over Monaco and every bubble listener; ⌘K stays the
+  // app's (useAppShortcuts' own capture).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      const key = e.key.toLowerCase();
-      if (key !== 's' && key !== 'w' && key !== 'p') return;
+      const chord = codeChord(e);
+      if (!chord) return;
       const st = useCodeStore.getState();
       if (!st.root) return;
       e.preventDefault();
       e.stopPropagation();
+      if (chord === 'quick-open') return st.setGoToFileOpen(true);
+      if (chord === 'search') return useWorkspaceStore.getState().showSearch();
+      if (chord === 'problems') return useWorkspaceStore.getState().toggleProblems();
+      if (chord === 'split') return st.splitEditor();
       const k = rootKey(st.root);
-      const active = st.tabsByRootKey[k]?.active;
-      if (key === 'p') return st.setGoToFileOpen(true);
+      const g = groupsOfRoot(st, k);
+      const active = g.groups[g.focused]?.active;
       if (!active) return;
-      if (key === 's') return void st.save(k, active);
+      if (chord === 'save') return void st.save(k, active);
       const tab = st.tabsByRootKey[k]?.tabs.find((t) => t.path === active);
-      if (tab?.dirty) setClosing(active);
-      else void st.closeTab(k, active);
+      const elsewhere = g.groups.some((x, i) => i !== g.focused && x.paths.includes(active));
+      // §7: a dirty tab still open in the other group closes here without a prompt.
+      if (tab?.dirty && !elsewhere) setClosing(active);
+      else void st.closeInGroup(k, g.focused, active);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -73,10 +96,13 @@ export default function CodeView(): JSX.Element {
   };
 
   return (
-    <div className="code-view" onKeyDown={fence}>
-      <Explorer />
+    <div className={sidebar ? 'code-view' : 'code-view code-view--collapsed'} onKeyDown={fence}>
+      <ActivityBar />
+      {sidebar === 'explorer' && <Explorer />}
+      {sidebar === 'search' && <SearchView />}
+      {sidebar === 'changes' && <ChangesView />}
+      {sidebar === 'extensions' && <ExtensionsView />}
       <EditorArea onRequestClose={setClosing} />
-      {goToFileOpen && <GoToFile />}
       {closing && rk && <CloseTabPrompt rootKey={rk} path={closing} onDone={() => setClosing(null)} />}
     </div>
   );

@@ -15,6 +15,10 @@ vi.mock('../../lib/api', () => ({
   sessionModels: vi.fn(() => Promise.resolve({ ok: false, error: { code: 'INTERNAL', message: 'n/a' } })),
   sessionSwitchModel: vi.fn(),
   skillsRun: vi.fn(() => Promise.resolve({ ok: true, data: null })),
+  lspStatus: vi.fn(() => Promise.resolve({ ok: true, data: [] })),
+  lspTrust: vi.fn(() => Promise.resolve({ ok: true, data: [] })),
+  lspStart: vi.fn(() => Promise.resolve({ ok: false, error: { code: 'INTERNAL', message: 'n/a' } })),
+  lspStop: vi.fn(() => Promise.resolve({ ok: true, data: null })),
 }));
 
 function mockStorage(seed: Record<string, string> = {}): { store: Record<string, string> } {
@@ -285,4 +289,84 @@ it('excludes retired profiles and rejects stale profile creation picks', async (
   expect(useStore.getState().pendingNewSessionProfileId).toBe('legacy');
   expect(useStore.getState().newSessionOpen).toBe(true);
   vi.unstubAllGlobals();
+});
+
+describe('Code: Toggle inline blame (code-editor-workspace FR-7)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('flips the persisted inline-blame toggle, default on', async () => {
+    const { byId } = await freshModules();
+    const { useBlameStore, INLINE_BLAME_KEY } = await import('../code/blame');
+    const cmd = byId('code-toggle-inline-blame');
+    expect(cmd.name).toBe('Code: Toggle inline blame');
+    expect(cmd.hint?.()).toBe('on');
+    cmd.run(ctx);
+    expect(useBlameStore.getState().enabled).toBe(false);
+    expect(cmd.hint?.()).toBe('off');
+    expect(localStorage.getItem(INLINE_BLAME_KEY)).toBe('0');
+  });
+});
+
+describe('Code: language server commands (code-editor-lsp FR-15)', () => {
+  beforeEach(() => {
+    mockStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function setup() {
+    const mods = await freshModules();
+    const api = await import('../../lib/api');
+    const { useCodeStore } = await import('../code/codeStore');
+    const { useLspStore } = await import('../code/lspStore');
+    return { ...mods, api, useCodeStore, useLspStore };
+  }
+  const root = { kind: 'project' as const, projectId: 'p1' };
+  const status = (state: 'ready' | 'untrusted') => ({
+    root,
+    language: 'rust' as const,
+    state,
+    server: 'rust-analyzer',
+    version: null,
+    program: null,
+    installHint: null,
+    error: null,
+    rootUri: 'file:///w',
+  });
+
+  it('allow and revoke trust the shown root; both are off without a root', async () => {
+    const { byId, api, useCodeStore } = await setup();
+    const allow = byId('code-lsp-allow');
+    const revoke = byId('code-lsp-revoke');
+    expect(allow.name).toBe('Code: Allow language servers for this root');
+    expect(revoke.name).toBe('Code: Revoke language servers for this root');
+    expect(allow.enabled?.(ctx)).toBe(false);
+    useCodeStore.getState().setRoot(root);
+    expect(allow.enabled?.(ctx)).toBe(true);
+    allow.run(ctx);
+    revoke.run(ctx);
+    expect(api.lspTrust).toHaveBeenCalledWith({ root, trusted: true });
+    expect(api.lspTrust).toHaveBeenCalledWith({ root, trusted: false });
+  });
+
+  it('restart applies to the active file’s server once the root is trusted', async () => {
+    const { byId, api, useCodeStore, useLspStore } = await setup();
+    const restart = byId('code-lsp-restart');
+    expect(restart.name).toBe('Code: Restart language server');
+    useCodeStore.getState().setRoot(root);
+    useCodeStore.setState({ tabsByRootKey: { 'project:p1': { tabs: [], active: 'src/main.rs', mru: [] } } });
+    useLspStore.getState().setStatuses('project:p1', [status('untrusted')]);
+    expect(restart.enabled?.(ctx)).toBe(false);
+    useLspStore.getState().setStatuses('project:p1', [status('ready')]);
+    expect(restart.enabled?.(ctx)).toBe(true);
+    restart.run(ctx);
+    await vi.waitFor(() => expect(api.lspStart).toHaveBeenCalledWith({ root, language: 'rust' }));
+    expect(api.lspStop).toHaveBeenCalledWith({ root, language: 'rust' });
+  });
 });

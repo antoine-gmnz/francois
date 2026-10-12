@@ -83,3 +83,9 @@ export function gutterMarks(head: string, text: string): GutterMarks {
   flush();
   return marks;
 }
+
+/** code-editor-agents FR-8: the lines of `text` that differ from `before` (a deletion flashes its anchor line). */
+export function changedLines(before: string, text: string): number[] {
+  const m = gutterMarks(before, text);
+  return [...new Set([...m.added, ...m.modified, ...m.deleted])].sort((a, b) => a - b);
+}

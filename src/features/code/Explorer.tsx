@@ -6,11 +6,14 @@ import { EDITOR_FILES_CAP } from '../../../contract/code-editor';
 import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
 import { Kbd } from '../../ui/Kbd';
+import { joinRoot } from '../../lib/path';
 import { useCodeStore } from './codeStore';
 import { rootKey } from './editor-root';
 import { buildTree, treeKeyAction, visibleRows, type TreeRow } from './file-tree';
 import { openExternally, useDetectedEditor } from './open-external';
 import RootPicker from './RootPicker';
+import { SessionChip } from './AgentBits';
+import { useTouchView } from './touch-view';
 import './code.css';
 
 const EMPTY: string[] = [];
@@ -32,6 +35,7 @@ export default function Explorer(): JSX.Element {
   const hint = useCodeStore((s) => s.rowHintByRootKey[rk] ?? null);
   const { toggleDir, select, openFile, refreshFiles, setGoToFileOpen } = useCodeStore.getState();
   const editor = useDetectedEditor();
+  const view = useTouchView();
   const treeRef = useRef<HTMLDivElement>(null);
 
   const data = files?.data ?? null;
@@ -113,6 +117,9 @@ export default function Explorer(): JSX.Element {
               )}
               <span className="code-tree__name">{row.name}</span>
               {row.changed && <span className="code-tree__dot" aria-label="contains changes" />}
+              {row.kind === 'file' && (
+                <SessionChip view={view} abs={data?.rootDir ? joinRoot(data.rootDir, row.path) : null} changed={!!row.change} />
+              )}
               {row.change && <span className="code-tree__letter">{row.change}</span>}
             </div>
             {hint?.path === row.path && (

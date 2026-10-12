@@ -6,8 +6,8 @@
 // crate relative to it.
 
 use francois::{
-    account, cohorte, diagnostics, diff, dnd, editor, extensions, github, permissions, profiles,
-    project, session, shell, update, usage, window,
+    account, cohorte, diagnostics, diff, dnd, editor, extensions, github, lsp, permissions,
+    profiles, project, session, shell, update, usage, vsx, window,
 };
 
 use tauri::RunEvent;
@@ -25,6 +25,9 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(shell::Registry::default())
         .manage(editor::EditorState::default())
+        // code-editor-lsp: language servers per (root directory, language), the
+        // trust file and the probe cache. A LEAF lock domain.
+        .manage(lsp::LspHost::default())
         .manage(session::Engine::default())
         // projects §6: the registry is loaded once at startup (see setup below)
         // and is memory-authoritative thereafter — Francois is its only writer.
@@ -232,7 +235,24 @@ fn main() {
             editor::editor_close,
             editor::editor_files,
             editor::editor_open_external,
+            editor::editor_search,
+            editor::editor_replace,
+            editor::editor_blame,
             editor::targets::editor_open_target,
+            lsp::commands::lsp_status,
+            lsp::commands::lsp_trust,
+            lsp::commands::lsp_start,
+            lsp::commands::lsp_stop,
+            lsp::commands::lsp_request,
+            lsp::commands::lsp_cancel,
+            lsp::commands::lsp_notify,
+            vsx::commands::vsx_search,
+            vsx::commands::vsx_details,
+            vsx::commands::vsx_install,
+            vsx::commands::vsx_uninstall,
+            vsx::commands::vsx_set_enabled,
+            vsx::commands::vsx_list,
+            vsx::commands::vsx_contributions,
             github::github_repo_info,
             github::github_fetch,
             github::github_list_pulls,
@@ -331,6 +351,8 @@ fn main() {
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 shell::kill_all_shells(app);
+                // code-editor-lsp FR-7: shutdown + exit, killed 2 s later.
+                lsp::stop_all(app);
                 cohorte::python_service::kill_workers(app);
                 session::kill_model_probes();
                 session::kill_all(app);

@@ -15,7 +15,11 @@ import { useStore } from '../../lib/store';
 import { statusNeedsAttention } from '../../../contract/fleet-board';
 import { focusedSessionId } from '../../lib/layoutStore';
 import { clearReport, resolveClearProjectId } from '../conversation/attachments';
+import { useBlameStore } from '../code/blame';
 import { useCodeStore } from '../code/codeStore';
+import { rootKey } from '../code/editor-root';
+import { lspLanguageForPath } from '../code/lsp-status';
+import { lspKey, useLspStore } from '../code/lspStore';
 import { createPrAvailability, requestCreatePr } from '../diff/create-pr';
 import { requestWorktreePreset } from '../sessions/worktree';
 import { closeDisplayedShell, cycleShell, newShell, requestActiveShellRename } from '../shell/shellActions';
@@ -314,6 +318,58 @@ export function registerBuiltinCommands(): void {
       st.setMainTab('code');
       useCodeStore.getState().setGoToFileOpen(true);
       requestBodyFocusOnClose();
+    },
+  });
+  // code-editor-workspace FR-7: inline blame after the caret line (default on, persisted).
+  registerPaletteCommand({
+    id: 'code-toggle-inline-blame',
+    glyph: '⎇',
+    name: 'Code: Toggle inline blame',
+    hint: () => (useBlameStore.getState().enabled ? 'on' : 'off'),
+    run: () => useBlameStore.getState().toggle(),
+  });
+  // code-editor-lsp FR-15: trust for the shown root, and a restart of the active file's server.
+  const codeRoot = () => useCodeStore.getState().root;
+  const activeServer = () => {
+    const root = codeRoot();
+    const active = root ? useCodeStore.getState().tabsByRootKey[rootKey(root)]?.active : null;
+    const language = active ? lspLanguageForPath(active) : null;
+    if (!root || !language) return null;
+    const status = useLspStore.getState().statusByKey[lspKey(rootKey(root), language)];
+    return status && status.state !== 'untrusted' && status.state !== 'missing' ? { root, language, status } : null;
+  };
+  const trustCommand = (id: string, glyph: string, name: string, trusted: boolean) =>
+    registerPaletteCommand({
+      id,
+      glyph,
+      name,
+      hint: () => {
+        const root = codeRoot();
+        return root ? (useCodeStore.getState().filesByRootKey[rootKey(root)]?.data?.rootLabel ?? '') : 'open the Code tab first';
+      },
+      enabled: () => codeRoot() !== null,
+      run: () => {
+        const root = codeRoot();
+        if (!root) return;
+        void useLspStore
+          .getState()
+          .trust(root, trusted)
+          .then((ok) => {
+            if (!ok) showToast('Could not change language-server trust for this root.', 'error');
+          });
+      },
+    });
+  trustCommand('code-lsp-allow', '✓', 'Code: Allow language servers for this root', true);
+  trustCommand('code-lsp-revoke', '⊘', 'Code: Revoke language servers for this root', false);
+  registerPaletteCommand({
+    id: 'code-lsp-restart',
+    glyph: '↻',
+    name: 'Code: Restart language server',
+    hint: () => activeServer()?.status.server ?? '',
+    enabled: () => activeServer() !== null,
+    run: () => {
+      const s = activeServer();
+      if (s) void useLspStore.getState().restart(s.root, s.language);
     },
   });
 

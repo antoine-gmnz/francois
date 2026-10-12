@@ -1,5 +1,11 @@
 // code-editor FR-7/FR-10: the Monaco language for a file, from its extension, and
 // the name the status bar shows. Anything unlisted is plain text.
+// code-editor-vsx FR-8: languages contributed by enabled Open VSX extensions are
+// consulted after the built-ins — except where a built-in is only an approximation
+// (TOML highlighted as INI, Makefile as plain text), which a real contribution replaces.
+
+import type { VsxLanguage } from '../../../contract/code-editor-vsx';
+import { matchContributedLanguage } from './vsx-languages';
 
 export interface Language {
   id: string;
@@ -58,11 +64,29 @@ const BY_NAME: Record<string, Language> = {
   makefile: { id: 'plaintext', name: 'Makefile' },
 };
 
-export function languageFor(path: string): Language {
+/** Built-in entries a contributed language may take over. */
+const APPROXIMATE = new Set<Language>([BY_EXT.toml, BY_NAME.makefile]);
+
+let contributed: readonly VsxLanguage[] = [];
+
+/** FR-8/FR-10: the enabled extensions' languages, oldest install first (the later wins a tie). */
+export function setContributedLanguages(languages: readonly VsxLanguage[]): void {
+  contributed = languages;
+}
+
+function builtIn(path: string): Language | null {
   const base = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
   const named = BY_NAME[base];
   if (named) return named;
   const dot = base.lastIndexOf('.');
-  if (dot <= 0) return PLAIN;
-  return BY_EXT[base.slice(dot + 1)] ?? PLAIN;
+  if (dot <= 0) return null;
+  return BY_EXT[base.slice(dot + 1)] ?? null;
+}
+
+export function languageFor(path: string): Language {
+  const own = builtIn(path);
+  if (own && !APPROXIMATE.has(own)) return own;
+  const vsx = contributed.length > 0 ? matchContributedLanguage(path, contributed) : null;
+  if (vsx) return { id: vsx.id, name: vsx.aliases[0] ?? vsx.id };
+  return own ?? PLAIN;
 }

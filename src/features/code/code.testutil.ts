@@ -19,6 +19,7 @@ export function tab(path: string, patch: Partial<CodeTab> = {}): CodeTab {
     headText: null,
     conflict: null,
     deleted: false,
+    review: false,
     ...patch,
   };
 }

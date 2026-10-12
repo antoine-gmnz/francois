@@ -39,12 +39,14 @@ fn editor_files_data_serialises_to_the_contract_shape() {
         paths: vec!["a.ts".into(), "b.ts".into()],
         truncated: false,
         changes,
+        root_dir: "C:/repo".into(),
     };
     assert_eq!(
         serde_json::to_value(&d).unwrap(),
         json!({
             "rootLabel": "orbit-api", "branch": null, "paths": ["a.ts", "b.ts"],
-            "truncated": false, "changes": { "a.ts": "M", "b.ts": "A" }
+            "truncated": false, "changes": { "a.ts": "M", "b.ts": "A" },
+            "rootDir": "C:/repo"
         })
     );
 }
@@ -61,6 +63,9 @@ fn files_impl_labels_the_listing_and_refuses_a_vanished_root() {
     assert_eq!(data.root_label, "orbit");
     assert_eq!(data.paths, vec!["a.txt"]);
     assert!(data.changes.is_empty());
+    // code-editor-agents FR-2: absolute, normalised.
+    assert_eq!(data.root_dir, crate::fs_util::norm_path(&dir.dir));
+    assert!(!data.root_dir.contains('\\') && !data.root_dir.ends_with('/'));
     let gone = root::RootDir {
         dir: d.path().join("gone").to_string_lossy().into_owned(),
         label: "x".into(),

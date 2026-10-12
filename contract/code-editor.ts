@@ -66,6 +66,9 @@ export interface EditorFilesData {
   truncated: boolean;
   /** Only changed paths (from `git status --porcelain=v1 -z`); `{}` when clean or not a repo. */
   changes: Record<string, GitChange>;
+  /** Absolute root directory, normalised by the same helper as file.touched.path
+   *  (code-editor-agents FR-2: '\' → '/', no trailing '/', drive letter upper-cased). */
+  rootDir: string;
 }
 // invoke('editor_files', req): Promise<Result<EditorFilesData>>
 // errors: 'PROJECT_NOT_FOUND' | 'SESSION_NOT_FOUND' | 'INTERNAL'

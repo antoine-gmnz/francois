@@ -148,6 +148,45 @@ import type {
   EditorSaveRequest,
   EditorSaveResponse,
 } from '../../contract/code-editor';
+import type {
+  EditorBlameRequest,
+  EditorBlameResponse,
+  EditorReplaceRequest,
+  EditorReplaceResponse,
+  EditorSearchRequest,
+  EditorSearchResponse,
+} from '../../contract/code-editor-workspace';
+import type {
+  LspCancelRequest,
+  LspCancelResponse,
+  LspEvent,
+  LspNotifyRequest,
+  LspNotifyResponse,
+  LspRequestRequest,
+  LspRequestResponse,
+  LspStartRequest,
+  LspStartResponse,
+  LspStatusRequest,
+  LspStatusResponse,
+  LspStopRequest,
+  LspStopResponse,
+  LspTrustRequest,
+  LspTrustResponse,
+} from '../../contract/code-editor-lsp';
+import type {
+  VsxContributionsResponse,
+  VsxDetailsRequest,
+  VsxDetailsResponse,
+  VsxInstallRequest,
+  VsxInstallResponse,
+  VsxListResponse,
+  VsxSearchRequest,
+  VsxSearchResponse,
+  VsxSetEnabledRequest,
+  VsxSetEnabledResponse,
+  VsxUninstallRequest,
+  VsxUninstallResponse,
+} from '../../contract/code-editor-vsx';
 import type { RemoteControlEvent, RemoteControlStatus } from '../../contract/remote-control';
 import type { ApplyUpdateResult, CheckUpdateResult } from '../../contract/self-update';
 import type {
@@ -303,6 +342,27 @@ export const editorSave = (req: EditorSaveRequest) => ipc<EditorSaveResponse>('e
 export const editorClose = (req: EditorCloseRequest) => ipc<EditorCloseResponse>('editor_close', req);
 export const editorOpenExternal = (req: EditorOpenExternalRequest) =>
   ipc<EditorOpenExternalResponse>('editor_open_external', req);
+// code-editor-workspace (§5): search & replace in files, inline blame.
+export const editorSearch = (req: EditorSearchRequest) => ipc<EditorSearchResponse>('editor_search', req);
+export const editorReplace = (req: EditorReplaceRequest) => ipc<EditorReplaceResponse>('editor_replace', req);
+export const editorBlame = (req: EditorBlameRequest) => ipc<EditorBlameResponse>('editor_blame', req);
+// code-editor-lsp (§5, francois:lsp:*): language servers per (root, language).
+export const lspStatus = (req: LspStatusRequest) => ipc<LspStatusResponse>('lsp_status', req);
+export const lspTrust = (req: LspTrustRequest) => ipc<LspTrustResponse>('lsp_trust', req);
+export const lspStart = (req: LspStartRequest) => ipc<LspStartResponse>('lsp_start', req);
+export const lspStop = (req: LspStopRequest) => ipc<LspStopResponse>('lsp_stop', req);
+export const lspRequest = (req: LspRequestRequest) => ipc<LspRequestResponse>('lsp_request', req);
+export const lspCancel = (req: LspCancelRequest) => ipc<LspCancelResponse>('lsp_cancel', req);
+export const lspNotify = (req: LspNotifyRequest) => ipc<LspNotifyResponse>('lsp_notify', req);
+
+// code-editor-vsx (§5, francois:vsx:*): declarative VS Code extensions from Open VSX.
+export const vsxSearch = (req: VsxSearchRequest) => ipc<VsxSearchResponse>('vsx_search', req);
+export const vsxDetails = (req: VsxDetailsRequest) => ipc<VsxDetailsResponse>('vsx_details', req);
+export const vsxInstall = (req: VsxInstallRequest) => ipc<VsxInstallResponse>('vsx_install', req);
+export const vsxUninstall = (req: VsxUninstallRequest) => ipc<VsxUninstallResponse>('vsx_uninstall', req);
+export const vsxSetEnabled = (req: VsxSetEnabledRequest) => ipc<VsxSetEnabledResponse>('vsx_set_enabled', req);
+export const vsxList = () => ipc<VsxListResponse>('vsx_list');
+export const vsxContributions = () => ipc<VsxContributionsResponse>('vsx_contributions');
 
 // transcript-scale FR-5/FR-9: `before`/`limit` page backwards; omitted ⇒ the
 // live tail the core holds in memory. `limit` is clamped by the core to
@@ -631,6 +691,11 @@ export function onExtensionEvent(cb: (e: ExtensionEvent) => void): Promise<Unlis
 /** code-editor FR-12: subscribe to francois://editor/event (editor.changed / editor.deleted). */
 export function onEditorEvent(cb: (e: EditorEvent) => void): Promise<UnlistenFn> {
   return stream<EditorEvent>('francois://editor/event', cb);
+}
+
+/** code-editor-lsp FR-16: subscribe to francois://lsp/event (lsp.status / lsp.diagnostics / lsp.progress). */
+export function onLspEvent(cb: (e: LspEvent) => void): Promise<UnlistenFn> {
+  return stream<LspEvent>('francois://lsp/event', cb);
 }
 
 /** Subscribe to francois://shell/event (shell.data / shell.exit). */

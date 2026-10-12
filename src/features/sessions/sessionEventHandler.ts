@@ -94,6 +94,7 @@ export function handleSessionEvent(e: SessionEvent, ctx: SessionEventContext): v
     case 'mcp.update':
     case 'workflow.update':
     case 'session.resumeFailed':
+    case 'file.touched': // code-editor-agents: the Code tab's agent-touch record owns it
       break;
     default: {
       const exhaustive: never = e;

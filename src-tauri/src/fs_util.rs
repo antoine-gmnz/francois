@@ -42,6 +42,25 @@ pub fn unique_temp_path(path: &Path, ext: &str) -> PathBuf {
     path.with_extension(format!("{ext}.{}.{seq}.tmp", std::process::id()))
 }
 
+/// code-editor-vsx: the plain crash-safe write — unique sibling temp, flushed,
+/// renamed over the target, temp removed on ANY failure. For app-owned files
+/// that need no mode/ACL carry-over (unlike the two writers named above).
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let tmp = unique_temp_path(path, ext);
+    let written = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()
+    })();
+    let result = written.and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 // ---------- multi-provider-endpoint FR-2: the user-only key file ----------
 //
 // The one primitive both platforms share for a file that must never be
@@ -211,9 +230,54 @@ fn icacls(path: &Path, args: &[&str]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// code-editor-agents FR-2: the one normalised path form the core puts on the
+/// wire (`EditorFilesData.rootDir`, `file.touched.path`) — `\` → `/`, no
+/// trailing `/`, drive letter upper-cased. The frontend's `normPath()` applies
+/// the same rules to `SessionMeta.cwd`, so the two compare by prefix. A bare
+/// `/` stays `/`; `C:\` becomes `C:` (no trailing separator, as specified).
+pub fn norm_path(p: &str) -> String {
+    let flipped = p.replace('\\', "/");
+    let trimmed = flipped.trim_end_matches('/');
+    let mut out = if trimmed.is_empty() && !flipped.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    };
+    let b = out.as_bytes();
+    if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+        out[..1].make_ascii_uppercase();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- code-editor-agents FR-2: the normalised wire form ----
+    // Same vectors as the frontend twin `normPath()`.
+
+    #[test]
+    fn norm_path_flips_separators_drops_the_trailing_one_and_uppercases_the_drive() {
+        assert_eq!(norm_path(r"d:\repo\src\a.ts"), "D:/repo/src/a.ts");
+        assert_eq!(norm_path(r"C:\repo\"), "C:/repo");
+        assert_eq!(norm_path("c:/repo//"), "C:/repo");
+        assert_eq!(norm_path("/home/u/api/"), "/home/u/api");
+        assert_eq!(norm_path("/home/u/api"), "/home/u/api");
+        assert_eq!(
+            norm_path(r"\\wsl.localhost\Ubuntu\home\u\api"),
+            "//wsl.localhost/Ubuntu/home/u/api"
+        );
+        // Only a drive letter is upper-cased — the rest of the path keeps its case.
+        assert_eq!(norm_path("e:/Repo/Src"), "E:/Repo/Src");
+        assert_eq!(norm_path("ab:/x"), "ab:/x");
+    }
+
+    #[test]
+    fn norm_path_keeps_a_bare_root() {
+        assert_eq!(norm_path("/"), "/");
+        assert_eq!(norm_path(r"C:\"), "C:");
+    }
 
     #[test]
     fn temp_path_is_a_sibling_of_the_target() {

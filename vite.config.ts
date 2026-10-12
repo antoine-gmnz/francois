@@ -22,9 +22,10 @@ export default defineConfig({
     __FRANCOIS_DEMO__: JSON.stringify(process.env.VITE_FRANCOIS_DEMO === '1'),
   },
   // The icon set (src/assets/icons/*.svg) is painted through CSS `mask-image`.
-  // Vite would inline those small files as `data:` URIs, which the webview CSP
-  // (`img-src 'self' asset: …` — no `data:`) refuses, so every asset is emitted
-  // as a same-origin file instead.
+  // Vite would inline those small files as `data:` URIs. The webview CSP refused
+  // `data:` images when this was written; code-editor-vsx FR-11 has since allowed
+  // `data:` in img-src (for extension icons), but every asset is still emitted as a
+  // same-origin file so the bundle never depends on that allowance.
   build: {
     assetsInlineLimit: 0,
   },

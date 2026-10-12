@@ -19,14 +19,7 @@ pub(super) struct Listing {
 pub(super) fn list(root: &str) -> Listing {
     let host = GitHost::of(root);
     let repo = is_git_repo(&host, root);
-    let mut paths = repo
-        .then(|| git_files(&host, root))
-        .flatten()
-        .unwrap_or_else(|| walk_files(root));
-    paths.sort();
-    paths.dedup();
-    let truncated = paths.len() > EDITOR_FILES_CAP;
-    paths.truncate(EDITOR_FILES_CAP);
+    let (paths, truncated) = sorted_paths(&host, repo, root);
     let (branch, changes) = if repo {
         (git_branch(&host, root), git_changes(&host, root))
     } else {
@@ -38,6 +31,26 @@ pub(super) fn list(root: &str) -> Listing {
         branch,
         changes,
     }
+}
+
+/// The explorer's path list alone (sorted, capped at EDITOR_FILES_CAP, `true`
+/// when capped) — what code-editor-workspace's search walks.
+pub(super) fn paths(root: &str) -> (Vec<String>, bool) {
+    let host = GitHost::of(root);
+    let repo = is_git_repo(&host, root);
+    sorted_paths(&host, repo, root)
+}
+
+fn sorted_paths(host: &GitHost, repo: bool, root: &str) -> (Vec<String>, bool) {
+    let mut paths = repo
+        .then(|| git_files(host, root))
+        .flatten()
+        .unwrap_or_else(|| walk_files(root));
+    paths.sort();
+    paths.dedup();
+    let truncated = paths.len() > EDITOR_FILES_CAP;
+    paths.truncate(EDITOR_FILES_CAP);
+    (paths, truncated)
 }
 
 /// Trimmed stdout of a successful git run; None on spawn failure, non-zero exit or empty output.
@@ -169,8 +182,8 @@ fn load_ignore(root: &Path) -> Vec<IgnoreRule> {
         .collect()
 }
 
-/// `*`/`?` stay inside a path segment; `**` crosses `/`.
-fn glob(p: &[u8], s: &[u8]) -> bool {
+/// `*`/`?` stay inside a path segment; `**` crosses `/`. Shared with search's include filter.
+pub(super) fn glob(p: &[u8], s: &[u8]) -> bool {
     match p.first() {
         None => s.is_empty(),
         Some(b'*') if p.get(1) == Some(&b'*') => {
