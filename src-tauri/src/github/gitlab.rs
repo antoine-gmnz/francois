@@ -748,6 +748,17 @@ mod tests {
             gh::git_routed(&GitHost::Native, cwd, &["init", "-b", "main"]).code,
             0
         );
+        // Scope the fixture's default branch locally: Windows runners may
+        // configure init.defaultBranch=master globally, even with `init -b main`.
+        assert_eq!(
+            gh::git_routed(
+                &GitHost::Native,
+                cwd,
+                &["config", "init.defaultBranch", "main"]
+            )
+            .code,
+            0
+        );
         assert_eq!(
             gh::git_routed(
                 &GitHost::Native,

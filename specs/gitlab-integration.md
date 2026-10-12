@@ -4,7 +4,7 @@ status: shipped
 depends_on: [github-page, github-ci-logs]
 contract: contract/gitlab-integration.ts
 reviewed_base: ce720845b36617942d60bb0989db37830d20ac1b
-reviewed_digest: fa51a0deb65c6147
+reviewed_digest: 97823a67d6fc05b9
 design_files:
   - https://www.figma.com/design/YEY4c6AiWq1bKYuaju9qdV/?node-id=160-15836
   - https://www.figma.com/design/YEY4c6AiWq1bKYuaju9qdV/?node-id=161-15989
@@ -97,3 +97,5 @@ None. Existing gh/glab authentication is reused; no in-app OAuth setup added.
 - Browser demo: GitLab navigation/MR detail/job logs/merge dialog/commits/branches; GitHub navigation; 1440px and 900px captures.
 - Browser demo has existing Cohorte null detection errors in both providers; repository interactions passed.
 - Native packaged UI and real merge/retry mutations were not exercised.
+
+- Windows CI fixture follow-up: set init.defaultBranch locally in the temporary repository; targeted regression passes with a synthetic global defaultBranch=master. Test-only patch checked against review small-diff fast path.
