@@ -32,6 +32,9 @@
 // `data-tauri-drag-region` — put on the header and the non-interactive left
 // group, never on a button — so every control keeps working. A double-click on
 // the drag region toggles maximize, matching the native caption's own gesture.
+// On Windows that whole path is pre-empted by `app-region: drag` (app-bar.css),
+// which drags natively even while the JS thread is blocked; the attribute and
+// the double-click handler remain for Linux, whose WebKitGTK ignores it.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Code2, GitPullRequest, LayoutDashboard, MessagesSquare } from 'lucide-react';
