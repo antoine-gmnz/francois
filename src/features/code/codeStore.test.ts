@@ -12,7 +12,7 @@ const api = vi.hoisted(() => ({
 vi.mock('../../lib/api', () => api);
 
 import { attachModel, bufferKey, bufferText, getBuffer, type BufferModel } from './buffers';
-import { allDirtyTabs, initialCodeState, useCodeStore } from './codeStore';
+import { allDirtyTabs, initialCodeState, onDidSave, useCodeStore } from './codeStore';
 import { file, PROJECT_ROOT, SESSION_ROOT } from './code.testutil';
 
 const RK = 'project:p1';
@@ -160,6 +160,21 @@ describe('save (FR-11)', () => {
     expect(tabOf('a.ts')).toMatchObject({ version: 'v2', dirty: false });
     expect(getBuffer(bufferKey(RK, 'a.ts'))!.baseline).toBe('edited\n');
     expect(api.editorFiles).toHaveBeenCalled();
+  });
+
+  it('tells the save listeners once a save landed, never when it failed (code-editor-lsp FR-10)', async () => {
+    const seen = vi.fn();
+    const off = onDidSave(seen);
+    await store().openFile('a.ts');
+    type('a.ts', 'edited\n');
+    api.editorSave.mockResolvedValueOnce(err('EDITOR_STALE', { version: 'v9' }));
+    await store().save(RK, 'a.ts');
+    expect(seen).not.toHaveBeenCalled();
+    api.editorSave.mockResolvedValueOnce(ok({ version: 'v2' }));
+    store().keepMine(RK, 'a.ts');
+    await store().save(RK, 'a.ts');
+    expect(seen).toHaveBeenCalledWith(RK, 'a.ts');
+    off();
   });
 
   it('EDITOR_STALE never overwrites: it raises the Changed-on-disk bar', async () => {

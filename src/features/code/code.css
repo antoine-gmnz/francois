@@ -5,7 +5,8 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 288px minmax(0, 1fr);
+  /* code-editor-workspace FR-1: activity bar · sidebar · editor (collapsed: code-workspace.css) */
+  grid-template-columns: 44px 288px minmax(0, 1fr);
   background: var(--bg-canvas);
 }
 
@@ -511,67 +512,6 @@
   color: var(--text-muted);
 }
 
-/* ── go to file ───────────────────────────────────────────────────────────── */
-.code-goto {
-  display: flex;
-  flex-direction: column;
-  max-height: 460px;
-}
-.code-goto__input {
-  height: 40px;
-  padding: 0 var(--space-14);
-  border: 0;
-  border-bottom: 1px solid var(--line-subtle);
-  background: transparent;
-  color: var(--text-primary);
-  font: var(--type-ui);
-  outline: none;
-}
-.code-goto__list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  margin: 0;
-  padding: var(--space-4);
-  list-style: none;
-}
-.code-goto__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-8);
-  padding: var(--space-6) var(--space-10);
-  border-radius: var(--radius-4);
-  font: var(--type-mono);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.code-goto__item--on {
-  background: var(--bg-selected);
-  color: var(--text-primary);
-}
-.code-goto__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.code-goto__hit {
-  background: none;
-  color: var(--text-primary);
-  font-weight: 600;
-}
-.code-goto__tag {
-  flex-shrink: 0;
-  font: var(--type-mono-small);
-  color: var(--text-faint);
-}
-.code-goto__empty {
-  padding: var(--space-10);
-  font: var(--type-small);
-  color: var(--text-faint);
-}
-
 /* ── prompts ──────────────────────────────────────────────────────────────── */
 .code-prompt__title {
   font: var(--type-ui-strong);
@@ -598,4 +538,271 @@
   margin: var(--space-8) 0 0;
   font: var(--type-small);
   color: var(--state-danger);
+}
+
+/* ── code-editor-agents (design brief, on the 45 / L45 styling) ───────────── */
+
+/* FR-4: the hovered line's `+`, between the line numbers and the 3px change
+   markers (which keep their 3px at margin-left 3px — see .code-gutter). */
+.code-gutter-add {
+  width: 14px !important;
+  margin-left: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.code-gutter-add::before {
+  content: '+';
+  font: var(--type-mono-medium);
+  line-height: 1;
+}
+.code-gutter-add:hover {
+  color: var(--text-primary);
+}
+
+/* FR-8: a cyan wash behind the changed lines, fading over AGENT_FLASH_MS. */
+.code-flash {
+  background: color-mix(in srgb, var(--state-running) 18%, transparent);
+  animation: code-flash 1.5s ease-out forwards;
+}
+@keyframes code-flash {
+  to {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Hold, then cut — the decoration is removed after 1.5s. */
+  .code-flash {
+    animation: none;
+  }
+}
+
+/* FR-9: the last toucher, left of the git letter / before the dirty dot. */
+.code-agent-chip {
+  flex-shrink: 0;
+  max-width: 88px;
+  height: 16px;
+  padding: 0 var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  line-height: 16px;
+}
+.code-agent-chip--live {
+  background: var(--tint-running);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--state-running) 45%, transparent);
+  color: var(--state-running);
+}
+.code-tree__row .code-agent-chip {
+  margin-left: auto;
+}
+.code-tree__row .code-agent-chip + .code-tree__letter {
+  margin-left: var(--space-4);
+}
+
+/* FR-10: Review, beside Open in VS Code; on = the selected treatment. */
+.code-tabs__review {
+  align-self: center;
+  flex-shrink: 0;
+  margin-left: var(--space-8);
+}
+.code-tabs__review--on,
+.code-tabs__review--on:hover {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+
+/* FR-11: the hovered hunk's Revert, at its top-right. */
+.code-revert {
+  position: absolute;
+  right: 28px;
+  z-index: 5;
+  transform: translateY(-2px);
+}
+.code-revert .btn {
+  gap: var(--space-4);
+  background: var(--bg-raised);
+}
+
+/* FR-16: 32px, full width, the cyan tint — the live thing, not a request. */
+.code-lock-region:empty {
+  display: none;
+}
+.code-lock {
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-14);
+  background: var(--tint-running);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.code-lock__icon {
+  flex-shrink: 0;
+  color: var(--state-running);
+}
+.code-lock__text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.code-lock__more {
+  flex-shrink: 0;
+  font: var(--type-mono-small);
+  color: var(--text-muted);
+}
+.code-lock__unlock {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* FR-5: the transient confirmation, bottom-right of the editor. Neutral. */
+.code-added {
+  position: absolute;
+  right: var(--space-14);
+  bottom: var(--space-14);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 30px;
+  padding: 0 var(--space-12);
+  border-radius: var(--radius-6);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  box-shadow: var(--shadow-dropdown);
+  font: var(--type-small);
+  color: var(--text-secondary);
+}
+.code-added__sep {
+  color: var(--text-faint);
+}
+.code-added__open {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: var(--type-small-medium);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.code-added__open:hover {
+  text-decoration: underline;
+}
+
+/* FR-5: the ⌘L target picker — a floating layer, so it keeps a shadow. */
+.code-picker {
+  position: absolute;
+  z-index: 7;
+  width: 300px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-8);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-default);
+  box-shadow: var(--shadow-popover);
+  outline: none;
+}
+.code-picker__group {
+  padding: var(--space-6) var(--space-8) var(--space-2);
+  font: var(--type-label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.code-picker__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 30px;
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-5);
+  cursor: pointer;
+}
+.code-picker__row--on {
+  background: var(--bg-selected);
+}
+.code-picker__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-ui);
+  color: var(--text-primary);
+}
+.code-picker__branch {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-muted);
+}
+.code-picker__root {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-3);
+  background: var(--bg-raised);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10-5);
+  color: var(--text-muted);
+}
+
+/* FR-4: the comment box, a view zone under its line. */
+.code-comment-zone {
+  z-index: 3;
+}
+.code-comment {
+  box-sizing: border-box;
+  height: 100%;
+  padding: var(--space-6) var(--space-14) var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.code-comment__input {
+  flex: 1;
+  resize: none;
+  padding: var(--space-6) var(--space-8);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  background: var(--bg-input);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-12-5);
+  color: var(--text-primary);
+  outline: none;
+}
+.code-comment__input:focus {
+  border-color: var(--line-strong);
+}
+.code-comment__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.code-comment__hint {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+.code-comment__target {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-small);
+  color: var(--text-muted);
 }

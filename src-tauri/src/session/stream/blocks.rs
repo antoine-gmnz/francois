@@ -375,6 +375,16 @@ fn finish_tool_block(
         is_task: rec.is_task,
         model,
     });
+    // code-editor-agents FR-1: announced as soon as the input is complete —
+    // before any approval or execution. A block stops once, so this is
+    // naturally one event per (block, path).
+    if let Some((kind, path)) = crate::permissions::file_touch(&rec.tool, &rec.input) {
+        env.publish(RuntimeEvent::FileTouched {
+            block_id: block_id.into(),
+            path,
+            kind,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -405,6 +415,99 @@ mod tests {
         assert_eq!(tool, "");
         assert_eq!(tool_use_id, "");
         assert_eq!(input, json!({}));
+    }
+
+    // ---------- code-editor-agents FR-1: file.touched ----------
+
+    /// Drive one tool_use block (start → input deltas → stop) through the real
+    /// handlers and return the projected session events.
+    fn run_tool_block(tool: &str, partials: &[&str]) -> Vec<crate::session::SessionEvent> {
+        let env = crate::session::testenv::TestEnv {
+            engine: crate::session::testutil::test_engine_with(
+                crate::session::testutil::test_session(),
+            ),
+            ..Default::default()
+        };
+        let mut blocks = HashMap::new();
+        let mut tools = HashMap::new();
+        let mut text_accum = HashMap::new();
+        let mut text_utf16 = HashMap::new();
+        let mut open_block = None;
+        let mut ctx = ContextTracker::default();
+        let mut feed = |ev: Value| {
+            handle_stream_event(
+                &env,
+                "s1",
+                "/x",
+                &ev,
+                &mut blocks,
+                &mut tools,
+                &mut text_accum,
+                &mut text_utf16,
+                &mut open_block,
+                &mut ctx,
+            )
+        };
+        feed(json!({ "type": "content_block_start", "index": 0,
+            "content_block": { "type": "tool_use", "name": tool, "id": "toolu_1", "input": {} } }));
+        for p in partials {
+            feed(json!({ "type": "content_block_delta", "index": 0,
+                "delta": { "type": "input_json_delta", "partial_json": p } }));
+        }
+        feed(json!({ "type": "content_block_stop", "index": 0 }));
+        let events = env.session_events.lock().unwrap().clone();
+        events
+    }
+
+    fn touches(events: &[crate::session::SessionEvent]) -> Vec<Value> {
+        events
+            .iter()
+            .map(|e| serde_json::to_value(e).unwrap())
+            .filter(|v| v["type"] == "file.touched")
+            .collect()
+    }
+
+    #[test]
+    fn a_completed_edit_input_emits_one_file_touched_on_its_block() {
+        let events = run_tool_block(
+            "Edit",
+            &[r#"{"file_path":"src/"#, r#"a.ts","old_string":"a"}"#],
+        );
+        let start = events
+            .iter()
+            .map(|e| serde_json::to_value(e).unwrap())
+            .find(|v| v["type"] == "tool.start")
+            .expect("tool.start");
+        let t = touches(&events);
+        assert_eq!(t.len(), 1, "one per (block, path)");
+        assert_eq!(t[0]["blockId"], start["blockId"]);
+        assert_eq!(t[0]["sessionId"], "s1");
+        assert_eq!(t[0]["path"], "/x/src/a.ts", "relative resolves against cwd");
+        assert_eq!(t[0]["kind"], "edit");
+        assert!(t[0]["at"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn write_multiedit_and_notebookedit_touch_and_read_does_not() {
+        let kind = |tool: &str, input: &str| -> Vec<Value> {
+            touches(&run_tool_block(tool, &[input]))
+                .into_iter()
+                .map(|v| v["kind"].clone())
+                .collect()
+        };
+        assert_eq!(
+            kind("Write", r#"{"file_path":"/x/b.ts","content":""}"#),
+            vec!["write"]
+        );
+        assert_eq!(
+            kind("MultiEdit", r#"{"file_path":"/x/b.ts","edits":[]}"#),
+            vec!["edit"]
+        );
+        assert_eq!(
+            kind("NotebookEdit", r#"{"notebook_path":"/x/n.ipynb"}"#),
+            vec!["edit"]
+        );
+        assert!(kind("Read", r#"{"file_path":"/x/b.ts"}"#).is_empty());
     }
 
     // ---------- start_text_block (content_block_start / text) ----------

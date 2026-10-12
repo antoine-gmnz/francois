@@ -1,0 +1,249 @@
+/* code-editor-vsx FR-6 — the EXTENSIONS sidebar, in the Search / Source control family
+   (Figma 52/57): the container, header, input and error box are code-search's; this file
+   adds the sections, the extension rows and their inline details. Tokens only. */
+
+.code-vsx__section {
+  margin: var(--space-10) var(--space-10) var(--space-4);
+  font: 500 11px/14px var(--font-ui);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ── a row ────────────────────────────────────────────────────────────────── */
+.code-vsx__item {
+  margin: 0 var(--space-4);
+  border-radius: var(--radius-5);
+}
+.code-vsx__item--open {
+  background: var(--bg-raised);
+}
+.code-vsx__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: var(--space-6);
+  border-radius: var(--radius-5);
+  cursor: pointer;
+}
+.code-vsx__row:hover {
+  background: var(--bg-hover);
+}
+.code-vsx__item--open .code-vsx__row:hover {
+  background: transparent;
+}
+.code-vsx__row:focus-visible {
+  outline: 1px solid var(--line-strong);
+  outline-offset: -1px;
+}
+
+.code-vsx__icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-4);
+  object-fit: contain;
+}
+.code-vsx__icon--blank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-strong);
+  color: var(--text-faint);
+}
+
+.code-vsx__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.code-vsx__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.code-vsx__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-ui-medium);
+  color: var(--text-primary);
+}
+.code-vsx__name--off {
+  color: var(--text-muted);
+}
+.code-vsx__verified {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--state-info);
+}
+.code-vsx__meta {
+  display: flex;
+  gap: var(--space-8);
+  overflow: hidden;
+  white-space: nowrap;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.code-vsx__downloads {
+  font: var(--type-mono-small);
+  color: var(--text-faint);
+}
+.code-vsx__summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+
+.code-vsx__actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: default;
+}
+.code-vsx__installed {
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+
+/* ⋯ → Uninstall */
+.code-vsx__more {
+  position: relative;
+}
+.code-vsx__more .icon-btn {
+  color: var(--text-muted);
+}
+.code-vsx__menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 10;
+  min-width: 120px;
+  padding: var(--space-4);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-6);
+  background: var(--bg-popover);
+  box-shadow: var(--shadow-dropdown);
+}
+.code-vsx__menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-4) var(--space-8);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: none;
+  text-align: left;
+  font: var(--type-small);
+  color: var(--state-danger-text);
+  cursor: pointer;
+}
+.code-vsx__menu-item:hover,
+.code-vsx__menu-item:focus-visible {
+  background: var(--bg-selected);
+  outline: none;
+}
+
+/* row-level notices: a §7 grammar warning, an install / toggle error */
+.code-vsx__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  margin: 0 var(--space-6) var(--space-6);
+  font: var(--type-small);
+  color: var(--warn);
+}
+.code-vsx__warning .icon {
+  margin-top: 2px;
+}
+.code-vsx__row-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin: 0 var(--space-6) var(--space-6);
+}
+
+/* ── inline details ───────────────────────────────────────────────────────── */
+.code-vsx__details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-6);
+  padding: 0 var(--space-8) var(--space-10) 42px;
+  font: var(--type-small);
+  color: var(--text-secondary);
+  cursor: default;
+}
+.code-vsx__description {
+  margin: 0;
+}
+.code-vsx__muted {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.code-vsx__support-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-6);
+}
+.code-vsx__support {
+  flex-shrink: 0;
+  padding: 1px var(--space-6);
+  border-radius: var(--radius-3);
+  font: var(--type-small-medium);
+}
+.code-vsx__support--full {
+  background: var(--tint-success);
+  color: var(--state-success-text);
+}
+.code-vsx__support--partial {
+  background: var(--tint-info);
+  color: var(--state-info);
+}
+.code-vsx__support--unsupported {
+  background: var(--bg-strong);
+  color: var(--text-muted);
+}
+.code-vsx__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.code-vsx__link {
+  gap: var(--space-4);
+  margin-left: calc(-1 * var(--space-8));
+}
+.code-vsx__readme {
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-8);
+  border-radius: var(--radius-4);
+  background: var(--bg-input);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+
+/* ── list foot: error + Retry, Load more ──────────────────────────────────── */
+.code-vsx__error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-6);
+  margin: var(--space-6) var(--space-10);
+}
+.code-vsx__more-row {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) 0;
+}

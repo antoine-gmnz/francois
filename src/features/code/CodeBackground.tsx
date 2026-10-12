@@ -9,7 +9,8 @@ import { Button } from '../../ui/Button';
 import { Modal, ModalBody, ModalFooter, ModalHeader } from '../../ui/Modal';
 import { initCloseGuard, proceedWithClose } from './close-guard';
 import { allDirtyTabs, useCodeStore, type DirtyTab } from './codeStore';
-import { initCodeEvents } from './codeEvents';
+import { initCodeEvents, initLspEvents } from './codeEvents';
+import { initAgentTouch } from './agent-touch';
 import { rootExists } from './editor-root';
 import './code.css';
 
@@ -139,6 +140,8 @@ function RemovedRootPrompt({ rootKey, onDone }: { rootKey: string; onDone: () =>
 export default function CodeBackground(): JSX.Element {
   useEffect(() => {
     initCodeEvents();
+    initLspEvents(); // code-editor-lsp FR-16: alongside the editor feed
+    initAgentTouch(); // code-editor-agents FR-3: app-wide, like the editor feed
     initCloseGuard();
   }, []);
   const [removed, resolve] = useRemovedRoots();

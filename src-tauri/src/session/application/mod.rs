@@ -158,6 +158,13 @@ pub(crate) enum RuntimeEvent {
         is_task: bool,
         model: Option<String>,
     },
+    /// code-editor-agents FR-1: a file-mutating tool call's path, as the
+    /// runtime spelled it — the projection resolves it against the cwd.
+    FileTouched {
+        block_id: String,
+        path: String,
+        kind: super::FileTouchKind,
+    },
     CommandOutput {
         block_id: String,
         command: String,

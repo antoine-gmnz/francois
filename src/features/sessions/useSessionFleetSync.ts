@@ -6,6 +6,7 @@ import { diffGetSummary, onDiffEvent, sessionList } from '../../lib/api';
 import { captureSessionHydration, subscribeSessionEvents } from '../../lib/session-events';
 import { useStore } from '../../lib/store';
 import { clearDraft } from '../../lib/composer-draft';
+import { clearChips } from '../../lib/context-chips';
 import { clearPending, resolvePrompt } from '../../lib/pending-queue';
 import { prunePaletteSession } from '../palette/paletteData';
 import { useShellStore } from '../../lib/shellStore';
@@ -142,6 +143,8 @@ export function useSessionFleetSync(): SessionFleetSync {
     clearDraft(id);
     // transcript-perf FR-15: …and the pending-queue strip, same reason.
     clearPending(id);
+    // code-editor-agents §7: …and its context chips, same lifetime as the draft.
+    clearChips(id);
   };
 
   // The full summary — file count AND the line totals design 12b's settled row

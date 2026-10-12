@@ -1,14 +1,14 @@
 // core-architecture-wave3 FR-4: THE error-code vocabulary, one variant per
-// member of the `ErrorCode` union in `contract/common.ts`. Before this existed
+// member of the `ErrorCode` union in `contract/error-code.ts`. Before this existed
 // `AppError.code` was a `String` agreeing with an 92-member TS union by hand,
 // across a language boundary, with no compiler, no test and no lint — a typo
 // shipped, and a code added on one side only was invisible until a `switch` in
 // the frontend silently fell through.
 //
 // This is the CHECKED side of the mirror. `build.rs` parses the union out of
-// `contract/common.ts` into `CONTRACT_ERROR_CODES`, and the parity test below
+// `contract/error-code.ts` into `CONTRACT_ERROR_CODES`, and the parity test below
 // asserts the two are the same set (FR-5). The contract is read-only input: if
-// the test fails, the fix belongs here, NEVER in `contract/common.ts`.
+// the test fails, the fix belongs here, NEVER in `contract/error-code.ts`.
 //
 // Serialization is `SCREAMING_SNAKE_CASE` over the PascalCase variant, which
 // round-trips the union's spelling exactly (`NotAGitRepo` → `NOT_A_GIT_REPO`,
@@ -131,6 +131,16 @@ pub enum ErrorCode {
     EditorStale,
     /// code-editor: EDITOR_WRITE_FAILED
     EditorWriteFailed,
+    /// code-editor-lsp FR-2: no server binary for the language (detail: { installHint })
+    LspNotInstalled,
+    /// code-editor-lsp FR-4: the root was never allowed to run language servers
+    LspUntrusted,
+    /// code-editor-lsp: request/notify for a server that is not starting/ready
+    LspNotRunning,
+    /// code-editor-lsp FR-3: method outside LSP_ALLOWED_REQUESTS/NOTIFICATIONS
+    LspMethodNotAllowed,
+    /// code-editor-lsp: JSON-RPC error, timeout or cancel (detail: { code, message })
+    LspRequestFailed,
     /// multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
     ShellNotFound,
     /// multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
@@ -261,6 +271,14 @@ pub enum ErrorCode {
     CohorteRunNotFound,
     /// cohorte-integration: the approval is no longer pending (resolved elsewhere)
     CohorteGateNotPending,
+    /// code-editor-vsx: the Open VSX registry did not answer usably (detail: { status? })
+    VsxUnreachable,
+    /// code-editor-vsx: no such extension/version on the registry, or not installed
+    VsxNotFound,
+    /// code-editor-vsx FR-4: checksum mismatch, bad zip, zip-slip, over a size cap (detail: { reason })
+    VsxInvalidPackage,
+    /// code-editor-vsx FR-3: the extension has no declarative contribution Francois can load
+    VsxUnsupported,
     Internal,
 }
 
@@ -329,6 +347,11 @@ impl ErrorCode {
         ErrorCode::EditorTooLarge,
         ErrorCode::EditorStale,
         ErrorCode::EditorWriteFailed,
+        ErrorCode::LspNotInstalled,
+        ErrorCode::LspUntrusted,
+        ErrorCode::LspNotRunning,
+        ErrorCode::LspMethodNotAllowed,
+        ErrorCode::LspRequestFailed,
         ErrorCode::ShellNotFound,
         ErrorCode::ShellLimitReached,
         ErrorCode::StepDetailNotFound,
@@ -392,6 +415,10 @@ impl ErrorCode {
         ErrorCode::CohorteRejected,
         ErrorCode::CohorteRunNotFound,
         ErrorCode::CohorteGateNotPending,
+        ErrorCode::VsxUnreachable,
+        ErrorCode::VsxNotFound,
+        ErrorCode::VsxInvalidPackage,
+        ErrorCode::VsxUnsupported,
         ErrorCode::Internal,
     ];
 
@@ -460,6 +487,11 @@ impl ErrorCode {
             ErrorCode::EditorTooLarge => "EDITOR_TOO_LARGE",
             ErrorCode::EditorStale => "EDITOR_STALE",
             ErrorCode::EditorWriteFailed => "EDITOR_WRITE_FAILED",
+            ErrorCode::LspNotInstalled => "LSP_NOT_INSTALLED",
+            ErrorCode::LspUntrusted => "LSP_UNTRUSTED",
+            ErrorCode::LspNotRunning => "LSP_NOT_RUNNING",
+            ErrorCode::LspMethodNotAllowed => "LSP_METHOD_NOT_ALLOWED",
+            ErrorCode::LspRequestFailed => "LSP_REQUEST_FAILED",
             ErrorCode::ShellNotFound => "SHELL_NOT_FOUND",
             ErrorCode::ShellLimitReached => "SHELL_LIMIT_REACHED",
             ErrorCode::StepDetailNotFound => "STEP_DETAIL_NOT_FOUND",
@@ -523,6 +555,10 @@ impl ErrorCode {
             ErrorCode::CohorteRejected => "COHORTE_REJECTED",
             ErrorCode::CohorteRunNotFound => "COHORTE_RUN_NOT_FOUND",
             ErrorCode::CohorteGateNotPending => "COHORTE_GATE_NOT_PENDING",
+            ErrorCode::VsxUnreachable => "VSX_UNREACHABLE",
+            ErrorCode::VsxNotFound => "VSX_NOT_FOUND",
+            ErrorCode::VsxInvalidPackage => "VSX_INVALID_PACKAGE",
+            ErrorCode::VsxUnsupported => "VSX_UNSUPPORTED",
             ErrorCode::Internal => "INTERNAL",
         }
     }
@@ -540,7 +576,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     // core-architecture-wave3 FR-5: the generated side, parsed out of
-    // `contract/common.ts` by build.rs on every build.
+    // `contract/error-code.ts` by build.rs on every build.
     include!(concat!(env!("OUT_DIR"), "/contract_error_codes.rs"));
 
     #[test]
@@ -581,12 +617,12 @@ mod tests {
 
         assert!(
             missing_in_rust.is_empty(),
-            "contract/common.ts declares codes the Rust enum does not: {missing_in_rust:?} — \
+            "contract/error-code.ts declares codes the Rust enum does not: {missing_in_rust:?} — \
              add the variant to ErrorCode (never delete it from the contract)"
         );
         assert!(
             missing_in_contract.is_empty(),
-            "the Rust enum declares codes contract/common.ts does not: {missing_in_contract:?} — \
+            "the Rust enum declares codes contract/error-code.ts does not: {missing_in_contract:?} — \
              the contract is read-only input; remove the variant or land the union change in its \
              own feature first"
         );

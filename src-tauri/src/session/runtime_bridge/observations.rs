@@ -49,6 +49,17 @@ pub(super) fn apply(
                 model,
             });
         }
+        RuntimeEvent::FileTouched {
+            block_id,
+            path,
+            kind,
+        } => env.emit_session(SessionEvent::FileTouched {
+            session_id: id.into(),
+            block_id,
+            path: crate::session::host_path(&path, cwd),
+            kind,
+            at: now_ms(),
+        }),
         RuntimeEvent::CommandOutput {
             block_id,
             command,

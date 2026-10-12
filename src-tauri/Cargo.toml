@@ -63,6 +63,11 @@ unicode-normalization = "0.1"
 # semver PRERELEASE ordering (dev.1 < dev.8 < 3.0.0). Already in the lock
 # transitively; named here so the comparison is the crate's, not a hand-rolled one.
 semver = "1"
+# code-editor-vsx FR-4: a .vsix is a zip, and std has no zip reader. Deflate
+# only (stored is always on) — every other codec, AES and the time crate are
+# off, because a .vsix never uses them and each is parser surface fed
+# untrusted bytes.
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # self-update FR-15: the relauncher is spawned DETACHED so it outlives the app.
 # On unix that means `setsid()` in a pre_exec hook — there is no std API for it,

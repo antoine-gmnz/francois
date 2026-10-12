@@ -39,6 +39,7 @@ import QuestionCard from '../questions/QuestionCard';
 import StepDetailPanel from './StepDetailPanel';
 import { Caret, LOADER_DELAY_MS, LoaderCaret } from '../../ui/Loaders';
 import { toolResultChips } from './transcript-turns';
+import { ToolTarget } from './CodeLinks';
 import './conversation.css';
 
 // transcript-perf FR-2: every prop these receive is referentially stable
@@ -312,7 +313,7 @@ ${b.execution?.outputText ?? ''}`),
         {/* The full call stays reachable on hover — the target column truncates,
             and a truncated path is exactly when you want the whole one. */}
         <span className="toolrow__target" title={toolBody(b.tool, b.summary)}>
-          {cohorte ? cohorte.target : b.summary}
+          {cohorte ? cohorte.target : <ToolTarget blockId={b.blockId}>{b.summary}</ToolTarget>}
         </span>
         {/* One cell for the whole right edge: the meta chips and, after them,
             the disclosure. They have to share the grid's 4th column — as a 5th

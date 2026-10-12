@@ -6,6 +6,7 @@ import type * as Monaco from 'monaco-editor';
 import { attachModel, getBuffer, type BufferModel } from './buffers';
 import { minimalChange } from './editor-sync';
 import { languageFor } from './language';
+import { modelUriPath } from './problems';
 
 type MonacoApi = typeof Monaco;
 
@@ -25,7 +26,7 @@ export function ensureModel(
   if (existing && !existing.isDisposed()) return existing;
   const buf = getBuffer(key);
   if (!buf) return null;
-  const uri = monaco.Uri.from({ scheme: 'inmemory', path: `/${encodeURIComponent(key.slice(0, key.indexOf('::')))}/${path}` });
+  const uri = monaco.Uri.from({ scheme: 'inmemory', path: modelUriPath(key.slice(0, key.indexOf('::')), path) });
   monaco.editor.getModel(uri)?.dispose();
   const model = monaco.editor.createModel(buf.baseline, languageFor(path).id, uri);
   // The frontend speaks LF only (FR-8); without this, Enter on Windows inserts CRLF.

@@ -34,6 +34,7 @@ mod commands;
 mod control;
 mod env;
 mod events;
+mod file_touch;
 mod interactive;
 mod mcp;
 mod mcp_approval;
@@ -193,6 +194,7 @@ pub use env::SessionEnv;
 // `session_remove` calls instead of naming another domain.
 pub(crate) use events::emit;
 pub use events::SessionEvent;
+pub(crate) use file_touch::{host_path, FileTouchKind};
 pub(crate) use interactive::{
     classify_local_answer, command_fallback_fires, finalize_command_block, help_entries,
     intercepted_command, parse_command, probe_card, run_intercepted_command, usage_card,

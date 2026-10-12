@@ -1,0 +1,53 @@
+/* code-editor-lsp — the language-server pill (FR-14, Figma 52) and the trust bar (FR-15).
+   Tokens only. The bar itself is code.css's `.code-bar` (the "Changed on disk" family). */
+
+/* ── FR-14 status pill ───────────────────────────────────────────────────── */
+button.code-lsp-pill {
+  height: 20px;
+  padding: 0 var(--space-6);
+  border: 0;
+  border-radius: var(--radius-4);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+button.code-lsp-pill:hover {
+  background: var(--bg-raised);
+}
+
+.code-lsp-pill__dot--ready {
+  background: var(--state-success);
+}
+.code-lsp-pill__dot--busy {
+  background: var(--text-disabled);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.code-lsp-pill__dot--idle {
+  background: var(--text-disabled);
+}
+.code-lsp-pill--missing {
+  color: var(--warn);
+}
+.code-lsp-pill__dot--missing {
+  background: var(--warn);
+}
+.code-lsp-pill--crashed {
+  color: var(--state-danger-text);
+}
+.code-lsp-pill__dot--crashed {
+  background: var(--state-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .code-lsp-pill__dot--busy {
+    animation: none;
+  }
+}
+
+/* ── FR-15 trust bar ─────────────────────────────────────────────────────── */
+.code-lsp-trust .code-bar__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -102,6 +102,10 @@ export interface ComposerProps {
   cohorteChip?: ReactNode;
   /** cohorte-actions FR-32: the actions popover, anchored above the bar like the slash menu. */
   cohorteMenu?: ReactNode;
+  /** code-editor-agents FR-6: the context-chip strip, above the bar. */
+  contextChips?: ReactNode;
+  /** FR-6: chips are waiting — an empty composer is sendable. */
+  hasContext?: boolean;
 }
 
 export default function Composer({
@@ -134,11 +138,13 @@ export default function Composer({
   onRetractPending,
   cohorteChip,
   cohorteMenu,
+  contextChips,
+  hasContext = false,
 }: ComposerProps) {
   const banners = composerErrorBanners(sendError, attachError);
   // One gate for every interactive part of the bar: while inert the pane does
   // not own the keyboard, so nothing here may be typed into, tabbed to or fired.
-  const sendDisabled = disabled || inert || !input.trim();
+  const sendDisabled = disabled || inert || (!input.trim() && !hasContext);
   return (
     <div className="composer-wrap">
       {/* design-refresh FR-8: capped + centered on the transcript's reading
@@ -216,6 +222,7 @@ export default function Composer({
             strip + "Steer now / Follow up" toggle, busy-only for the latter. */}
 
 
+        {contextChips}
         {/* The click target that focuses an inert pane is the WHOLE bar, so the
             gesture is the same wherever in it you aim (the buttons inside are
             inert while it is, so none of them swallows the click). */}

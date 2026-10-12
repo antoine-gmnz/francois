@@ -57,6 +57,8 @@ import {
 } from '../../lib/message-history';
 import { appendToDraft, parkPrompt, resolvePrompt, usePendingQueue, wasWronglyOptimistic } from '../../lib/pending-queue';
 import { useSessionAttachments } from './useSessionAttachments';
+import { composeWithChips, removeChip, useContextChips } from '../../lib/context-chips';
+import ContextChipStrip from './ContextChipStrip';
 
 export interface ComposerPaneProps {
   sessionId: string;
@@ -135,6 +137,8 @@ export default function ComposerPane({
   // transcript-perf §6: this session's pending queue, reactive. Legacy
   // (non-Pi) runtimes only — a Pi session never parks anything here.
   const pending = usePendingQueue(sessionId);
+  // code-editor-agents FR-6: what the Code tab handed this session, sent with the next message.
+  const chips = useContextChips(sessionId);
   const [stopping, setStopping] = useState(false);
 
   // FR-6: a Stop confirmed (or refused) while the session settled some other
@@ -234,16 +238,18 @@ export default function ComposerPane({
   };
 
   const send = async (textArg?: string) => {
-    const text = textArg ?? input;
-    if (!text.trim() || disabled) return;
+    const typed = textArg ?? input;
+    // code-editor-agents FR-6: typed sends carry the chips; a command run never does.
+    const sentChips = textArg === undefined ? chips : [];
+    if ((!typed.trim() && sentChips.length === 0) || disabled) return;
     // cohorte-actions FR-33: `/cohorte` typed then Enter, popup dismissed or not.
-    if (text.trim() === '/cohorte' && cohorteRoot !== null) {
+    if (typed.trim() === '/cohorte' && cohorteRoot !== null) {
       setInput('');
       useCohorteActionsStore.getState().openMenu(sessionId);
       return;
     }
     setBrowse(null); // message-history FR-9: sending (or /clear) ends the walk.
-    if (isClearCommand(text)) {
+    if (isClearCommand(typed)) {
       setInput('');
       if (inputRef.current) inputRef.current.style.height = 'auto';
       attachments.commit('');
@@ -254,7 +260,9 @@ export default function ComposerPane({
       }
       return;
     }
-    if (!attachments.canSubmit(text)) return;
+    if (!attachments.canSubmit(typed)) return;
+    // FR-6: the chips serialised, a blank line, then what was typed.
+    const text = composeWithChips(sentChips, meta?.cwd ?? '', typed);
 
     const blockId = crypto.randomUUID();
     // transcript-perf FR-10: a busy session parks the prompt instead of
@@ -278,7 +286,7 @@ export default function ComposerPane({
       // on which branch above ran, and both are safe unconditionally.
       dispatch({ t: 'remove', blockId });
       resolvePrompt(sessionId, blockId);
-      setInput(text);
+      setInput(typed); // FR-6: a failed send keeps the chips, so only the typed text comes back
       setSendError(res.error.message);
       setTimeout(() => setSendError(null), 4000);
       return; // message-history FR-1b: a failed send is never recorded.
@@ -293,8 +301,10 @@ export default function ComposerPane({
       dispatch({ t: 'remove', blockId });
       parkPrompt(sessionId, blockId, text);
     }
-    attachments.commit(text);
-    recordSent(sessionId, text);
+    // FR-6: accepted (sent or parked) — the chips that went out are cleared.
+    for (const c of sentChips) removeChip(sessionId, c.id);
+    attachments.commit(typed);
+    if (typed.trim()) recordSent(sessionId, typed);
   };
 
   // FR-17: retract a still-parked prompt. `removed: false` (the drain won the
@@ -468,6 +478,8 @@ export default function ComposerPane({
         onRun={runCommand}
         onDismiss={dismissPopup}
         popupUnavailableReason={interactiveCommandsCapability.available ? null : (interactiveCommandsCapability.reason ?? null)}
+        hasContext={chips.length > 0}
+        contextChips={<ContextChipStrip sessionId={sessionId} cwd={meta?.cwd ?? ''} inert={inert} />}
         pending={pending}
         onRetractPending={(blockId, text) => void onRetractPending(blockId, text)}
         cohorteChip={

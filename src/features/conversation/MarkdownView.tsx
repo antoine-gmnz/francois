@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { codeTarget } from '../../lib/open-target';
 import { TargetLink, TargetText } from '../../ui/TargetText';
 import { parseInline, parseMarkdown, type MdBlock, type MdInline, type TableAlign } from './markdown';
+import { CodeSpanLink } from './CodeLinks';
 import './conversation.css';
 
 // Renders the Markdown AST with the terminal palette. The whole app is set in
@@ -38,7 +39,15 @@ function Inline({ nodes, autolink = true }: { nodes: MdInline[]; autolink?: bool
           case 'code':
             return (
               <code key={i} className="md-code">
-                {autolink ? (codeTarget(n.value) ? <TargetLink target={n.value}>{n.value}</TargetLink> : <TargetText text={n.value} />) : n.value}
+                {autolink ? (
+                  // code-editor-agents FR-14: a file in the session root opens in the Code tab.
+                  <CodeSpanLink
+                    text={n.value}
+                    fallback={codeTarget(n.value) ? <TargetLink target={n.value}>{n.value}</TargetLink> : <TargetText text={n.value} />}
+                  />
+                ) : (
+                  n.value
+                )}
               </code>
             );
           case 'link':
