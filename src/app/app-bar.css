@@ -28,6 +28,16 @@
   background: var(--bg-canvas);
   border-bottom: 1px solid var(--line-subtle);
   min-width: 0;
+  /* Windows: a native drag region. wry enables WebView2's non-client region
+     support, so the browser process moves the window itself — it keeps
+     working while the JS thread is busy (boot), where `data-tauri-drag-region`
+     (a JS mousedown handler) cannot. Double-click maximize comes with it.
+     WebKitGTK ignores the property; Linux keeps the JS path. */
+  app-region: drag;
+}
+/* Every control opts back out — inside a drag region the mouse never reaches the DOM. */
+.app-bar :is(button, a, input, select, textarea, [role='button'], [tabindex]) {
+  app-region: no-drag;
 }
 .app-bar__left {
   display: flex;
