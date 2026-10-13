@@ -426,7 +426,11 @@ export default function Sidebar({ home }: { home: string }) {
       <div className="sidebar__footer">
         <PaneRows />
         <span className="app-flex-spacer" />
-        <IconButton size={24} title="Collapse the sidebar · [" onClick={() => useStore.getState().toggleLeftPane()}>
+        <IconButton size={24} title="Collapse the sidebar · [" onClick={(event) => {
+          // The roster's click handler focuses it, which would reopen it.
+          event.stopPropagation();
+          useStore.getState().toggleLeftPane();
+        }}>
           <Icon name="panel-left" size={14} />
         </IconButton>
       </div>
