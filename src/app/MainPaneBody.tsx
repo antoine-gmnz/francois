@@ -12,7 +12,6 @@ import GitHubView from '../features/github/GitHubView';
 import CohorteRunView from '../features/cohorte/CohorteRunView';
 import { cohorteRunIdFromTab } from '../features/cohorte/tab';
 import type { MainTab } from '../lib/store';
-import { LoaderPane } from '../ui/Loaders';
 import { hostedTab, mainPaneBranch, type MainPaneBranch } from './appShell';
 import EmptyPaneMessage from './EmptyPaneMessage';
 import SessionViewHost from './SessionViewHost';
@@ -27,8 +26,9 @@ export interface MainPaneBodyProps {
   /** extensions FR-13: the project name the `not available in <x>` copy names. */
   projectName: string | null;
   /** loaders: false until `session_list`'s first mount hydration settles — the
-   *  SESSION empty state shows Figma "33 · Loaders" `LoaderPane` instead of
-   *  "select a session" while this is still false (App owns the store read). */
+   *  SESSION empty state renders nothing instead of "select a session" while
+   *  this is still false — App's Figma "32 · App boot" screen covers the window
+   *  (App owns the store read). */
   sessionsHydrated: boolean;
 }
 
@@ -143,13 +143,11 @@ function MainPaneBranchBody({
     code: () => null,
     // SESSION/SHELL: the body itself is the host's (see MainPaneBody above) —
     // only the sessionless prompt is rendered here.
-    // loaders: "nothing to show yet" while the fleet's first hydration is
-    // still in flight owns the area (Figma "33 · Loaders" LoaderPane) instead
-    // of claiming there is nothing to select.
+    // loaders: while the fleet's first hydration is in flight the boot
+    // screen (Figma "32 · App boot", AppBoot) covers the window — don't claim
+    // underneath it that there is nothing to select.
     session: () =>
-      active ? null : !sessionsHydrated ? (
-        <LoaderPane label="Starting François" size={40} />
-      ) : (
+      active || !sessionsHydrated ? null : (
         <EmptyPaneMessage>
           select a session, or press <span className="app-inline-key">n</span> to start one
         </EmptyPaneMessage>

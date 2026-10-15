@@ -45,6 +45,7 @@ import SettingsView from './settings/SettingsView';
 import { isSettingsOpen } from './settings/settings-nav';
 import SplitDivider from './SplitDivider';
 import SplitPane from './SplitPane';
+import AppBoot from './AppBoot';
 import { useAppIdentity } from './useAppIdentity';
 import { useAppShortcuts } from './useAppShortcuts';
 import { useDiffBadge } from './useDiffBadge';
@@ -326,6 +327,8 @@ export default function App() {
 
   return (
     <div className="app-root">
+      {/* Figma 32 · App boot: owns the window until the fleet's first hydration settles. */}
+      {!sessionsHydrated && <AppBoot appVersion={appVersion} />}
       {/* redesign "Graphite & Signal": ONE app bar (app-scoped). The
           session-scoped chrome is the SessionHeader at the top of the main
           column, below. */}
