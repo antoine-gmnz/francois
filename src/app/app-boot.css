@@ -1,0 +1,55 @@
+/* Figma "32 · App boot" (172:17271) — full-window boot screen. */
+.app-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  background: var(--bg-canvas);
+  /* Windows: drag natively while the JS thread is busy booting (see app-bar.css). */
+  app-region: drag;
+}
+.app-boot__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-14);
+}
+/* The mark at 34px: 34 / 25 / 9 slabs, 7px tall, 6px apart, the last one muted. */
+.app-boot__mark {
+  gap: var(--space-6);
+  color: var(--text-primary);
+}
+.app-boot__mark i {
+  height: 7px;
+  border-radius: 2px;
+}
+.app-boot__mark i:nth-child(2) {
+  width: 25px;
+}
+.app-boot__mark i:nth-child(3) {
+  width: 9px;
+  background: var(--text-muted);
+}
+.app-boot__name {
+  font: var(--type-heading);
+  letter-spacing: -0.3px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.app-boot__status {
+  font: var(--type-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.app-boot__stitch {
+  width: 260px;
+  background: var(--line-default);
+}
+.app-boot__facts {
+  font: var(--type-mono-small);
+  color: var(--text-disabled);
+  white-space: pre;
+}
