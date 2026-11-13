@@ -86,6 +86,7 @@ fn parse_frames(
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: &Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_permissions: &Arc<Mutex<HashMap<String, PendingPermission>>>,
+    settled: &Arc<AtomicBool>,
     turn_cmd: Option<&str>,
 ) -> ParseOutcome {
     // index -> (blockId, kind, input_accum)
@@ -153,6 +154,14 @@ fn parse_frames(
             LineRoute::Parent => {}
         }
         let line_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        // A settled CLI (result in, channel held for background tasks) has
+        // started a new turn of its own — the follow-up it runs when a task
+        // reports, or a background subagent's ask. The session is busy again.
+        // An injected reply clears `settled` itself before writing, so it
+        // never reaches this branch (see `TurnHandle::send_live`).
+        if resumes_settled_turn(line_type) && settled.swap(false, Ordering::SeqCst) {
+            env.publish(RuntimeEvent::TurnResumed);
+        }
         match line_type {
             "system" => {
                 if let Some(running) = parse_background_tasks(&v) {
@@ -197,14 +206,26 @@ fn parse_frames(
                 // background subagent dispatched by this turn outlives it, and
                 // the CLI throws away every permission ask raised after our
                 // stdin EOF (session/stdio.rs).
+                // Settle BEFORE the close decision: the closer thread it may arm
+                // reads the flag on its first tick.
+                settled.store(true, Ordering::SeqCst);
                 close_or_hold_channel(
                     stdin,
                     pending_questions,
                     pending_permissions,
                     &bg_tasks,
                     &last_line_at,
+                    settled,
                     &mut closer_armed,
                 );
+                // Held open: the CLI is alive but its turn is over and it waits
+                // on the user. Say so, instead of reading `running` until the
+                // last background task exits — which, for a dev server, is never.
+                if stdin.lock().unwrap().is_some() {
+                    env.publish(RuntimeEvent::TurnSettled {
+                        background_tasks: bg_tasks.load(Ordering::Relaxed),
+                    });
+                }
             }
             "control_request" => {
                 // session-questions FR-6..FR-9 + permission-guardrails FR-1/FR-2.
@@ -263,6 +284,7 @@ pub fn run_reader(
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    settled: Arc<AtomicBool>,
 ) {
     let turn_cmd = parse_command(&context.text).map(|(command, _)| command);
     let outcome = parse_frames(
@@ -272,6 +294,7 @@ pub fn run_reader(
         &stdin,
         &pending_questions,
         &pending_permissions,
+        &settled,
         turn_cmd.as_deref(),
     );
     env.flush();
@@ -312,6 +335,13 @@ pub fn run_reader(
         outcome.result_text,
         turn_cmd.as_deref(),
     );
+}
+
+/// The parent-stream lines that mean a settled CLI has begun work again. A
+/// `system` line never does (`background_tasks_changed`, `task_notification`
+/// and friends arrive while it idles), nor does a stray `result`.
+pub(crate) fn resumes_settled_turn(line_type: &str) -> bool {
+    matches!(line_type, "stream_event" | "assistant" | "control_request")
 }
 
 fn publish_attributed(env: &dyn StreamEnvironment, parent_tool_use_id: &str, value: &Value) {
@@ -387,6 +417,7 @@ pub fn parse_stream<E: crate::session::SessionEnv>(
         stdin,
         pending_questions,
         pending_permissions,
+        &Arc::new(AtomicBool::new(false)),
         turn_cmd,
     )
 }

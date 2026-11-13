@@ -193,6 +193,13 @@ pub struct TurnHandle {
     pending_questions: Arc<Mutex<HashMap<String, PendingQuestion>>>,
     /// permission-guardrails FR-2: blockId → parked tool call awaiting approval.
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    /// The CLI's turn is over (its `result` is in) but the process is alive
+    /// and waiting on stdin — held open for background tasks. Shared with the
+    /// reader (which sets it at each result and clears it when the CLI starts
+    /// a turn of its own) and the channel closer (which never closes under a
+    /// turn in flight). Claimed by `send_live` with a swap, so a reply and the
+    /// CLI's own follow-up can never both count as "the" resumption.
+    settled: Arc<AtomicBool>,
 }
 
 /// The peek half of the FR-7 rule-write gate — the exact counterpart of
@@ -262,6 +269,24 @@ impl TurnControl for TurnHandle {
             questions: self.pending_questions.lock().unwrap().len(),
             permissions: self.pending_permissions.lock().unwrap().len(),
         }
+    }
+
+    fn send_live(&self, text: &str) -> bool {
+        if !self.settled.swap(false, Ordering::SeqCst) {
+            return false;
+        }
+        let mut guard = self.stdin.lock().unwrap();
+        let delivered = guard.as_mut().is_some_and(|w| {
+            w.write_all(user_line(text).as_bytes())
+                .and_then(|_| w.flush())
+                .is_ok()
+        });
+        if !delivered {
+            // Nothing reached the child: put the flag back so the state the
+            // closer reads stays truthful while the process winds down.
+            self.settled.store(true, Ordering::SeqCst);
+        }
+        delivered
     }
 
     fn drain_pending(&self) -> (Vec<String>, Vec<String>) {
@@ -361,12 +386,14 @@ pub(super) fn begin_native_turn(
     let pending_questions = Arc::new(Mutex::new(HashMap::new()));
     let pending_permissions = Arc::new(Mutex::new(HashMap::new()));
     let interrupted = Arc::new(AtomicBool::new(false));
+    let settled = Arc::new(AtomicBool::new(false));
     let handle = Arc::new(TurnHandle {
         child: child.clone(),
         interrupted: interrupted.clone(),
         stdin: stdin.clone(),
         pending_questions: pending_questions.clone(),
         pending_permissions: pending_permissions.clone(),
+        settled: settled.clone(),
     });
     let env = NativeStream::new(ctx.clone(), sink);
     env.publish(RuntimeEvent::PromptDelivered(ctx.response_mode));
@@ -383,6 +410,7 @@ pub(super) fn begin_native_turn(
             stdin,
             pending_questions,
             pending_permissions,
+            settled,
         )
     });
     Ok(handle)

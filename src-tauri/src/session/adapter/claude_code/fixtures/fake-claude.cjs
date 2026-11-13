@@ -29,8 +29,18 @@ let lines = 0;
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   log({ stdin: JSON.parse(line) });
   if (++lines === 1) return start();
+  if (scenario === 'background' && JSON.parse(line).type === 'user') return reply();
   if (JSON.parse(line).type === 'control_response' && ++answered === expected) result();
 }).on('close', () => process.exit(0)); // stdin EOF is what ends a stream-json CLI
+
+// The user's reply lands in the live process: answer it, stop the stack, done.
+function reply() {
+  event({ type: 'message_start', message: { usage: usage(40100, 1) } });
+  text(0, ['great, stopping it']);
+  event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: usage(40100, 10) });
+  write({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+  result();
+}
 
 function start() {
   if (scenario === 'resume-rejected') process.exit(1); // the CLI refuses an unknown --resume before init
@@ -69,6 +79,14 @@ function start() {
   } else if (scenario === 'crash') {
     text(0, ['partial']);
     exitFlushed(3);
+  } else if (scenario === 'background') {
+    // "Start the stack and tell me if it looks good": a background Bash that
+    // outlives the turn, a plain-text question, then the result — the CLI stays
+    // alive on stdin until the task is gone (real 2.1.x behaviour).
+    write({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'bg-stack', type: 'local_bash' }] });
+    text(0, ['Stack started, tell me if it looks good']);
+    event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: usage(40000, 20) });
+    result();
   } else if (scenario === 'crash-parked') {
     // Dies with an approval still parked: the card must never outlive the process.
     ask('req-orphan', 'Bash', { command: 'mkdir orphan', description: 'Never answered' });

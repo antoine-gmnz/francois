@@ -165,6 +165,135 @@ pub fn mark_stream_live(env: &dyn SessionEnv, session_id: &str) {
     }
 }
 
+/// A held-open turn's `result` arrived (`RuntimeEvent::TurnSettled`): the CLI
+/// is alive, its background tasks still running, and its turn is over.
+///
+/// A message the user queued while the turn ran is delivered into the live
+/// child right away — waiting for the process to exit would mean waiting on a
+/// dev server that never does. With nothing queued the session reads `idle`,
+/// so the roster and the composer stop claiming work is under way, and the
+/// next send goes through `deliver_live` instead of the queue.
+///
+/// A turn still parked on an ask is left alone: its status is the card's.
+pub fn settle_turn(env: &dyn SessionEnv, session_id: &str, _background_tasks: usize) {
+    let engine = env.engine();
+    let Some(Some((control, queued))) = engine.with_session_mut(session_id, |s| {
+        if !status::is_busy(&s.status) {
+            return None;
+        }
+        let control = s.current.clone()?;
+        Some((control, s.queue.pop_front()))
+    }) else {
+        return;
+    };
+    let counts = control.pending_counts();
+    if counts.questions + counts.permissions > 0 {
+        if let Some(entry) = queued {
+            engine.with_session_mut(session_id, |s| s.queue.push_front(entry));
+        }
+        return;
+    }
+    if let Some((block_id, text)) = queued {
+        if !deliver_live(env, session_id, &block_id, &text, &control) {
+            // The channel is gone: the process is winding down, and the turn
+            // end (`finish_turn`) drains the queue into a fresh spawn.
+            engine.with_session_mut(session_id, |s| s.queue.push_front((block_id, text)));
+        }
+        return;
+    }
+    let settled = engine
+        .with_session_mut(session_id, |s| {
+            if !status::is_busy(&s.status) {
+                return false;
+            }
+            s.status = status::IDLE.into();
+            s.last_activity_at = now_ms();
+            true
+        })
+        .unwrap_or(false);
+    if settled {
+        env.emit_session(SessionEvent::Status {
+            session_id: session_id.into(),
+            status: status::IDLE.into(),
+        });
+        env.persist();
+    }
+}
+
+/// A settled CLI started a turn of its own (`RuntimeEvent::TurnResumed`):
+/// `idle` → `running`. Narrow like `mark_stream_live` — it only promotes from
+/// `idle`, so an injected reply (already `running`) is never re-announced.
+pub fn resume_settled_turn(env: &dyn SessionEnv, session_id: &str) {
+    let resumed = env
+        .engine()
+        .with_session_mut(session_id, |s| {
+            if s.status != status::IDLE || s.current.is_none() {
+                return false;
+            }
+            s.status = status::RUNNING.into();
+            s.last_activity_at = now_ms();
+            true
+        })
+        .unwrap_or(false);
+    if resumed {
+        env.emit_session(SessionEvent::Status {
+            session_id: session_id.into(),
+            status: status::RUNNING.into(),
+        });
+    }
+}
+
+/// May a reply go into the settled turn's live child? Only if that child runs
+/// with what the session is configured for NOW: the CLI fixed its model,
+/// permission mode, effort and account at spawn, so a change made since must
+/// reach a fresh child rather than be silently ignored by the old one.
+pub(crate) fn live_turn_matches(s: &Session) -> bool {
+    s.running_context.as_ref().is_some_and(|ctx| {
+        ctx.model_id == s.model_id
+            && ctx.permission_mode == s.permission_mode
+            && ctx.effort == s.effort
+            && ctx.account_id == s.account_id
+    })
+}
+
+/// Write a user message into a settled turn's live runtime and, if it landed,
+/// record it exactly as a fresh turn's prompt is recorded — user block
+/// buffered + persisted, `message.user`, then `running`. Never called with the
+/// sessions lock held: `send_live` writes to the child's stdin.
+pub fn deliver_live(
+    env: &dyn SessionEnv,
+    session_id: &str,
+    block_id: &str,
+    text: &str,
+    control: &Arc<dyn TurnControl>,
+) -> bool {
+    if !control.send_live(text) {
+        return false;
+    }
+    let block = env
+        .engine()
+        .with_session_mut(session_id, |s| {
+            s.buf_user(block_id, text.to_string());
+            s.status = status::RUNNING.into();
+            s.last_activity_at = now_ms();
+            s.block_buffer.last().cloned()
+        })
+        .flatten();
+    if let Some(b) = &block {
+        env.append_transcript(session_id, b);
+    }
+    env.emit_session(SessionEvent::MessageUser {
+        session_id: session_id.into(),
+        block_id: block_id.into(),
+        text: text.into(),
+    });
+    env.emit_session(SessionEvent::Status {
+        session_id: session_id.into(),
+        status: status::RUNNING.into(),
+    });
+    true
+}
+
 /// Recompute the session's parked status from the turn's pending maps and publish
 /// it if it moved.
 ///
@@ -454,6 +583,85 @@ mod tests {
 
     use crate::session::testenv::TestEnv;
     use crate::session::testutil::{test_engine_with, test_session, FakeTurnControl};
+
+    #[test]
+    fn a_live_reply_needs_the_child_to_run_as_the_session_is_configured_now() {
+        assert!(
+            !live_turn_matches(&test_session()),
+            "no running turn, nothing to answer live"
+        );
+        let configured = |change: fn(&mut Session)| {
+            let mut s = test_session();
+            s.running_context = build_turn_context(
+                &test_engine_with(test_session()),
+                "s1",
+                "b".into(),
+                "t".into(),
+                TurnMode::Normal,
+            );
+            change(&mut s);
+            live_turn_matches(&s)
+        };
+        assert!(configured(|_| {}));
+        // The CLI fixed these at spawn — a change must reach a fresh child.
+        assert!(!configured(|s| s.model_id = "other-model".into()));
+        assert!(!configured(|s| s.permission_mode = "plan".into()));
+        assert!(!configured(|s| s.effort = Some("max".into())));
+        assert!(!configured(|s| s.account_id = "other-account".into()));
+    }
+
+    #[test]
+    fn only_a_settled_session_with_a_live_turn_resumes_as_running() {
+        for (status, live, expect) in [
+            ("idle", true, Some("running")),
+            ("idle", false, None),   // nothing alive to have resumed
+            ("running", true, None), // an injected reply already said so
+            ("error", true, None),
+        ] {
+            let mut session = test_session();
+            session.status = status.into();
+            session.current = live.then(|| FakeTurnControl::new(0, 0) as Arc<dyn TurnControl>);
+            let env = TestEnv {
+                engine: test_engine_with(session),
+                ..Default::default()
+            };
+            resume_settled_turn(&env, "s1");
+            let emitted = env
+                .session_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|e| match e {
+                    SessionEvent::Status { status, .. } => Some(status.clone()),
+                    _ => None,
+                });
+            assert_eq!(emitted.as_deref(), expect, "{status} live={live}");
+        }
+    }
+
+    #[test]
+    fn settling_waits_on_a_parked_card_and_otherwise_reads_idle() {
+        for (permissions, expect) in [(0, Some("idle")), (1, None)] {
+            let mut session = test_session();
+            session.status = "running".into();
+            session.current = Some(FakeTurnControl::new(0, permissions));
+            let env = TestEnv {
+                engine: test_engine_with(session),
+                ..Default::default()
+            };
+            settle_turn(&env, "s1", 1);
+            let emitted = env
+                .session_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|e| match e {
+                    SessionEvent::Status { status, .. } => Some(status.clone()),
+                    _ => None,
+                });
+            assert_eq!(emitted.as_deref(), expect);
+        }
+    }
 
     /// multi-provider-seam FR-9: `refresh_parked_status` reads
     /// `TurnControl::pending_counts()` and NOTHING else about the turn — driven

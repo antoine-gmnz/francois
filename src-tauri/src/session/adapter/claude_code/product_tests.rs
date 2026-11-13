@@ -339,6 +339,96 @@ fn text_turn_keeps_the_claude_protocol_and_projects_parent_context_usage() {
 }
 
 #[test]
+fn a_turn_held_open_by_a_background_task_settles_idle_and_takes_the_reply_live() {
+    // "Start the stack and tell me if it looks good": the turn's result comes
+    // while its background Bash still runs, so the CLI stays alive on stdin.
+    let fake = FakeClaude::new("background");
+    let (env, effects) = setup(None);
+    start(&env, &effects, &fake, "s1");
+    // The turn is over and the session says so — no longer `running`
+    // behind a process that, for a dev server, never exits.
+    wait(|| {
+        (env.engine
+            .with_session("s1", |s| s.status.clone())
+            .as_deref()
+            == Some("idle"))
+        .then_some(())
+    });
+    assert!(
+        effects.terminals.lock().unwrap().is_empty(),
+        "the turn is settled, not finished"
+    );
+    let pid = fake.pid();
+    assert!(alive(pid), "the CLI and its background task stay up");
+
+    // The reply is written into that same process — no respawn, no queue.
+    let control = env
+        .engine
+        .with_session("s1", |s| s.current.clone())
+        .flatten()
+        .expect("the live turn is still installed");
+    assert!(crate::session::deliver_live(
+        env.as_ref(),
+        "s1",
+        "reply-block",
+        "looks good, stop it",
+        &control
+    ));
+    assert!(!control.send_live("again"), "one reply per settled turn");
+    assert_eq!(effects.settled(), vec!["finished"]);
+    assert_eq!(fake.spawns.load(Ordering::SeqCst), 1);
+    let reply: Value = serde_json::from_str(user_line("looks good, stop it").trim_end()).unwrap();
+    assert_eq!(fake.stdin()[1..], [reply]);
+
+    let statuses: Vec<String> = events(&env)
+        .into_iter()
+        .filter_map(|e| match e {
+            SessionEvent::Status { status, .. } => Some(status),
+            _ => None,
+        })
+        .collect();
+    let idle = statuses.iter().position(|s| s == "idle").unwrap();
+    assert_eq!(
+        statuses[idle + 1],
+        "running",
+        "the reply makes it busy again"
+    );
+    assert!(events(&env).iter().any(|e| matches!(e,
+        SessionEvent::MessageUser { block_id, .. } if block_id == "reply-block")));
+    assert!(events(&env).iter().any(|e| matches!(e,
+        SessionEvent::AssistantDone { text, .. } if text == "great, stopping it")));
+    assert_reaped(&fake);
+}
+
+#[test]
+fn a_reply_queued_during_the_turn_is_delivered_live_when_it_settles() {
+    // Typed while the turn was still streaming: it used to wait for the
+    // process to exit — i.e. for the background task, forever for a dev server.
+    let fake = FakeClaude::new("background");
+    let (env, effects) = setup(None);
+    env.engine.with_session_mut("s1", |s| {
+        s.queue
+            .push_back(("queued-block".into(), "queued reply".into()))
+    });
+    start(&env, &effects, &fake, "s1");
+    assert_eq!(effects.settled(), vec!["finished"]);
+    assert_eq!(
+        fake.spawns.load(Ordering::SeqCst),
+        1,
+        "same process, no respawn"
+    );
+    let reply: Value = serde_json::from_str(user_line("queued reply").trim_end()).unwrap();
+    assert_eq!(fake.stdin()[1..], [reply]);
+    assert!(env
+        .engine
+        .with_session("s1", |s| s.queue.is_empty())
+        .unwrap());
+    assert!(events(&env).iter().any(|e| matches!(e,
+        SessionEvent::MessageUser { block_id, .. } if block_id == "queued-block")));
+    assert_reaped(&fake);
+}
+
+#[test]
 fn tool_use_and_result_project_as_one_settled_tool_block() {
     let fake = FakeClaude::new("tool");
     let (env, effects) = setup(None);
