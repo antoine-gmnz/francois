@@ -290,8 +290,8 @@ pub use stream::parse_stream;
 pub(crate) use tools::{line_count, tool_meta, tool_summary, truncate};
 pub(crate) use transcript_cap::{trim_transcript, TRANSCRIPT_BUFFER_CAP};
 pub(crate) use turn::{
-    begin_turn, fail_session, finish_turn, is_resume_fail, mark_stream_live, refresh_parked_status,
-    update_used,
+    begin_turn, deliver_live, fail_session, finish_turn, is_resume_fail, live_turn_matches,
+    mark_stream_live, refresh_parked_status, resume_settled_turn, settle_turn, update_used,
 };
 pub use usage_probe::start_usage_probe;
 pub use workflow_details::{

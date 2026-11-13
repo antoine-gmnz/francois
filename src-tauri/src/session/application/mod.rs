@@ -281,6 +281,16 @@ pub(crate) enum RuntimeEvent {
         outcome: String,
         rule: Option<PermissionRule>,
     },
+    /// The CLI emitted its turn's `result` but stays alive, its control
+    /// channel held open for background tasks (session/stdio.rs): the turn is
+    /// over and the session waits on the user, so it reads `idle` and the next
+    /// message is written into the live child instead of queueing behind it.
+    TurnSettled {
+        background_tasks: usize,
+    },
+    /// A settled CLI started a turn of its own (the follow-up it runs when a
+    /// background task reports, or a background subagent's ask): busy again.
+    TurnResumed,
     TurnFinished,
     TurnFailed(AppError),
 }

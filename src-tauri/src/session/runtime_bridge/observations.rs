@@ -12,6 +12,8 @@ pub(super) fn apply(
     let engine = env.engine();
     match event {
         RuntimeEvent::StreamLive => mark_stream_live(env, id),
+        RuntimeEvent::TurnSettled { background_tasks } => settle_turn(env, id, background_tasks),
+        RuntimeEvent::TurnResumed => resume_settled_turn(env, id),
         RuntimeEvent::AssistantAppend { block_id, text } => {
             engine.with_session_mut(id, |s| s.buf_assistant_streaming(&block_id, &text, &text));
         }

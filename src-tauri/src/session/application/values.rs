@@ -109,4 +109,11 @@ pub(crate) trait TurnControl: Send + Sync {
     /// ask so it can be resolved `cancelled` before the process is killed.
     /// Returns `(question block ids, permission block ids)`.
     fn drain_pending(&self) -> (Vec<String>, Vec<String>);
+    /// Deliver a user message into the live runtime of a SETTLED turn (its
+    /// result is in, the process waits on input). `false` ⇔ not settled, or
+    /// the channel is gone — the caller then starts a fresh turn as before.
+    /// Only a runtime that emits `RuntimeEvent::TurnSettled` overrides it.
+    fn send_live(&self, _text: &str) -> bool {
+        false
+    }
 }

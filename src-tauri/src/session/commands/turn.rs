@@ -138,6 +138,42 @@ pub fn do_send(
             queue_position: Some(pos),
         });
     }
+    // idle, but the last turn's CLI is still alive — settled on its result,
+    // held open for background tasks (the dev server it started, a subagent).
+    // Answer it in place: a fresh spawn would tear that process tree down, and
+    // queueing would wait on it forever. Only when the turn would run as
+    // configured now — a model/permission/effort change since it spawned
+    // needs a fresh child to take effect.
+    let live = s
+        .current
+        .clone()
+        .filter(|_| s.status == status::IDLE && live_turn_matches(s));
+    if let Some(control) = live {
+        drop(map);
+        if deliver_live(app, session_id, &block_id, &text, &control) {
+            return ok(SendOutput {
+                queued: false,
+                queue_position: None,
+            });
+        }
+        map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+    }
+    let Some(s) = map.get_mut(session_id) else {
+        return err(ErrorCode::SessionNotFound, "no such session");
+    };
+    if status::is_busy(&s.status) || status::is_terminal(&s.status) {
+        // The session moved while the lock was released (the CLI resumed on
+        // its own) — the message waits for it like any other.
+        if s.queue.len() >= QUEUE_CAP {
+            return err(ErrorCode::InvalidInput, "send queue is full (20 pending)");
+        }
+        s.queue.push_back((block_id, text));
+        let pos = s.queue.len();
+        return ok(SendOutput {
+            queued: true,
+            queue_position: Some(pos),
+        });
+    }
     // idle → start a turn. `starting` until the stream's system/init arrives, so
     // the card can say "spawning" instead of claiming work that has not begun.
     s.status = status::STARTING.into();
