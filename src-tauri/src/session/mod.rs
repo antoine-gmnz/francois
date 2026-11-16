@@ -17,6 +17,7 @@ mod codex_resources;
 //    matching FR-19's lazy-error path rather than failing `create`.
 
 mod adapter;
+mod agent_tasks;
 mod agent_transcript;
 mod agents;
 mod application;
@@ -891,6 +892,10 @@ pub struct Session {
     /// FR-1 correlation key: dispatch tool_use_id → agentId. Lives on the session
     /// (not the turn-local `tools` map) so FR-13/FR-16 reach it after the call closed.
     agent_by_tool: HashMap<String, String>,
+    /// The CLI's stable task id (`task_started.task_id`, an attributed line's
+    /// `agent_id`) → agentId. Survives `SendMessage` resumes, whose lines keep
+    /// the original dispatch's `parent_tool_use_id` (see agent_tasks.rs).
+    agent_by_task: HashMap<String, String>,
     /// FR-12: the ≤200-step trail per agent.
     agent_steps: HashMap<String, VecDeque<AgentStep>>,
     /// FR-12: next `seq` per agent (1-based).
@@ -1055,6 +1060,7 @@ impl Session {
             agents: HashMap::new(),
             agent_order: Vec::new(),
             agent_by_tool: HashMap::new(),
+            agent_by_task: HashMap::new(),
             agent_steps: HashMap::new(),
             agent_step_seq: HashMap::new(),
             agent_inner_tools: HashMap::new(),

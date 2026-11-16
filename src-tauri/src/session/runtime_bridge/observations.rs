@@ -12,6 +12,14 @@ pub(super) fn apply(
     let engine = env.engine();
     match event {
         RuntimeEvent::StreamLive => mark_stream_live(env, id),
+        RuntimeEvent::SubagentTask(line) => {
+            let emissions = engine
+                .with_session_mut(id, |s| {
+                    crate::session::agent_tasks::apply_agent_task(s, line, crate::session::now_ms())
+                })
+                .unwrap_or_default();
+            emit_agent_emissions(env, id, emissions);
+        }
         RuntimeEvent::TurnSettled { background_tasks } => settle_turn(env, id, background_tasks),
         RuntimeEvent::TurnResumed => resume_settled_turn(env, id),
         RuntimeEvent::AssistantAppend { block_id, text } => {
@@ -140,12 +148,17 @@ pub(super) fn apply(
         }
         RuntimeEvent::SubagentObserved {
             parent_tool_use_id,
+            task_id,
             items,
             at,
         } => {
             let emissions = engine
                 .with_session_mut(id, |s| {
-                    let agent_id = s.agent_by_tool.get(&parent_tool_use_id)?.clone();
+                    let agent_id = crate::session::agent_tasks::resolve_attributed(
+                        s,
+                        &parent_tool_use_id,
+                        task_id.as_deref(),
+                    )?;
                     Some(observe_agent(s, &agent_id, items, cwd, at))
                 })
                 .flatten()

@@ -87,6 +87,14 @@ function start() {
     text(0, ['Stack started, tell me if it looks good']);
     event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: usage(40000, 20) });
     result();
+  } else if (scenario === 'resumed-agent') {
+    // SendMessage woke an agent dispatched by a PREVIOUS process: the task line
+    // names the SendMessage call, the agent's own lines the original Agent call.
+    write({ type: 'system', subtype: 'task_started', task_id: 'task-reviewer', tool_use_id: 'toolu_send', description: 'Review WW-197', subagent_type: 'waati:waati-reviewer', is_backgrounded: true, task_type: 'local_agent' });
+    write({ type: 'assistant', parent_tool_use_id: 'toolu_agent_from_before', agent_id: 'task-reviewer', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_inner', name: 'Read', input: { file_path: 'README.md' } }] } });
+    write({ type: 'system', subtype: 'task_notification', task_id: 'task-reviewer', tool_use_id: 'toolu_send', status: 'completed' });
+    text(0, ['review done']);
+    result();
   } else if (scenario === 'crash-parked') {
     // Dies with an approval still parked: the card must never outlive the process.
     ask('req-orphan', 'Bash', { command: 'mkdir orphan', description: 'Never answered' });

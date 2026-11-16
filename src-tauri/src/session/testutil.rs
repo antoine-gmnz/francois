@@ -182,6 +182,7 @@ pub fn test_session() -> Session {
         agents: HashMap::new(),
         agent_order: Vec::new(),
         agent_by_tool: HashMap::new(),
+        agent_by_task: HashMap::new(),
         agent_steps: HashMap::new(),
         agent_step_seq: HashMap::new(),
         agent_inner_tools: HashMap::new(),

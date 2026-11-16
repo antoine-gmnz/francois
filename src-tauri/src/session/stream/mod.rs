@@ -167,6 +167,9 @@ fn parse_frames(
                 if let Some(running) = parse_background_tasks(&v) {
                     bg_tasks.store(running, Ordering::Relaxed);
                 }
+                if let Some(task) = crate::session::agent_tasks::parse_agent_task_line(&v) {
+                    env.publish(RuntimeEvent::SubagentTask(task));
+                }
                 if handle_system_line(env, session_id, &cwd, &v) {
                     got_init = true;
                     // The stream is live: `starting` → `running`. Only the init
@@ -393,6 +396,10 @@ fn publish_attributed(env: &dyn StreamEnvironment, parent_tool_use_id: &str, val
         .collect();
     env.publish(RuntimeEvent::SubagentObserved {
         parent_tool_use_id: parent_tool_use_id.into(),
+        task_id: value
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .map(String::from),
         items,
         at: now_ms(),
     });

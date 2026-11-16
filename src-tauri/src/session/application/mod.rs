@@ -196,6 +196,9 @@ pub(crate) enum RuntimeEvent {
     },
     SubagentObserved {
         parent_tool_use_id: String,
+        /// The CLI's task id the line carried (`agent_id`), when it did — the
+        /// fallback key for a dispatch made by a previous process.
+        task_id: Option<String>,
         items: Vec<SubagentObservation>,
         at: u64,
     },
@@ -223,6 +226,8 @@ pub(crate) enum RuntimeEvent {
     CompletionNotice {
         text: String,
     },
+    /// A `system` `task_started`/`task_notification` about a subagent.
+    SubagentTask(super::agent_tasks::AgentTaskLine),
     ResumeRejected,
     Capabilities(RuntimeCapabilities),
     ConnectionClosed(AppError),
@@ -433,6 +438,7 @@ pub(crate) fn apply_event(
         RuntimeEvent::SubagentStarted { .. }
             | RuntimeEvent::SubagentState { .. }
             | RuntimeEvent::SubagentObserved { .. }
+            | RuntimeEvent::SubagentTask(_)
             | RuntimeEvent::McpObserved(_)
             | RuntimeEvent::RemoteObserved(_)
     );
