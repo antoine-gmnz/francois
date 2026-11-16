@@ -429,6 +429,48 @@ fn a_reply_queued_during_the_turn_is_delivered_live_when_it_settles() {
 }
 
 #[test]
+fn an_agent_resumed_by_send_message_after_a_restart_shows_runs_and_ends() {
+    // The panel used to read "No subagents" while this reviewer ran: its
+    // `Agent` call belonged to a previous process, so nothing matched it.
+    let fake = FakeClaude::new("resumed-agent");
+    let (env, effects) = setup(None);
+    start(&env, &effects, &fake, "s1");
+    assert_eq!(effects.settled(), vec!["finished"]);
+    let updates: Vec<(String, String, String)> = events(&env)
+        .into_iter()
+        .filter_map(|e| match e {
+            SessionEvent::AgentUpdate { agent } => {
+                let v = serde_json::to_value(&agent).unwrap();
+                Some((
+                    v["id"].as_str().unwrap().to_string(),
+                    v["name"].as_str().unwrap().to_string(),
+                    v["status"].as_str().unwrap().to_string(),
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    let first = updates.first().expect("the resumed agent is shown").clone();
+    assert_eq!(
+        (first.1.as_str(), first.2.as_str()),
+        ("waati:waati-reviewer", "running")
+    );
+    assert!(
+        updates.iter().all(|u| u.0 == first.0),
+        "one agent, not one per key"
+    );
+    assert_eq!(
+        updates.last().unwrap().2,
+        "done",
+        "its notification closes it"
+    );
+    // Its own line, attributed to the old dispatch id, reached its trail.
+    assert!(events(&env).iter().any(|e| matches!(e,
+        SessionEvent::AgentStepEvent { agent_id, .. } if *agent_id == first.0)));
+    assert_reaped(&fake);
+}
+
+#[test]
 fn tool_use_and_result_project_as_one_settled_tool_block() {
     let fake = FakeClaude::new("tool");
     let (env, effects) = setup(None);

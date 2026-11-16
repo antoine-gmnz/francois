@@ -351,6 +351,7 @@ impl Agents {
         }
         vec![RuntimeEvent::SubagentObserved {
             parent_tool_use_id: child.correlation.clone(),
+            task_id: None,
             items,
             at: crate::ids::now_ms(),
         }]
