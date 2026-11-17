@@ -127,7 +127,7 @@ A CodeMirror variant was built and parked on `wip/code-editor-codemirror` (commi
 
 ## 5. API contract
 
-`contract/code-editor.ts`. The domain is `editor`; add it to PIPELINE.md §Domains.
+`contract/code-editor.ts`. The domain is `editor`; add it to CONVENTIONS.md §Domains.
 
 ```ts
 import type { Result, SessionId } from './common';

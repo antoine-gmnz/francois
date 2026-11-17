@@ -41,7 +41,7 @@ batch as new panels it gets diagnosed as a panel bug.
 - **Non-goals**
   - **Any automated CSP gate** (a test asserting the policy string, a packaged-build smoke check) —
     explicitly declined; see §7. Verification is manual and per-surface, by decision.
-  - **The 85 inline `style={{}}` occurrences across 34 files.** Real, and a `PIPELINE.md` §Code
+  - **The 85 inline `style={{}}` occurrences across 34 files.** Real, and a `CONVENTIONS.md` §Code
     layout violation, and the reason `style-src` stays permissive — but a 34-file diff that would
     swallow this feature. Logged in `specs/refactor-backlog.md`, not done here.
   - Splitting `style-src` into `style-src-elem` / `style-src-attr` (refuted — see FR-9).

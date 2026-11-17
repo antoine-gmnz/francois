@@ -171,7 +171,7 @@ separate data directories — run both at once, sessions never collide.
 - **Core**: Rust — session lifecycle, NDJSON event streaming from `claude -p --output-format stream-json`, PTY management, git via the system CLI. Heavy work stays off the UI thread.
 - **Frontend**: React 18 + TypeScript (`strict`), zustand, xterm.js, plain CSS design tokens (per-feature stylesheets, a shared UI kit, no inline styles), IBM Plex Sans + JetBrains Mono.
 - **Contract-first**: every frontend↔core payload shape lives in [`contract/`](contract/) — the Rust core mirrors it with serde. No stringly-typed IPC.
-- **Spec-driven**: every feature ships from a frozen spec in [`specs/`](specs/), through an agent pipeline described in [`PIPELINE.md`](PIPELINE.md). The design reference lives in [`PROJECT.md`](PROJECT.md).
+- **Spec-driven**: every feature ships from a frozen spec in [`specs/`](specs/), through an agent pipeline described in [`CONVENTIONS.md`](CONVENTIONS.md). The design reference lives in [`PROJECT.md`](PROJECT.md).
 - **CI**: typecheck + vitest + cargo test on every PR. Every push to `main` cuts a version — the next semver is derived from the conventional commits since the last tag, built for all three OSes, attached to a GitHub release (installers + installer-free archives), and published to the [`francois` npm package](packaging/npm). No manual step at any point.
 
 ## Roadmap

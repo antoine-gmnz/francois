@@ -1,5 +1,5 @@
 // contract/code-editor-vsx.ts — code-editor-vsx feature contract (specs/code-editor-vsx.md §5).
-// Binding per PIPELINE.md: francois:vsx:<verb> -> invoke('vsx_<verb>') -> Promise<Result<T>>.
+// Binding per CONVENTIONS.md: francois:vsx:<verb> -> invoke('vsx_<verb>') -> Promise<Result<T>>.
 // No event stream: every verb is request/response; the frontend reloads contributions after
 // install / uninstall / enable.
 // Added ErrorCode members (VSX_UNREACHABLE, VSX_NOT_FOUND, VSX_INVALID_PACKAGE, VSX_UNSUPPORTED)

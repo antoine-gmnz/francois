@@ -116,7 +116,7 @@ Keyboard navigation skips it.
 - **FR-11** `account_rename`, `account_set_default` and `account_remove` are **kind-agnostic** and get
   no endpoint branch. An endpoint account can be the default account.
 - **FR-12** Every new command is registered in the invoke handler and returns `Result` — never
-  rejects, per PIPELINE §Conventions.
+  rejects, per CONVENTIONS §Conventions.
 
 ### Frontend
 

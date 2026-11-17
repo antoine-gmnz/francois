@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Extension install (`extension-install`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of
 > `specs/extension-install.md`, standalone.
 
 **Goal:** the user sees what plugins are installed on their machine, reads the commands each one

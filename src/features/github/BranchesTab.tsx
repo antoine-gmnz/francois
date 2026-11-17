@@ -92,7 +92,7 @@ export function BranchesTab({ cwd, repo, refreshKey, onPruned, onOpenPull }: Bra
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, refreshKey]);
 
   useDismiss(menuRef, { onEscape: () => setOpenMenuFor(null), onOutsideClick: () => setOpenMenuFor(null), enabled: openMenuFor !== null });

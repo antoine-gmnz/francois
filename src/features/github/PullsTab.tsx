@@ -56,7 +56,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
     setPulls(null);
     setSelected(null);
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, refreshKey, ghAvailable]);
 
   const filtered = useMemo(() => (pulls ?? []).filter((p) => filterMatchesPull(p, query)), [pulls, query]);
@@ -74,7 +74,7 @@ export function PullsTab({ cwd, repo, refreshKey }: PullsTabProps): JSX.Element 
       return;
     }
     if (selected === null || !filtered.some((p) => p.number === selected)) setSelected(filtered[0].number);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [filtered]);
 
   if (!ghAvailable) {

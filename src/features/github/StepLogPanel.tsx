@@ -45,7 +45,7 @@ export function StepLogPanel({ cwd, job, step }: StepLogPanelProps): JSX.Element
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, job.jobId, step.number]);
 
   // FR-10: scroll so firstErrorLine sits ~5 lines from the top; no error -> bottom.

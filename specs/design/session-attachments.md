@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Session attachments (`session-attachments`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of
 > `specs/session-attachments.md`, standalone.
 
 **Goal:** Hand a file or a screenshot to a running session without leaving the composer — drop it,
@@ -132,7 +132,7 @@ internal.
 
 ## Notes / constraints
 
-- **UI language: English** (`PIPELINE.md` → `ui_language`).
+- **UI language: English** (`CONVENTIONS.md` → `ui_language`).
 - **Styling idiom** — per-feature CSS + classNames, BEM-lite, tokens only. Everything new here goes
   in `src/features/conversation/conversation.css`; components import it directly. No inline
   `style={{}}` except a value computed from state. Check `src/ui/` before building any primitive.

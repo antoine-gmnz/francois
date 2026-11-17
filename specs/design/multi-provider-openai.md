@@ -1,6 +1,6 @@
 # DESIGN BRIEF — OpenAI-compatible sessions (`multi-provider-openai`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of
 > `specs/multi-provider-openai.md`, standalone.
 
 **Goal:** Run a session on an OpenAI-compatible endpoint that reads as an ordinary Francois session —

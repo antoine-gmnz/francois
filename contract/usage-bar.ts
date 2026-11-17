@@ -3,7 +3,7 @@
 // never redefines it. UsageMeter is the SAME type interactive-commands uses for
 // the /usage card — the parse grammar is shared, so the shape must be too.
 //
-// Channels (PIPELINE §Conventions binding):
+// Channels (CONVENTIONS §Conventions binding):
 //   francois:app:getUsage     → invoke('app_get_usage', payload)     → Promise<Result<UsageSnapshot>>
 //   francois:app:refreshUsage → invoke('app_refresh_usage', payload) → Promise<Result<UsageRefreshAck>>
 //   francois:app:event        → listen('francois://app/event')  // payload: AppEvent

@@ -121,7 +121,7 @@ existing error state showing the core's message; a click anywhere dismisses it.
 ## 5. API contract
 
 Lives in `contract/open-in-vscode.ts`; the two `ErrorCode` members below go in `contract/common.ts`.
-Binding per PIPELINE.md: `francois:session:<verb>` → `invoke('session_<verb>')` → `Promise<Result<T>>`.
+Binding per CONVENTIONS.md: `francois:session:<verb>` → `invoke('session_<verb>')` → `Promise<Result<T>>`.
 **No new `SessionEvent` member.**
 
 **Added to `contract/common.ts`**

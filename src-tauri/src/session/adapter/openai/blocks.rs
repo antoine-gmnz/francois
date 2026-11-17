@@ -1,6 +1,6 @@
 //! Pure round-trip decision helpers (FR-6/FR-7/§7) and the transcript
 //! block-emission helpers `runner.rs`'s loop drives them into. Split out of
-//! `runner.rs` (PIPELINE.md §Code layout's ~1000-line ceiling) — same
+//! `runner.rs` (CONVENTIONS.md §Code layout's ~1000-line ceiling) — same
 //! one-concern-per-child pattern `gate.rs`/`tools.rs`/`wire.rs`/`thread.rs`/
 //! `skills.rs` already follow. `pub(super)`: every item here is called from
 //! `runner.rs`, a sibling module, not a descendant of this one.

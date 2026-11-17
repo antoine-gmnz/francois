@@ -260,7 +260,7 @@ The only observable flows are absences.
   quarter — Rust does not reject intra-crate cycles and clippy has no lint for them.
 
 > **Surface note (FR-21, FR-23):** the quality-gate rules live in `scripts/quality/`, which
-> `PIPELINE.md` declares is *not a surface* — no agent owns it. Assign both to the **core** agent:
+> `CONVENTIONS.md` declares is *not a surface* — no agent owns it. Assign both to the **core** agent:
 > the rules they add are Rust-shape rules and only the core agent knows the shapes being checked.
 
 ## 5. API contract

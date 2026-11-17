@@ -170,7 +170,7 @@ session is removed from Francois, the directory is kept.
 ## 5. API contract
 
 Lives in `contract/session-worktree.ts`; the two shared additions below go in `contract/common.ts`.
-Binding per PIPELINE.md: `francois:session:<verb>` → `invoke('session_<verb>')` → `Promise<Result<T>>`.
+Binding per CONVENTIONS.md: `francois:session:<verb>` → `invoke('session_<verb>')` → `Promise<Result<T>>`.
 
 **Added to `contract/common.ts`**
 
@@ -381,7 +381,7 @@ state. Tokens, glyphs and motion come from `Claude Terminal.dc.html`.
 - [x] MEDIUM · `src/features/sessions/NewSessionModal.tsx:342-386,775-787` · spec-violation · §7's probe→create race stacked the raw `WORKTREE_BRANCH_IN_USE` red banner on top of FR-5's amber recovery offer. — fixed: new pure `submitErrorBanner` (`features/sessions/worktree.ts:130-140`) suppresses the error *at set time* when the race error carries a usable `detail.path`, so the red banner can't even flash for a frame (`NewSessionModal.tsx:353`); a path-less `WORKTREE_BRANCH_IN_USE` still surfaces as an error. Test at `features/sessions/worktree.test.ts:373-393`.
 - [x] LOW · `src/features/diff/DiffView.tsx:417-433` · quality · Truncated FR-15 sibling line carried no `title`, violating the design brief §Notes. — fixed: `title={siblingLine}` at `features/diff/DiffView.tsx:300-302`.
 - [x] LOW · `src/features/conversation/ConversationView.tsx:358,365` · quality · Dead `var(--warn, #d9a441)` fallback matching neither theme's real token. — fixed: bare `var(--warn)` at `ConversationView.tsx:355-356`, plus the same dead fallback in `NewSessionModal.tsx:737,741` and `Sidebar.tsx:600`; zero `d9a441` occurrences remain in `src`.
-- [x] LOW · `.gitignore:9-11`, `CLAUDE.md:3`, `PIPELINE.md:31-38` · quality · **lead-owned, commit hygiene — no code change.** Ignoring `.claude/pipeline-metrics.jsonl`, the `thebidouille-agents`→`cohorte` rename, and the `gate.ask`→`ask_on_default_branch` split trace to nothing in this spec; they are pipeline-tooling churn bundled into the feature diff. — fixed: split into commit `9daf27e` ("chore: refresh cohorte pipeline core to 1.2.2") on `feat/session-worktree`, ahead of the feature commit.
+- [x] LOW · `.gitignore:9-11`, `CLAUDE.md:3`, `CONVENTIONS.md:31-38` · quality · **lead-owned, commit hygiene — no code change.** Ignoring `.claude/pipeline-metrics.jsonl`, the `thebidouille-agents`→`cohorte` rename, and the `gate.ask`→`ask_on_default_branch` split trace to nothing in this spec; they are pipeline-tooling churn bundled into the feature diff. — fixed: split into commit `9daf27e` ("chore: refresh cohorte pipeline core to 1.2.2") on `feat/session-worktree`, ahead of the feature commit.
 
 ### 2026-07-30 — review round 4 (4 findings)
 

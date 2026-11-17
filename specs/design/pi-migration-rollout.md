@@ -2,7 +2,7 @@
 
 **Goal:** expose the behaviour specified in [the task](../pi-migration-rollout.md) inside the existing François UI.
 **Status:** frozen; validated with the specification on 2026-09-18.
-**Design system:** existing UI kit and PIPELINE.md design conventions; English product copy.
+**Design system:** existing UI kit and CONVENTIONS.md design conventions; English product copy.
 
 ## Screens / views
 

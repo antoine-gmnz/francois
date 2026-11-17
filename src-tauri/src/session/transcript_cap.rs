@@ -1,5 +1,5 @@
 //! transcript-scale FR-1/FR-2: the `block_buffer` eviction concern, split out of
-//! `session/mod.rs` per PIPELINE.md's "each child owns one concern" rule — the
+//! `session/mod.rs` per CONVENTIONS.md's "each child owns one concern" rule — the
 //! parent was already past the ~1000-line ceiling before this module existed.
 //! Everything here is a pure function over `Vec<BufBlock>` plus its own tests;
 //! `Session::trim_block_buffer` (mod.rs) is the only in-tree caller.

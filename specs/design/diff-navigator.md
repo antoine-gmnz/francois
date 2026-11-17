@@ -95,7 +95,7 @@ from the existing `DiffHunk` / `DiffLine` payload.
 - Copy in English, lowercase terminal register (`filter files…`, `no file matches "…"`,
   `3 hidden by filter`).
 - Icons from `lucide-react` inheriting `currentColor`; the `▸`/`▾` disclosure carets stay typographic
-  glyphs per `PIPELINE.md` §Code layout.
+  glyphs per `CONVENTIONS.md` §Code layout.
 - Styling is per-feature CSS in `src/features/diff/diff.css`, BEM-lite; inline `style` only for
   runtime-computed values (the depth indent).
 - Accessibility: the roll-up mark is decorative (`aria-hidden`) since folders carry no selection

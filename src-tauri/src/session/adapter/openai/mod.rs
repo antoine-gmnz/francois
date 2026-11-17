@@ -3,7 +3,7 @@
 //! Code's names verbatim, and every one of those calls through the permission
 //! gate this app already owns. `AgentRuntime::Francois` resolves here.
 //!
-//! Per PIPELINE.md §Code layout this file owns the **shared data model** — the
+//! Per CONVENTIONS.md §Code layout this file owns the **shared data model** — the
 //! types the whole module touches — and declares the children, each of which
 //! owns one concern plus its own `#[cfg(test)] mod tests`:
 //!

@@ -2,7 +2,7 @@
 
 **Goal:** choose the models and efforts returned by the selected Codex account, with clear refresh and failure states.
 
-**Design system:** reuse `PIPELINE.md` §design, the existing ModelPicker, ChipGroup, Button, modal and run-chip components. Native desktop app; use feature CSS and current tokens. No new mockup is required for this small refinement of existing controls.
+**Design system:** reuse `CONVENTIONS.md` §design, the existing ModelPicker, ChipGroup, Button, modal and run-chip components. Native desktop app; use feature CSS and current tokens. No new mockup is required for this small refinement of existing controls.
 
 ## Screens / views
 

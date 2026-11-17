@@ -59,7 +59,7 @@ export function CommitDetail({ cwd, repo, sha, onChecksLoaded }: CommitDetailPro
     setDetail(null);
     setError(null);
     if (sha !== null) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, sha]);
 
   if (sha === null) {

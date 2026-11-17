@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Cloud Sessions (`cloud-sessions`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of the frozen
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of the frozen
 > spec, standalone.
 
 **Goal:** the user brings a Claude Code session they started on their phone or claude.ai into

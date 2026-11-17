@@ -60,7 +60,7 @@ Aucun nouveau contrat monolithique. Chaque livraison gèle ses types, canaux et 
 
 ## 6. Data & state
 
-Sources et capacités effectives par moteur/compte/modèle/version. Conserver les décisions Live et les responsabilités de `PIPELINE.md`. Le programme ne crée pas de registre, format ou état applicatif à lui seul.
+Sources et capacités effectives par moteur/compte/modèle/version. Conserver les décisions Live et les responsabilités de `CONVENTIONS.md`. Le programme ne crée pas de registre, format ou état applicatif à lui seul.
 
 ## 7. Edge cases & errors
 

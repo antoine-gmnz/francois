@@ -1,5 +1,5 @@
 // contract/code-editor.ts — code-editor feature contract (specs/code-editor.md §5).
-// Binding per PIPELINE.md: francois:editor:<verb> -> invoke('editor_<verb>') -> Promise<Result<T>>;
+// Binding per CONVENTIONS.md: francois:editor:<verb> -> invoke('editor_<verb>') -> Promise<Result<T>>;
 // event stream francois:editor:event -> Tauri event 'francois://editor/event'.
 // Added ErrorCode members (EDITOR_OUTSIDE_ROOT, EDITOR_FILE_NOT_FOUND, EDITOR_BINARY,
 // EDITOR_TOO_LARGE, EDITOR_STALE, EDITOR_WRITE_FAILED) live in contract/common.ts.

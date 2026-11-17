@@ -32,7 +32,7 @@ Numbered `FR-1`, `FR-2`, … Each requirement testable and unambiguous.
 
 ## 5. API contract
 
-The exact interface that will live in `contract/<id>.ts` (mechanism: canonical TypeScript payload types mirrored by serde structs in the Rust core, bound to Tauri commands/events — see PIPELINE.md). Must include:
+The exact interface that will live in `contract/<id>.ts` (mechanism: canonical TypeScript payload types mirrored by serde structs in the Rust core, bound to Tauri commands/events — see CONVENTIONS.md). Must include:
 
 - Every IPC channel: name (`francois:<domain>:<verb>`), direction, payload type, `Result<T>` data shape, and every error code it can return.
 - Every event this feature emits or consumes (tagged-union member names).

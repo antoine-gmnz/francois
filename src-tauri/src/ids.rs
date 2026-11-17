@@ -15,7 +15,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Epoch milliseconds — the timestamp unit the whole contract uses
-/// (`PIPELINE.md` §Conventions: "Timestamps: epoch milliseconds").
+/// (`CONVENTIONS.md` §Conventions: "Timestamps: epoch milliseconds").
 ///
 /// `0` when the system clock is before the epoch, rather than a panic: a
 /// nonsense clock must not be able to take the app down, and every consumer

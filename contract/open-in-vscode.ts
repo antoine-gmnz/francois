@@ -1,5 +1,5 @@
 // contract/open-in-vscode.ts — open-in-vscode feature contract.
-// Binding per PIPELINE.md: francois:session:<verb> -> invoke('session_<verb>') -> Promise<Result<T>>.
+// Binding per CONVENTIONS.md: francois:session:<verb> -> invoke('session_<verb>') -> Promise<Result<T>>.
 // Added ErrorCode members ('EDITOR_NOT_FOUND', 'EDITOR_LAUNCH_FAILED') live in contract/common.ts.
 
 import type { Result, SessionId } from './common';

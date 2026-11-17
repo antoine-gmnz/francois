@@ -50,7 +50,7 @@ If we switch to three stacked branches + three releases, Phase A grows and C/D/F
       handles that.
 - [x] Re-commit into four commits, each green:
   - [x] `d958075` `chore(cohorte): update the pipeline core to 2.4.0` — `.claude/`, `CLAUDE.md`,
-        `PIPELINE.md`, `specs/_template.md`
+        `CONVENTIONS.md`, `specs/_template.md`
   - [x] `3470d1d` `feat(session): the SessionAdapter/TurnControl seam` — seam scope only (49 files)
   - [x] `d2ab6ee` `feat(account): openai-compatible endpoint accounts` — endpoint scope only
         (26 files)

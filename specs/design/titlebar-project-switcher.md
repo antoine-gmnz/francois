@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Title-bar project switcher (`titlebar-project-switcher`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of the frozen
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of the frozen
 > spec, standalone.
 
 **Goal:** from the always-visible title bar, the user reads which project the session board is scoped to —

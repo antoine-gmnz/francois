@@ -1,7 +1,7 @@
 # Decisions
 
 > The project's **transverse decision journal** — the non-obvious rules a stateless agent would
-> otherwise re-discover or contradict, one feature at a time. `PIPELINE.md` says *how this repo is
+> otherwise re-discover or contradict, one feature at a time. `CONVENTIONS.md` says *how this repo is
 > built* (surfaces, commands, conventions); this file says *what was decided and why*.
 >
 > **Append-only. One line per decision. No prose blocks, no code.** The bound is the point: this file
@@ -29,7 +29,7 @@
 > `## Superseded` (the audit trail survives; the section the deciding stages actually read stays
 > short). Never summarize or merge live lines — a decision either holds or has been superseded.
 >
-> **What does NOT belong here:** anything the code, the tests, `PIPELINE.md` §Conventions or a spec
+> **What does NOT belong here:** anything the code, the tests, `CONVENTIONS.md` §Conventions or a spec
 > already states; a feature-local choice (that lives in its spec); a task, a TODO or a finding (those
 > are `## Remediation` and `specs/refactor-backlog.md`).
 

@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Extensions (`extensions`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of
 > `specs/extensions.md`, standalone.
 
 **Goal:** the user reads cohorte, git and docker state without leaving Francois — three main-pane tabs

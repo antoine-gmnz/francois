@@ -368,7 +368,7 @@ clock.
 > Ticked 2026-08-01 by `/review` round 2 (SHIP): spec conformance + `ui_language` copy verified by
 > the review, tests · typecheck green in the same cycle's preflight. Items left `- [ ]` are the ones
 > whose verifying stage has **not** run this cycle — they assert what the UI *renders* on click, and
-> no `/smoke` was run (per PIPELINE.md §Testing the frontend has no DOM component framework wired, so
+> no `/smoke` was run (per CONVENTIONS.md §Testing the frontend has no DOM component framework wired, so
 > unit tests cannot close them).
 
 - [x] The ack's `Transcript dir:` and `Script file:` are parsed onto the run, and a path

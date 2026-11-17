@@ -166,7 +166,7 @@ Two observable, the rest are absences.
   violations recorded in a baseline JSON, new ones fail). Follow the file's existing shape: a pure
   `<rule>Findings(files, baseline)` export wired into `allFindings`, with unit tests alongside.
 
-  > **Surface change (FR-8, FR-10):** these rules live in `scripts/quality/`, which `PIPELINE.md`
+  > **Surface change (FR-8, FR-10):** these rules live in `scripts/quality/`, which `CONVENTIONS.md`
   > declares is *not a surface* — no agent owns it, and the parent build's core agent correctly
   > refused them on those grounds. **Resolution: widen the `core` surface's `path` from
   > `src-tauri` to cover `scripts/quality/` as well**, and re-render `.claude/agents/core.md`.

@@ -106,7 +106,7 @@ agents and MCP definitions appear in the registry, marked with that origin.
 
 - **FR-1** `src-tauri/src/capability/mod.rs` owns the shared model: `CapabilityId`, `Origin`
   (`Project` · `User` · `Plugin { id }` · `Marketplace { id }` · `Builtin`), and the four record
-  types. Per PIPELINE §Code layout the model lives in `mod.rs` and each child owns one concern.
+  types. Per CONVENTIONS §Code layout the model lives in `mod.rs` and each child owns one concern.
 - **FR-2** `Skill { id, name, description, instructions, required_tools, origin, metadata }` —
   `instructions` is the `SKILL.md` body, read lazily rather than eagerly (a marketplace can hold
   hundreds; the panel needs only name + description).

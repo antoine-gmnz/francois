@@ -2,7 +2,7 @@
 
 > The "spec return". Source of truth: `Francois Redesign.dc.html` variant **3a** (Console chrome +
 > Focus reading + agent tabs). 4a (multi-account) and 1b/1c as standalone layouts are OUT OF SCOPE —
-> see PIPELINE.md decisions. Old mock: `Claude Terminal.dc.html`. Current tokens: `src/styles.css`
+> see CONVENTIONS.md decisions. Old mock: `Claude Terminal.dc.html`. Current tokens: `src/styles.css`
 > lines 22–183.
 
 **Goal:** Re-skin the existing app shell (unchanged layout/IPC) with 3a's visual language — IBM Plex

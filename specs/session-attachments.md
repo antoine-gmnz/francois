@@ -171,7 +171,7 @@ export type ClearScope =
 
 ### 5.2 Channels
 
-All are request/response on the `session` domain; per PIPELINE.md §Conventions each binds to a Tauri
+All are request/response on the `session` domain; per CONVENTIONS.md §Conventions each binds to a Tauri
 command `<domain>_<verb>` in snake_case and resolves to `Result<T>` — never rejects.
 
 | logical channel | command | payload | data | errors |

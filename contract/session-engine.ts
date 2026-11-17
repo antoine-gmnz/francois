@@ -4,7 +4,7 @@
 // ModelInfo / AgentInfo / McpServerInfo all live in common.ts — this feature
 // adds no members to them.
 //
-// Physical Tauri binding (PIPELINE.md): request channel
+// Physical Tauri binding (CONVENTIONS.md): request channel
 // `francois:session:<verb>` → Tauri command `session_<verb>`; the event stream
 // `francois:session:event` → Tauri event `francois://session/event`. Every
 // command RESOLVES a `Result<T>` (never rejects across the bridge).

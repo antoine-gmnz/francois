@@ -38,7 +38,7 @@ Keep account/model preflight, protected Codex catalog/usage behavior, response-m
 
 ## 5. API contract
 
-No IPC delta. Canonical contract/process-session-use-cases.ts re-exports existing requests/types. Core-private types are declared once inside session; names above are binding responsibilities, and splitting value/trait files follows PIPELINE layout. Internal trait refinements must compile with every existing runtime consumer through an explicit outer bridge. The public SessionAdapter name may remain for RuntimePort to avoid duplicate interfaces; there must be one native turn-start port when08/09 finish.
+No IPC delta. Canonical contract/process-session-use-cases.ts re-exports existing requests/types. Core-private types are declared once inside session; names above are binding responsibilities, and splitting value/trait files follows the CONVENTIONS layout. Internal trait refinements must compile with every existing runtime consumer through an explicit outer bridge. The public SessionAdapter name may remain for RuntimePort to avoid duplicate interfaces; there must be one native turn-start port when08/09 finish.
 
 ## 6. Ownership
 

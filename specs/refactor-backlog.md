@@ -199,7 +199,7 @@ Parked at the `/cohorte-review` SHIP verdict. All LOW, quality-only, non-securit
 `## Remediation` items.
 
 - [ ] LOW · src-tauri/src/shell/commands.rs:258-311 · quality · `shell_ensure`'s three branches each rebuild an identical `ShellEnsureData` block; extract a private `build_ensure_data(reg, session_id, shell_id)` helper and call it from all three sites · deferred:multiple-shells
-- [ ] LOW · src-tauri/src/shell/mod.rs:1012 · rule · file is 1012 lines, past the ~1000-line ceiling in PIPELINE.md §Code layout; move the `Registry` impl block and its tests into a child module `shell/registry.rs`, leaving `mod.rs` the shared data model + `dispose_session_shells`/`kill_all_shells` · deferred:multiple-shells
+- [ ] LOW · src-tauri/src/shell/mod.rs:1012 · rule · file is 1012 lines, past the ~1000-line ceiling in CONVENTIONS.md §Code layout; move the `Registry` impl block and its tests into a child module `shell/registry.rs`, leaving `mod.rs` the shared data model + `dispose_session_shells`/`kill_all_shells` · deferred:multiple-shells
 - [ ] LOW · src/features/shell/ShellStrip.tsx:105 · quality · the inline-rename `<input>` has no `maxLength`, so typing past 40 chars is accepted then silently truncated by the core on commit (FR-4), producing a visible shrink after `⏎`; add `maxLength={40}` · deferred:multiple-shells
 - [ ] LOW · src/features/sessions/useSessionFleetSync.ts:74 · test-coverage · the `useShellStore.getState().removeSession(id)` call site (FR-9) is never asserted — only `removeSession` in isolation is; extend a session-removal test to assert the roster/active-id/unread records are empty after `onRemoved` · deferred:multiple-shells
 - [ ] LOW · src/demo/demo.ts:211 · quality · `case 'session_remove': return ok(null)` never drops the session from `sessions[]` nor purges `demoShells[sessionId]`, so the demo fixture does not mirror FR-9's cleanup (pre-existing, README-capture fixture only) · deferred:multiple-shells
@@ -209,7 +209,7 @@ Parked at the `/cohorte-review` SHIP verdict. All LOW, quality-only, non-securit
 Parked at the `/cohorte-review` SHIP verdict (2026-08-05, round 2). Neither is CRITICAL/HIGH or security.
 
 - [ ] MEDIUM · src/features/notifications/notifications.ts:157 · quality · `handleNotificationAction` calls `setActiveSessionId(sessionId)` directly instead of routing through the focused-side pattern every other session-assignment entry point uses, so a notification click while split lands the session in an inert unfocused left pane (or swaps panes without moving `focusedSide`); use `if (splitSessionId !== null && focusedSide === 'right') openInRightPane(sessionId); else { setActiveSessionId(sessionId); setFocusedSide('left') }` and add a split-mode test · deferred:split-session
-- [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against PIPELINE.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session
+- [ ] LOW · src/features/usage/LayoutToggle.tsx:1 · rule · the split-session titlebar entry point (FR-9/FR-10) lives under the unrelated `usage` feature folder, against CONVENTIONS.md §Code layout; move it to `src/app/` beside `SplitPane.tsx`/`RightRail.tsx` along with the `.layout-toggle`/`.titlebar-divider` rules from `usage.css` · deferred:split-session
 
 ## deferred:webview-hardening
 
@@ -217,11 +217,11 @@ Logged per spec §2/§6 non-goal (explicit — not a review finding). Not fixed 
 would swallow the fonts/CSP commit pair this feature exists to ship.
 
 - **[LOW]** 84 inline `style={{}}` occurrences across 34 files in `src/features/**` and `src/app/`
-  · `PIPELINE.md` §Code layout violation ("Styling is per-feature CSS + classNames, never inline
+  · `CONVENTIONS.md` §Code layout violation ("Styling is per-feature CSS + classNames, never inline
   `style={{}}`") · this is also the reason `specs/webview-hardening.md`'s CSP (`app.security.csp`)
   keeps `style-src 'unsafe-inline'` rather than the tighter `style-src-elem`/`style-src-attr` split —
   see that spec's FR-9. → **Fix:** migrate each inline `style` object to a `<feature>.css` BEM-lite
-  class per `PIPELINE.md` §Code layout, file by file; once none remain, `style-src-attr 'none'`
+  class per `CONVENTIONS.md` §Code layout, file by file; once none remain, `style-src-attr 'none'`
   becomes viable and `webview-hardening`'s CSP can be revisited.
 
 ## deferred:cloud-sessions
@@ -229,7 +229,7 @@ would swallow the fonts/CSP commit pair this feature exists to ship.
 Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, quality-only, non-security.
 
 - [ ] LOW · src-tauri/src/session/cloud/auth.rs:81 · quality · resolve Bedrock/Vertex/base-URL env through the account-scoped mechanism `account_env` uses, once accounts carry provider config · deferred:cloud-sessions
-- [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in PIPELINE.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
+- [ ] LOW · src-tauri/src/session/cloud/api.rs:1-1028 · rule · file is 1028 lines, over the ~1000-line cap in CONVENTIONS.md §Code layout; split the ref-normalizer/repo-matching pure helpers (normalize_cloud_ref, remote_slug, repo_matches, timestamp parsing) plus their tests into a sibling module (cloud/refs.rs), leaving api.rs the HTTP calls and response mapping · deferred:cloud-sessions
 - [ ] LOW · src/features/cloud-sessions/AdoptCloudSessionModal.tsx:146-149 · quality · pick() sets ref/resolved but never updates cursor, so ArrowDown/ArrowUp right after a mouse pick restarts navigation from index 0/-1 instead of the clicked row; thread the row index into onPick (or list.sessions.findIndex) and setCursor to it inside pick · deferred:cloud-sessions
 
 ## deferred:extensions
@@ -269,12 +269,12 @@ Parked at the `/cohorte-review` SHIP verdict (2026-08-11, round 2). Both LOW, qu
 ## deferred:multi-provider-seam
 
 - [x] LOW · src/features/sessions/rename.test.ts:20, src/lib/panelCountsStore.test.ts:11, src/features/sessions/useSessionFleetSync.test.ts:11, src/lib/split-by-4.test.ts:55 · quality · replace the blanket `as unknown as SessionMeta` bypass casts with fully-populated fixture builders so future required contract fields fail loudly instead of silently · deferred:multi-provider-seam — DONE in the axis-split commit (66c1ce5); review round 3 verified zero `as unknown as SessionMeta` remain in src/ and no substitute escape hatch replaced them
-- [ ] LOW · src-tauri/src/session/mod.rs:1174 · complexity · exceeds the PIPELINE §Code layout ~1000-line guidance; split by concern (hive off SessionMeta/persistence-adjacent types), moving each type's tests with it · deferred:multi-provider-seam
+- [ ] LOW · src-tauri/src/session/mod.rs:1174 · complexity · exceeds the CONVENTIONS §Code layout ~1000-line guidance; split by concern (hive off SessionMeta/persistence-adjacent types), moving each type's tests with it · deferred:multi-provider-seam
 - [ ] LOW · src/features/**/*.test.ts, src/lib/*.test.ts (~15 files) · quality · ~15 hand-maintained SessionMeta/Account fixture builders duplicate the same field list; extract one shared makeSessionMeta(overrides?: Partial<SessionMeta>) (and makeAccount) into a test-utils module and have each spec's local helper delegate to it · deferred:multi-provider-seam
 
 ## deferred:multi-provider-openai
 
-- [x] LOW · src-tauri/src/session/adapter/openai/runner.rs · complexity · 1033 lines, over PIPELINE.md §Code layout's ~1000-line ceiling — split the pure decision + block-emission helpers into a sibling `blocks.rs` · **CLOSED 2026-08-17**: all 9 named helpers moved with the 12 tests covering them; `runner.rs` 1033 → 825, `blocks.rs` 298. Siblings, so the 9 needed `pub(super)`. Call sites are qualified `super::blocks::…` because the bare name collided with the unrelated pre-existing `session::blocks` that `runner.rs` already glob-imports (a real E0659, not a style nit) · deferred:multi-provider-openai
+- [x] LOW · src-tauri/src/session/adapter/openai/runner.rs · complexity · 1033 lines, over CONVENTIONS.md §Code layout's ~1000-line ceiling — split the pure decision + block-emission helpers into a sibling `blocks.rs` · **CLOSED 2026-08-17**: all 9 named helpers moved with the 12 tests covering them; `runner.rs` 1033 → 825, `blocks.rs` 298. Siblings, so the 9 needed `pub(super)`. Call sites are qualified `super::blocks::…` because the bare name collided with the unrelated pre-existing `session::blocks` that `runner.rs` already glob-imports (a real E0659, not a style nit) · deferred:multi-provider-openai
 - [x] LOW · src-tauri/src/session/adapter/openai/skills.rs (`excludes_slash_command_entries`) · quality · FR-27's "excludes every kind: 'command' entry" was proven by a standalone manual `.filter()` assertion, so removing the real filter would not have failed the test · **CLOSED 2026-08-17**: rewritten over a `FixedEnv` returning one `command` + one `skill`, asserting on `build_skill_block`'s own output. Proven the way the defect demanded — the filter was commented out, the test went red, the filter was restored, the test went green · deferred:multi-provider-openai
 - [x] LOW · src/ui/CapabilityNotice.tsx:20 / src/styles.css:1402 · quality · the design brief (specs/design/multi-provider-openai.md:97) specified wrap-to-two-lines then middle-truncate; the implementation end-clips via `-webkit-line-clamp: 2` with the full text on `title` · **CLOSED 2026-08-17 by amending the brief, not the code** — middle truncation at the *rendered* two-line boundary depends on the pane's live pixel width (resizable window, draggable dividers), so it needs DOM measurement this project cannot test (`environment: 'node'`, no DOM renderer), and the `middleTruncate` character-count route would be wrong at every width but one. Rationale recorded in the brief's §Resize behaviour · deferred:multi-provider-openai
 

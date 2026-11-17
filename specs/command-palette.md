@@ -14,7 +14,7 @@ The command palette is the app-wide ⌘K/Ctrl+K modal overlay: a text input over
 
 The registry is open: features beyond the seven built-ins enumerated here may register their own commands (e.g. `agents-panel`'s frozen spec already registers an eighth, "New agent") — see FR-7.
 
-Note on domains: `PIPELINE.md` reserves the `palette` IPC domain (`francois:palette:*`) for naming consistency, but this feature defines **no channels under it** — see §2 non-goals.
+Note on domains: `CONVENTIONS.md` reserves the `palette` IPC domain (`francois:palette:*`) for naming consistency, but this feature defines **no channels under it** — see §2 non-goals.
 
 ## 2. Goals & non-goals
 

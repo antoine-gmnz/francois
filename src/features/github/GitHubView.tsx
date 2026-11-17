@@ -94,12 +94,12 @@ export default function GitHubView(): JSX.Element {
     setPullCount(null);
     setBranchCount(null);
     void loadRepo(cwd);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd]);
 
   useEffect(() => {
     if (cwd && repo) void loadCounts(cwd, repo);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, repo, refreshKey]);
 
   if (!cwd) {

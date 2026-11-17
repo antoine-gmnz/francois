@@ -1,5 +1,5 @@
 // contract/code-editor-lsp.ts — code-editor-lsp feature contract (specs/code-editor-lsp.md §5).
-// Binding per PIPELINE.md: francois:lsp:<verb> -> invoke('lsp_<verb>') -> Promise<Result<T>>;
+// Binding per CONVENTIONS.md: francois:lsp:<verb> -> invoke('lsp_<verb>') -> Promise<Result<T>>;
 // event stream francois:lsp:event -> Tauri event 'francois://lsp/event'.
 // Added ErrorCode members live in contract/common.ts:
 //   LSP_NOT_INSTALLED      — no server binary for the language (detail: { installHint })

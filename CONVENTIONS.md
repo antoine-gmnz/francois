@@ -1,159 +1,19 @@
-# PIPELINE.md — Francois
+# CONVENTIONS.md — Francois
 
 Project: **Francois** — a desktop terminal app that orchestrates Claude Code sessions (named after Claude François, the French singer). Product description: `PROJECT.md`. Visual source of truth: `Claude Terminal.dc.html` + `screenshots/`.
 
-> **Machine block first, prose after.** The fenced `yaml pipeline-profile` block below is the
-> deterministic contract pipeline commands parse (`/build`, `/review`, …). The prose sections after it
-> carry the conventions agents read — they are authoritative for anything the block abbreviates.
-> Kept current by `/update-pipeline` (reconcile: new fields topped up, values never overwritten).
-> Rendered agent files (`.codex/agents/frontend.toml`, `core.toml`) are regenerated from this profile on
-> every reconcile — customize agents through §Conventions here, never by editing the agent files.
+## Surfaces & commands
 
-```yaml pipeline-profile
-# ── identity ────────────────────────────────────────────────────────────────
-name: Francois
-one_liner: Native desktop terminal app (Tauri 2) that orchestrates Claude Code sessions
-ui_language: English
-package_manager: npm                          # frontend tooling; the Rust core builds with cargo
+Two surfaces, synced only through the shared types in `contract/` (see §contract).
 
-# ── vcs ─────────────────────────────────────────────────────────────────────
-vcs:
-  host: github
-  remote: antoine-gmnz/francois
-  default_branch: main
-  feature_branch_prefix: feat/
-  patch_branch_prefix: fix/                  # same, for /cohorte-patch specs (kind: patch)
+| Surface | Path | Test | Lint | Typecheck | Format |
+|---|---|---|---|---|---|
+| frontend (React 18 + Vite + TypeScript) | `src/` | `npm test` | `npx eslint .` | `npx tsc --noEmit` | — (`eslint --fix`) |
+| core (Rust / Tauri 2) | `src-tauri/`, `scripts/quality/` | `cd src-tauri && cargo test` | `cd src-tauri && cargo clippy --all-targets` | `cd src-tauri && cargo check` | `cd src-tauri && cargo fmt` |
 
-# ── repo shape ──────────────────────────────────────────────────────────────
-repo:
-  layout: single
-  workspace_tool: none
-
-# ── code retrieval ──────────────────────────────────────────────────────────
-retrieval:
-  provider: serena                            # coexists with Cartograph (SessionStart map hook + custom global agents)
-
-# ── surfaces ────────────────────────────────────────────────────────────────
-surfaces:
-  - key: frontend
-    path: src
-    label: frontend (React 18 + Vite + TypeScript)
-    agent: frontend
-    tools: [Read, Write, Edit, Bash, Grep, Glob, DesignSync, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
-    model: inherit
-    test_cmd: npm test
-    # Bridled variant — what agents actually RUN, so a green run costs lines, not pages.
-    test_quiet_cmd: npm test -- --reporter=dot
-    lint_cmd: npx eslint .
-    # `--quiet` = errors only, so a green run prints nothing. NOT `--format compact`: ESLint 9
-    # moved that formatter out of core, and the flag now exits 2 before linting anything.
-    lint_quiet_cmd: npx eslint . --quiet
-    format_cmd: ""                            # no prettier; eslint --fix is the autofixer
-    typecheck_cmd: npx tsc --noEmit
-    build_cmd: npm run build
-    uses_design: true
-  - key: core
-    path: [src-tauri, scripts/quality]        # widened core-architecture-wave3 FR-8/FR-10: quality-rule authoring for Rust-shape checks has no other owner
-    label: core (Rust / Tauri 2)
-    agent: core
-    tools: [Read, Write, Edit, Bash, Grep, Glob, mcp__serena, mcp__cartograph__map, mcp__cartograph__query, mcp__cartograph__neighbors, mcp__cartograph__concept, mcp__cartograph__record, mcp__cartograph__stale]
-    model: inherit
-    test_cmd: cd src-tauri && cargo test
-    test_quiet_cmd: cd src-tauri && cargo test --quiet
-    lint_cmd: cd src-tauri && cargo clippy --all-targets
-    lint_quiet_cmd: cd src-tauri && cargo clippy --all-targets --quiet
-    format_cmd: cd src-tauri && cargo fmt
-    typecheck_cmd: cd src-tauri && cargo check
-    build_cmd: ""                             # release builds via tauri build / CI matrix
-    uses_design: false
-
-# ── contract (the only cross-surface sync channel) ──────────────────────────
-contract:
-  enabled: true
-  mechanism: shared-types                     # plain TS type files (no zod) — see §contract prose; Rust mirrors with serde
-  path: contract
-  ext: ts
-  index: ""                                   # no barrel — one file per feature + common.ts
-  authored_by: lead
-
-# ── release notes (optional) ────────────────────────────────────────────────
-# No per-feature note-consuming tool detected (no changesets, no note-enforcing
-# CI job) — release.yml derives versions from conventional commits automatically.
-release_notes:
-  enabled: false                              # /cohorte-ship §2b is a no-op
-  tool: none
-  dir: ""
-  filename: "<feature_id>.md"
-  anchor_package: ""
-  language: English
-  forbid_levels: []
-  empty_cmd: ""
-  ci_job: ""
-  guidance: ""
-
-# ── repo-wide commands ──────────────────────────────────────────────────────
-commands:
-  install: npm install
-  dev: npm run dev:app
-  lint: npm run quality
-  lint_quiet: npm run quality
-  format: cd src-tauri && cargo fmt
-  typecheck: npx tsc --noEmit
-  test: npm test && cd src-tauri && cargo test
-  test_quiet: npm test -- --reporter=dot && cd src-tauri && cargo test --quiet
-  migrate: ""                                 # no DB
-  make_migration: ""
-
-# ── rbac ────────────────────────────────────────────────────────────────────
-rbac:
-  enabled: false
-  hierarchy: []
-  note: ""
-
-# ── design ──────────────────────────────────────────────────────────────────
-design:
-  enabled: true
-  provider: claude-design
-  inline: false                              # Codex uses the conversational design path
-  design_system_project: "Design system extraction plan"   # a4b15728-147c-4932-b83c-f60a5fc60db7
-  design_project: none
-  snapshot_dir: ""                            # local mirror lives at the repo root: *.dc.html + screenshots/
-  direction: design-to-code
-  ui_kit_path: src
-  tokens_path: src/styles.css
-  
-# ── isolation ───────────────────────────────────────────────────────────────
-isolation:
-  enabled: false                              # features build in the main checkout on feat/<id> branches
-  unit: git-worktree
-  db_per_worktree: false
-  db_name_pattern: ""
-  port_base: {}
-  compose_file: ""
-  registry: ""
-
-# ── gate (drives .cohorte/gate-config.json) ─────────────────────────────────
-gate:
-  default_branch: main                        # the protected branch (mirrors vcs.default_branch)
-  deny:
-    - "git push --force"
-    - "git push -f"
-  ask: []
-  ask_on_default_branch:                        # free on feature branches, confirm on default_branch
-    - "git commit"
-    - "git push"
-    - "git merge"
-    - "git rebase"
-    - "git reset"
-  # Phase gate: review dispatches require a fresh `.cohorte/preflight.ok` stamp,
-  # written by pipeline/scripts/preflight.sh when typecheck+tests are green — gate.py
-  # "ask"s the dispatch when the stamp is missing, stale, or the code changed since.
-  # The stamp is local: keep `.cohorte/preflight.ok` gitignored, never committed.
-  preflight:
-    enabled: true
-    agents: [review]                          # subagent_types the stamp gates
-    max_age_minutes: 30
-```
+Repo-wide: `npm install` · `npm run dev:app` · `npm run quality` (the whole gate) · `npm test && cd src-tauri && cargo test`.
+Quiet variants for agents: `npm test -- --reporter=dot`, `npx eslint . --quiet`, `cargo test --quiet`.
+Code retrieval: Serena (`mcp__serena`). Feature branches: `feat/<id>`, fixes `fix/<id>`, default branch `main`.
 
 ## Stack (decided)
 
@@ -171,7 +31,7 @@ gate:
 - `enabled: true`
 - `mechanism`: TypeScript type files in `contract/` are the **canonical payload shapes** for the frontend↔core boundary; the Rust core mirrors them with serde structs (generate bindings with `specta`/`tauri-specta` where practical, hand-mirror otherwise).
 - `path`: `contract/`
-- One file per feature: `contract/<feature-id>.ts`. Shared vocabulary lives in `contract/common.ts` — feature contracts **import** from it and never redefine its types. Specs name the exact types/channels; the contract files are authored at `/build` time from the frozen specs.
+- One file per feature: `contract/<feature-id>.ts`. Shared vocabulary lives in `contract/common.ts` — feature contracts **import** from it and never redefine its types. Specs name the exact types/channels; the contract files are authored from the frozen specs when the feature is implemented.
 
 ## design
 
@@ -195,7 +55,7 @@ gate:
 - `remote`: `git@github.com:antoine-gmnz/francois.git` (`origin`)
 - `default_branch`: `main`
 - `feature_branch_prefix`: `feat/`
-- Notes: repository initialized on the `main` branch. `/ship` requires a SHIP-verdict `/review` before it will push or open a PR.
+- Notes: repository initialized on the `main` branch.
 - **CI/CD** (`.github/workflows/`):
   - `ci.yml` — pull requests: `npm run build` (tsc + vite) + `npm test` (vitest) + `cargo test`.
   - `release.yml` — **every push to `main` ships a release, with no manual step at any point.** There is one channel: main *is* the latest version. Five jobs in sequence:
@@ -217,7 +77,7 @@ gate:
   - request `francois:<domain>:<verb>` → Tauri command `<domain>_<verb>` (snake_case), called via `invoke('<domain>_<verb>', payload)` → `Promise<Result<T>>` (`Result` from `contract/common.ts`). Commands never reject for domain failures — every fallible call resolves to `Result`.
   - event stream `francois:<domain>:event` → Tauri event `francois://<domain>/event`, subscribed via `listen(...)`; payload is a tagged union with a `type` discriminator (e.g. `SessionEvent` in `contract/common.ts`).
   - Any spec text mentioning Electron/`ipcRenderer.invoke`/"main process" predates this binding and reads as: the Tauri mapping above / "Rust core".
-- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `standards` · `profiles` · `permissions` · `remote` · `account` · `cloud` · `extensions` · `github` · `cohorte` · `editor`
+- **Domains**: `app` · `session` · `conversation` · `diff` · `shell` · `agents` · `workflows` · `mcp` · `skills` · `palette` · `cli` · `project` · `standards` · `profiles` · `permissions` · `remote` · `account` · `cloud` · `extensions` · `github` · `editor`
 - **IDs**: uuid-v4 strings. **Timestamps**: epoch milliseconds (`number`).
 - **Feature ids**: kebab-case. Specs live in `specs/<id>.md` (template `specs/_template.md`, statuses: `draft` → `frozen` → `in-review`).
 - **Naming**: types PascalCase, IPC verbs camelCase, files kebab-case.
@@ -389,4 +249,3 @@ that owns the feature — never in a new top-level file.
 | `multi-provider-openai` *(frozen)* | `OpenAiAdapter` — a Rust-native agent loop over `POST /chat/completions` + SSE, six tools carrying Claude Code's names, every call through the existing permission gate, adapter-owned thread persistence, skill injection, and the disabled-pane treatment | multi-provider-seam, multi-provider-endpoint, permission-guardrails, durable-sessions, conversation-view |
 | `multi-provider-codex` *(in-progress)* | a third `AgentRuntime` — OpenAI's `codex` CLI driving its own loop over `codex exec --json`, `codex-cli` accounts authenticated by `codex login` into a per-account `CODEX_HOME` (ChatGPT plan, no API key), permissionMode mapped onto Codex's sandbox | multi-provider-seam, multi-account, durable-sessions, session-engine, conversation-view, projects |
 | `capability-registry` *(draft)* | invert skills/MCP/agents from Claude Code control surfaces into discovery adapters feeding an internal registry both runtimes read + translate; compatibility verdicts derived rather than hand-maintained | multi-provider-seam, multi-provider-openai, skills-panel, mcp-panel, agents-panel, projects, session-engine |
-| `cohorte-integration` *(frozen)* | Cohorte v3 runs inside Francois — `.cohorte/` detection (walk-up + git-common-dir), a per-project watcher polling `cohorte status --json` / `tail <run> --json` (dedupe by `(sequence, sub)`), all 68 Cohorte Protocol 1.0 event types bound to a typed `CohorteEvent` union on `francois://cohorte/event`, gates answered through the CLI (approve · send to fix · deny), a session-panel Cohorte tab, the `cohorte:<runId>` run view, and Settings · Cohorte (doctor, init, four Francois-side prefs). Francois never writes `.cohorte/` | projects, session-engine, sessions-sidebar, conversation-view, app-shell, notifications, command-palette, wsl-filesystem, github-page |

@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Open session in worktree (`session-worktree`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of
 > `specs/session-worktree.md`, standalone.
 
 **Goal:** When creating a session on a git repo, the user can put it in its own git worktree on a new
