@@ -12,6 +12,7 @@ import { compactBlocks, TRANSCRIPT_TEXT_SELECT_STYLE, windowedBlocks } from './c
 import './conversation.css';
 import EarlierBlocksRow from './EarlierBlocksRow';
 import JumpToLatestChip from './JumpToLatestChip';
+import ProjectHealthBanners from './ProjectHealthBanners';
 import ResumeFailBanner from './ResumeFailBanner';
 import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
 import TranscriptSkeleton from './TranscriptSkeleton';
@@ -158,6 +159,11 @@ export default function ConversationView({
             to Pi's own recovery below (`recovery` is never set on a session this
             event fires for). */}
         {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
+
+        {/* claude-project-health: untrusted folder ignoring its allow rules, and
+            Cohorte's guard missing its interpreter. Probed on open/switch. */}
+        <ProjectHealthBanners sessionId={sessionId} visible={visible} />
+
 
         {/* pi-session-durability §8: missing/corrupt/incompatible/account-missing
             refuse resume with one cause plus Retry/Create new session (FR-3/7).

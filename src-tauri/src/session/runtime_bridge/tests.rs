@@ -115,6 +115,7 @@ fn normalized_tool_details_and_usage_use_real_projection_without_filesystem() {
         meta: "done".into(),
         detail: Some(detail),
         affects_workspace: true,
+        tone: None,
     });
     assert_eq!(env.step_details.lock().unwrap().len(), 1);
     assert_eq!(env.diff_notes.lock().unwrap().len(), 1);

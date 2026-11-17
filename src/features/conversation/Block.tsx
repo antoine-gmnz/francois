@@ -232,7 +232,7 @@ function ToolRowImpl({
   /** command-inspect FR-16: threaded to the mounted StepDetailPanel. */
   onOpenShell?: () => void;
 }) {
-  const chips = toolResultChips(b.meta);
+  const chips = toolResultChips(b.meta, b.tone);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<StepDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -313,7 +313,7 @@ function ToolRowImpl({
               <Caret />
             ) : (
               chips.map((c) => (
-                <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`}>
+                <span key={`${c.tone}:${c.text}`} className={`toolrow__chip toolrow__chip--${c.tone}`} title={c.title}>
                   {c.text}
                 </span>
               ))

@@ -106,7 +106,7 @@ fn apply(
             let block = app
                 .state::<Engine>()
                 .with_session_mut(session_id, |s| {
-                    s.buf_tool_done(&block_id, meta.clone(), has_detail)
+                    s.buf_tool_done(&block_id, meta.clone(), has_detail, None)
                 })
                 .flatten();
             if let Some(b) = &block {
@@ -122,6 +122,7 @@ fn apply(
                     block_id,
                     meta,
                     has_detail: has_detail.then_some(true),
+                    tone: None,
                 },
             );
         }

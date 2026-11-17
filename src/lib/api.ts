@@ -1,4 +1,5 @@
 import type { OpenTargetRequest, OpenTargetResponse } from '../../contract/open-target';
+import type { SessionProjectHealthResponse, SessionTrustFolderResponse } from '../../contract/claude-project-health';
 import { invalidateRequestReplies } from './request-replies';
 import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
 // Typed wrappers over the Tauri session commands + the session event stream.
@@ -510,6 +511,14 @@ export const mcpDetach = (sessionId: SessionId, name: string) => ipc<Result<null
 export const mcpRegistry = () => ipc<Result<McpRegistryEntry[]>>('mcp_registry');
 export const mcpAttach = (sessionId: SessionId, entry: McpAttachRequest) =>
   ipc<Result<null>>('mcp_attach', { sessionId, entry });
+// claude-project-health: folder trust as `claude -p` reads it + Cohorte guard
+// interpreter check. `sessionTrustFolder` writes the account's .claude.json —
+// only ever from an explicit click.
+export const sessionProjectHealth = (sessionId: SessionId) =>
+  ipc<SessionProjectHealthResponse>('session_project_health', { sessionId });
+export const sessionTrustFolder = (sessionId: SessionId) =>
+  ipc<SessionTrustFolderResponse>('session_trust_folder', { sessionId });
+
 export const mcpApprovals = (sessionId: SessionId) => ipc<Result<McpApprovalState>>('mcp_approvals', { sessionId });
 export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>
   ipc<Result<McpApprovalState>>('mcp_decide', { sessionId, ...decision });

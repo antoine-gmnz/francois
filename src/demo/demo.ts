@@ -304,6 +304,14 @@ function route(cmd: string, a: Args): unknown {
       });
     case 'mcp_registry':
       return ok([]);
+
+    // ---- claude-project-health: a healthy fleet, nothing to show ----
+    case 'session_project_health':
+    case 'session_trust_folder':
+      return ok({
+        trust: { trusted: true, key: '', allowRuleCount: 0 },
+        guard: { registered: false, interpreterMissing: null },
+      });
     case 'mcp_detail':
       return ok({ ...(MCP.find((m) => m.name === a?.name) ?? MCP[0]), transport: 'stdio', command: 'npx -y @orbit/mcp' });
 

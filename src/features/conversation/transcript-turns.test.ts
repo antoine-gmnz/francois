@@ -292,6 +292,29 @@ describe('toolResultChips (design 9a: a result is chips, not a trailing sentence
       { tone: 'plain', text: 'the run was cancelled upstream' },
     ]);
   });
+
+  // hook-diagnostics: the core states the tone; the meta's wording no longer decides it.
+  it('shows a PreToolUse hook refusal as a refused chip plus its reason, in the error tone', () => {
+    expect(toolResultChips('stub-gate: DENYME is forbidden', 'hookRefusal')).toEqual([
+      { tone: 'error', text: 'refused by hook', title: 'Refused by a PreToolUse hook' },
+      { tone: 'reason', text: 'stub-gate: DENYME is forbidden', title: 'stub-gate: DENYME is forbidden' },
+    ]);
+  });
+
+  it('keeps an explicit error tone even when the meta never says "error"', () => {
+    expect(toolResultChips('denied', 'error')).toEqual([{ tone: 'error', text: 'denied' }]);
+    expect(toolResultChips('error', 'error')).toEqual([{ tone: 'error', text: 'error' }]);
+  });
+
+  it('falls back to reading the meta for a block from before the tone existed', () => {
+    expect(toolResultChips('error', undefined)).toEqual([{ tone: 'error', text: 'error' }]);
+    // A refusal reason that reads like a failure is still the refusal.
+    expect(toolResultChips('[python3 "gate.py"]: failed; blocking', 'hookRefusal')[0]).toEqual({
+      tone: 'error',
+      text: 'refused by hook',
+      title: 'Refused by a PreToolUse hook',
+    });
+  });
 });
 
 // prompt-send animation: only a prompt that was JUST sent lands with motion —

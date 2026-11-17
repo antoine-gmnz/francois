@@ -823,6 +823,18 @@ describe('transcriptReducer — legacy actions (conversation-view FR-10 behavior
       expect(b.hasDetail).toBeUndefined();
     });
 
+    // hook-diagnostics: the explicit result tone rides onto the block, and is
+    // absent (not undefined-valued) on a clean or pre-feature result.
+    it('carries the result tone onto the tool block only when the event set it', () => {
+      const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Bash', summary: 'echo DENYME' });
+      const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: 'stub-gate: DENYME is forbidden', tone: 'hookRefusal' });
+      const b = s2.blocks[0];
+      if (b.kind !== 'tool') throw new Error('expected tool block');
+      expect(b.tone).toBe('hookRefusal');
+      const clean = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: '3 lines' }).blocks[0];
+      expect('tone' in clean).toBe(false);
+    });
+
     it('a later meta-only tool.done never erases an established hasDetail', () => {
       const s1 = transcriptReducer(S0, { t: 'toolStart', blockId: 't1', tool: 'Read', summary: 'src/a.ts' });
       const s2 = transcriptReducer(s1, { t: 'toolDone', blockId: 't1', meta: '412 lines', hasDetail: true });
@@ -1205,6 +1217,9 @@ describe('applySessionEvent (conversation-view FR-8/9/10 — the former route(e)
     // command-inspect FR-10: hasDetail rides the same event when core wrote a record
     applySessionEvent(dispatch, setters, { type: 'tool.done', sessionId: 'x', blockId: 't2', meta: '10 lines', hasDetail: true });
     expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't2', meta: '10 lines', hasDetail: true });
+    // hook-diagnostics: the explicit tone rides the same event
+    applySessionEvent(dispatch, setters, { type: 'tool.done', sessionId: 'x', blockId: 't2', meta: 'nope', tone: 'hookRefusal' });
+    expect(dispatch).toHaveBeenLastCalledWith({ t: 'toolDone', blockId: 't2', meta: 'nope', hasDetail: undefined, tone: 'hookRefusal' });
   });
 
   it('command.started / command.output forward to the reducer (interactive-commands FR-20)', () => {
@@ -1512,6 +1527,14 @@ describe('compactBlocks (render-time merge of duplicate consecutive tool rows)',
       tool('t2', 'Edit', 'src/a.ts', 'error'),
       tool('t3', 'Edit', 'src/a.ts', '+5 −2'),
     ]);
+    expect(out).toHaveLength(3);
+  });
+
+  it('never merges a hook-refused row, whose meta is the reason rather than "error"', () => {
+    const base = tool('t2', 'Bash', 'echo DENYME', 'stub-gate: DENYME is forbidden');
+    if (base.kind !== 'tool') throw new Error('expected tool block');
+    const refused: ConversationBlock = { ...base, tone: 'hookRefusal' };
+    const out = compactBlocks([tool('t1', 'Bash', 'echo DENYME', '1 line'), refused, tool('t3', 'Bash', 'echo DENYME', '1 line')]);
     expect(out).toHaveLength(3);
   });
 

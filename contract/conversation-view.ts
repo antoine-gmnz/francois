@@ -6,7 +6,7 @@
 // Physical Tauri binding: `francois:conversation:getTranscript` → command
 // `conversation_get_transcript`.
 
-import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef } from './common';
+import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef, ToolResultTone } from './common';
 import type { CommandConversationBlock } from './interactive-commands';
 import type { PermissionConversationBlock } from './permission-guardrails';
 import type { QuestionConversationBlock } from './session-questions';
@@ -79,6 +79,8 @@ export interface ToolConversationBlock extends ConversationBlockBase {
    * agent/workflow blocks (FR-8) — those never carry a record.
    */
   hasDetail?: boolean;
+  /** hook-diagnostics: explicit result tone (see ToolResultTone in common.ts); absent on pre-feature blocks. */
+  tone?: ToolResultTone;
   /**
    * pi-transcript-events FR-3/FR-4: the normalized generic tool-call lifecycle
    * (pending → running → succeeded/failed/cancelled/unknown), sanitized

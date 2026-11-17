@@ -19,7 +19,7 @@ import { useState } from 'react';
 import type { PermissionDecision, SessionMeta } from '../../../contract/common';
 import { formatRelativeTime, type SessionDerived } from '../../../contract/fleet-board';
 import { permissionsDecide } from '../../lib/api';
-import { permissionActions, writesRule } from '../../lib/permission-actions';
+import { askReasonLine, permissionActions, writesRule } from '../../lib/permission-actions';
 import { requestReplyPending, submitRequestReply } from '../../lib/request-replies';
 import type { RosterAsk } from '../../lib/rosterStore';
 import { useStore } from '../../lib/store';
@@ -274,6 +274,7 @@ function AskCard({
   const [inFlight, setInFlight] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const line = askLine(parked.ask);
+  const reason = askReasonLine(parked.ask);
   const writable = requestReplyPending(session, parked.blockId);
   const actions = permissionActions(parked.ask.allowedDecisions).filter((a) => !writesRule(a.decision));
 
@@ -305,6 +306,11 @@ function AskCard({
       {line.code && (
         <div className="roster-row__command" title={parked.ask.summary || parked.ask.toolName}>
           <code className="truncate">{line.code}</code>
+        </div>
+      )}
+      {reason !== null && (
+        <div className="roster-row__reason truncate" title={reason}>
+          {reason}
         </div>
       )}
       {failed && <div className="roster-row__failed truncate">{failed}</div>}

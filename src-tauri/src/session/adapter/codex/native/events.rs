@@ -117,6 +117,9 @@ pub(super) fn asked(request: &PendingRequest, cwd: &str) -> RuntimeEvent {
                     })
                     .collect(),
             ),
+            decision_reason: None,
+            decision_reason_type: None,
+            decision_reason_hook_event: None,
         },
     }
 }

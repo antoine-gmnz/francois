@@ -137,6 +137,11 @@ pub enum SessionEvent {
         /// omitted (never `Some(false)`) otherwise.
         #[serde(rename = "hasDetail", skip_serializing_if = "Option::is_none")]
         has_detail: Option<bool>,
+        /// hook-diagnostics: `ToolResultTone` ('error' | 'hookRefusal') —
+        /// the row's tone, explicit rather than read off `meta`'s wording.
+        /// Omitted when the result was not an error, or the runtime never sets it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tone: Option<String>,
     },
     #[serde(rename = "command.started")]
     CommandStarted {

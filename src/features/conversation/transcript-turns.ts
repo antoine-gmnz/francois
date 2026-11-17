@@ -8,6 +8,7 @@
 // Runs AFTER compactBlocks (conversation-blocks.ts) and replaces groupToolRuns
 // as the transcript's render-item builder.
 
+import type { ToolResultTone } from '../../../contract/common';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 
 /** The four block kinds that belong INSIDE a turn — everything else is a card. */
@@ -232,11 +233,14 @@ export function formatTurnDuration(ms: number): string {
 
 // ---------- tool rows (9a: the result is chips, not a trailing sentence) ----------
 
-export type ToolChipTone = 'add' | 'del' | 'error' | 'warn' | 'plain';
+/** 'reason': the text of a hook refusal — error-coloured, unfilled, truncating. */
+export type ToolChipTone = 'add' | 'del' | 'error' | 'warn' | 'plain' | 'reason';
 
 export interface ToolChip {
   tone: ToolChipTone;
   text: string;
+  /** Hover text — the reason chip truncates, so its whole text rides here. */
+  title?: string;
 }
 
 /** The core's edit/multi-edit meta — `+88 −140`, U+2212 minus (tools.rs). */
@@ -251,8 +255,18 @@ const LINE_CHANGE_META = /^\+(\d+)\s+[−-](\d+)$/;
  * single sentence about a single result, and splitting it on the separator
  * would make the row look like two unrelated outcomes.
  */
-export function toolResultChips(meta: string | undefined): ToolChip[] {
+export function toolResultChips(meta: string | undefined, resultTone?: ToolResultTone): ToolChip[] {
   if (meta === undefined || meta === '') return [];
+  // hook-diagnostics: the core says outright when a result failed, and when a
+  // PreToolUse hook refused it (meta = the reason's first line). Those win
+  // over every wording rule below — a refusal reason rarely says "error".
+  if (resultTone === 'hookRefusal') {
+    return [
+      { tone: 'error', text: 'refused by hook', title: 'Refused by a PreToolUse hook' },
+      { tone: 'reason', text: meta, title: meta },
+    ];
+  }
+  if (resultTone === 'error') return [{ tone: 'error', text: meta }];
   const change = LINE_CHANGE_META.exec(meta);
   if (change !== null) {
     return [

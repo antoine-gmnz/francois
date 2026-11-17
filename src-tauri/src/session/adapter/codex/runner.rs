@@ -52,6 +52,7 @@ pub(super) fn normalize<F: FnMut() -> String>(
                 meta,
                 detail,
                 affects_workspace: tool == "Edit",
+                tone: None,
             }
         }
         Effect::FileTouched {

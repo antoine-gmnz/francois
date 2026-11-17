@@ -255,6 +255,8 @@ pub(crate) enum RuntimeEvent {
         meta: String,
         detail: Option<StepDetail>,
         affects_workspace: bool,
+        /// hook-diagnostics: `ToolResultTone` — None for a clean result.
+        tone: Option<String>,
     },
     Metrics(super::events::RuntimeMetrics),
     Usage {

@@ -808,7 +808,30 @@ export interface PermissionAsk {
   cwd: string; // the session's working directory
   pattern: string; // the Claude rule an "always" decision would write, e.g. 'Bash(npm test:*)'
   patternLabel: string; // human reading of that pattern, e.g. 'npm test (any arguments)'
+  /**
+   * hook-diagnostics: WHY the CLI is asking — the `can_use_tool` request's
+   * `decision_reason`, trimmed. Absent on every ask raised before this field
+   * existed, and whenever the CLI states none or a blank one.
+   */
+  decisionReason?: string;
+  /** `decision_reason_type` — 'hook' when a PreToolUse hook answered `ask`; other values pass through verbatim. */
+  decisionReasonType?: string;
+  /** `decision_reason_hook_event` — e.g. 'PreToolUse'; only meaningful when the type is 'hook'. */
+  decisionReasonHookEvent?: string;
 }
+
+/**
+ * hook-diagnostics: the settled tone of a tool result, carried explicitly so a
+ * row's colour never depends on the wording of its `meta`.
+ * - 'error': the tool_result was `is_error` (meta is the short label, e.g. 'error').
+ * - 'hookRefusal': a PreToolUse hook refused the call (`PreToolUse:<Tool> hook
+ *   error: <reason>`); meta is the first line of the reason, trimmed, capped at
+ *   100 chars — the full text stays in the StepDetail record. Never set on a
+ *   Task/Workflow dispatch (its subagent banner keeps meta 'error').
+ * Absent ⇒ not an error, or a block/event from before this field existed (the
+ * row then falls back to reading the meta).
+ */
+export type ToolResultTone = 'error' | 'hookRefusal';
 
 /** One permission rule as it exists on disk (FR-16/FR-17). */
 export interface PermissionRule {
@@ -865,7 +888,7 @@ export type SessionEvent =
   // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
   | { type: 'tool.update'; sessionId: SessionId; blockId: BlockId; tool: RuntimeToolCall }
-  | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10
+  | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10; tone: hook-diagnostics
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
   | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[]; blocking?: boolean } // absent blocking preserves legacy parked-turn semantics

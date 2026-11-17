@@ -17,7 +17,7 @@ import { permissionsDecide, permissionsRemove, sessionOpenRequestUrl } from '../
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useTimedError } from '../../lib/hooks/useTimedError';
 import { focusedSessionId } from '../../lib/layoutStore';
-import { permissionActions, writesRule } from '../../lib/permission-actions';
+import { askReasonLine, permissionActions, writesRule } from '../../lib/permission-actions';
 import { useStore } from '../../lib/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
@@ -145,6 +145,8 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
   }, [interactive, sessionId, actions, decide]);
 
   const why = surface.header.blast;
+  // hook-diagnostics: why the CLI is asking at all (e.g. a project hook's `ask`).
+  const reason = askReasonLine(block.ask);
   const urlRequest = block.ask.toolName === 'MCP' && (() => {
     try { return typeof JSON.parse(block.ask.inputJson).url === 'string'; } catch { return false; }
   })();
@@ -164,6 +166,13 @@ function PendingPermission({ block, sessionId }: { block: PermissionConversation
       <CodeSurfaceView surface={surface} open={detail ? open : undefined} onToggle={detail ? () => setOpen((v) => !v) : undefined} />
 
       {open && <AskDetail block={block} surfaceContext={surface.header.context} />}
+
+      {reason !== null && (
+        <div className="pcard__why pcard__why--reason">
+          <Icon name="info" size={13} />
+          <span>{reason}</span>
+        </div>
+      )}
 
       {why !== null && (
         <div className="pcard__why">

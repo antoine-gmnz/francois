@@ -18,6 +18,7 @@ import type {
   SessionQuestion,
   SessionStatus,
   SlashCommandInfo,
+  ToolResultTone,
 } from '../../../contract/common';
 import {
   assistantColors,
@@ -165,7 +166,7 @@ export type TranscriptAction =
   // assistant.complete event only — a plain Claude assistant.done carries none.
   | { t: 'assistantDone'; blockId: string; text: string; outcome?: 'complete' | 'interrupted' | 'error' }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
-  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean } // hasDetail: command-inspect FR-10
+  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // hasDetail: command-inspect FR-10; tone: hook-diagnostics
   // pi-transcript-events FR-1/FR-3/FR-4: a normalized RuntimeToolCall snapshot —
   // insert-or-settle, keyed on the tool call's stable blockId.
   | { t: 'toolUpdate'; blockId: string; tool: RuntimeToolCall }
@@ -416,7 +417,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       // command-inspect FR-10/FR-12: the chevron exists iff core wrote a StepDetail
       // record. `??` keeps an established flag when a later done omits it; a
       // subagent block never carries one (FR-8).
-      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail });
+      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail, ...(a.tone !== undefined ? { tone: a.tone } : {}) });
     }
     case 'toolUpdate': {
       // FR-3: a tool call must settle exactly once, in place — insert on
@@ -720,7 +721,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model }),
   'tool.update': (dispatch, _setters, e) => dispatch({ t: 'toolUpdate', blockId: e.blockId, tool: e.tool }),
-  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail }),
+  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail, tone: e.tone }),
   // interactive-commands FR-20: pending command block (loading card)
   'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),
   // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
@@ -869,8 +870,8 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
  * differently ON PURPOSE:
  *  - a Pi block carries the normalized lifecycle, so the STATUS answers —
  *    never the displayed word, which is presentation;
- *  - a plain Claude block has no status, and `error` is the only meta the core
- *    writes for a failure (stream/tool_results.rs). Every other Claude meta is
+ *  - a plain Claude block has no status: an explicit `tone` (hook-diagnostics)
+ *    or, on older blocks, the exact `error` meta marks a failure. Any other is
  *    free-form — a Task row's is the first line of the subagent's own result —
  *    so matching words inside it would break a run on prose.
  */
@@ -879,7 +880,7 @@ function breaksToolRun(b: ToolConversationBlock): boolean {
     const { status } = b.execution;
     return status === 'failed' || status === 'cancelled' || status === 'unknown';
   }
-  return b.meta === 'error';
+  return b.tone !== undefined || b.meta === 'error';
 }
 
 function mergeToolRun(acc: ToolConversationBlock, b: ToolConversationBlock): ToolConversationBlock {
