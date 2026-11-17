@@ -611,7 +611,7 @@
 .composer-hint__key {
   color: var(--text-muted);
 }
-/* The prompt's settings (Cohorte, run chip) lead the row and never shrink; the
+/* The prompt's settings (the run chip) lead the row and never shrink; the
    key hints give way first on a narrow pane. */
 .composer-tools {
   display: flex;

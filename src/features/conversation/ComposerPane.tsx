@@ -35,15 +35,6 @@ import Composer from './Composer';
 import { getDraft, setDraft } from '../../lib/composer-draft';
 import { documentHasSelection, shouldFocusComposer } from './composer-focus';
 import { isClearCommand, readingWindowHint, RESTORING_PLACEHOLDER, type TranscriptDispatch } from './conversation-blocks';
-import { GATE_COMPOSER_PLACEHOLDER, useSessionGatePending, CASE_INSENSITIVE_FS } from '../cohorte/useCohorte';
-import { withCohorteSlashEntry } from '../cohorte/actions-menu';
-import CohorteActionsMenu from '../cohorte/CohorteActionsMenu';
-import { CohorteMark } from '../cohorte/CohorteParts';
-import { POPOVER_EXIT_MS, usePresence } from '../../lib/hooks/usePresence';
-import { useCohorteActionsStore } from '../../lib/cohorteActionsStore';
-import { useCohorteStore } from '../../lib/cohorteStore';
-import { detectionFor } from '../cohorte/linkage';
-import { useCohorteActionsShortcut } from '../cohorte/useCohorteActionsShortcut';
 import './conversation.css';
 import DropOverlay from './DropOverlay';
 import {
@@ -116,16 +107,7 @@ export default function ComposerPane({
   // ConversationView): switching sessions unmounts it, and without the map a
   // half-typed prompt would be lost (see ./composer-draft).
   const [input, setInput] = useState(() => getDraft(sessionId));
-  // cohorte-integration FR-64: the origin session's gate swaps the placeholder.
-  const gatePending = useSessionGatePending(sessionId);
   const [sendError, setSendError] = useState<string | null>(null);
-
-  // cohorte-actions FR-33: the chip/⌘⇧C/`/cohorte` entry points all need this
-  // session's Cohorte project root, only when its cwd is a detected project.
-  const cohorteRoot = useCohorteStore((s) => (meta ? (detectionFor(s.detections, meta.cwd, CASE_INSENSITIVE_FS)?.root ?? null) : null));
-  const cohorteMenuOpen = useCohorteActionsStore((s) => s.menuOpenFor === sessionId);
-  const cohorteMenu = usePresence(cohorteMenuOpen, POPOVER_EXIT_MS);
-  useCohorteActionsShortcut(sessionId, !inert && visible);
 
   // slash-menu popup state (spec §6): dismissal token (FR-9) and selection (FR-7).
   const [dismissedToken, setDismissedToken] = useState<string | null>(null);
@@ -189,8 +171,7 @@ export default function ComposerPane({
   // ---------- slash-menu popup (FR-5..FR-9/12) ----------
 
   const token = slashToken(input);
-  const commandsWithCohorte = useMemo(() => withCohorteSlashEntry(commands, cohorteRoot !== null), [commands, cohorteRoot]);
-  const filtered = useMemo(() => filterCommands(commandsWithCohorte, token ?? ''), [commandsWithCohorte, token]);
+  const filtered = useMemo(() => filterCommands(commands, token ?? ''), [commands, token]);
   const interactiveCommandsCapability = sessionCapability(meta, 'interactiveCommands');
   const popupOpen = popupVisible({
     token,
@@ -225,15 +206,7 @@ export default function ComposerPane({
   // (colon commands etc.) when the registry supplied one, else the legacy
   // `/name` every other runtime already sends — through the SAME admission
   // path as typed text (never a separate skills_run call).
-  // cohorte-actions FR-33: the local /cohorte entry opens the actions menu —
-  // it is never sent as a turn.
   const runCommand = (command: SlashCommandInfo) => {
-    if (command.name === 'cohorte' && cohorteRoot !== null) {
-      setInput('');
-      dismissPopup();
-      useCohorteActionsStore.getState().openMenu(sessionId);
-      return;
-    }
     void send(commandInvocation(command, 'run'));
   };
 
@@ -242,12 +215,6 @@ export default function ComposerPane({
     // code-editor-agents FR-6: typed sends carry the chips; a command run never does.
     const sentChips = textArg === undefined ? chips : [];
     if ((!typed.trim() && sentChips.length === 0) || disabled) return;
-    // cohorte-actions FR-33: `/cohorte` typed then Enter, popup dismissed or not.
-    if (typed.trim() === '/cohorte' && cohorteRoot !== null) {
-      setInput('');
-      useCohorteActionsStore.getState().openMenu(sessionId);
-      return;
-    }
     setBrowse(null); // message-history FR-9: sending (or /clear) ends the walk.
     if (isClearCommand(typed)) {
       setInput('');
@@ -418,9 +385,7 @@ export default function ComposerPane({
   // off `state.blocks`, which is still empty).
   const placeholder = showSkeleton
     ? RESTORING_PLACEHOLDER
-    : gatePending && !hasPendingQuestion && !hasPendingPermission
-      ? GATE_COMPOSER_PLACEHOLDER
-      : composerPlaceholder(status, errorMessage, hasPendingQuestion, hasPendingPermission);
+    : composerPlaceholder(status, errorMessage, hasPendingQuestion, hasPendingPermission);
   // FR-9: derived from RENDER_WINDOW, never a literal — replaces the context
   // percent slot for as long as the skeleton is up (the figure a real session
   // would show is not yet meaningful for one still restoring).
@@ -482,26 +447,6 @@ export default function ComposerPane({
         contextChips={<ContextChipStrip sessionId={sessionId} cwd={meta?.cwd ?? ''} inert={inert} />}
         pending={pending}
         onRetractPending={(blockId, text) => void onRetractPending(blockId, text)}
-        cohorteChip={
-          cohorteRoot && !inert ? (
-            <button
-              type="button"
-              className={cohorteMenuOpen ? 'composer-cohorte-chip composer-cohorte-chip--open' : 'composer-cohorte-chip'}
-              title="Cohorte actions · ⌘⇧C"
-              aria-haspopup="dialog"
-              aria-expanded={cohorteMenuOpen}
-              onClick={() => {
-                const st = useCohorteActionsStore.getState();
-                if (cohorteMenuOpen) st.closeMenu();
-                else st.openMenu(sessionId);
-              }}
-            >
-              <CohorteMark size={12} />
-              Cohorte
-            </button>
-          ) : undefined
-        }
-        cohorteMenu={cohorteMenu.present && cohorteRoot ? <CohorteActionsMenu sessionId={sessionId} root={cohorteRoot} exiting={cohorteMenu.exiting} /> : undefined}
       />
     </>
   );

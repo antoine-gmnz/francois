@@ -183,7 +183,7 @@ describe('agent tab store slice', () => {
 
   // workflow-details FR-11..FR-13: a run's tab rides the same per-session list.
   it('opens and activates a workflow tab under its own id (FR-11)', () => {
-    useStore.getState().openAgentTab('s1', { id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    useStore.getState().openAgentTab('s1', { id: 'w1', name: 'review-cycle', status: 'running', kind: 'workflow' });
     expect(useStore.getState().mainTab).toBe('workflow:w1');
     useStore.getState().openAgentTab('s1', A1);
     expect(useStore.getState().mainTab).toBe('agent:a1');
@@ -191,7 +191,7 @@ describe('agent tab store slice', () => {
   });
 
   it('closes the active workflow tab back to SESSION (FR-12)', () => {
-    useStore.getState().openAgentTab('s1', { id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    useStore.getState().openAgentTab('s1', { id: 'w1', name: 'review-cycle', status: 'running', kind: 'workflow' });
     useStore.getState().closeAgentTab('w1');
     expect(idsFor('s1')).toEqual([]);
     expect(useStore.getState().mainTab).toBe('session');
@@ -200,7 +200,7 @@ describe('agent tab store slice', () => {
   it('clearAgentTabs empties every session and hands EVERY pane back (FR-7)', () => {
     useStore.setState({ extraPanes: panes('s2') });
     useStore.getState().openAgentTab('s1', A1);
-    useStore.getState().openAgentTab('s2', { id: 'w1', name: 'cohorte-cycle', status: 'running', kind: 'workflow' });
+    useStore.getState().openAgentTab('s2', { id: 'w1', name: 'review-cycle', status: 'running', kind: 'workflow' });
     useStore.getState().clearAgentTabs();
     expect(useStore.getState().agentTabs.size).toBe(0);
     expect(useStore.getState().mainTab).toBe('session');

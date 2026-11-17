@@ -22,8 +22,6 @@ import { formatElapsed } from '../../contract/conversation-view';
 import { isBusyStatus } from '../../contract/fleet-board';
 import type { ExtensionId } from '../../contract/extensions';
 import { CloudChip } from '../features/cloud-sessions/CloudChip';
-import { CohorteHeaderChips } from '../features/cohorte/CohorteSessionBits';
-import { useHeaderRun } from '../features/cohorte/useCohorte';
 import ExtensionsBarMenu from '../features/extensions/ExtensionsBarMenu';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
 import { worktreeChipLabel } from '../features/sessions/worktree';
@@ -78,8 +76,6 @@ export default function SessionHeader({
   // ambiguous one, so it steps aside while split.
   const split = useStore((s) => s.extraPanes.length > 0);
   const tier = topbarTier(useWindowWidth());
-  // cohorte-integration FR-60: a linked run's chips; a pending gate replaces the status pill.
-  const cohorte = useHeaderRun(active?.id);
 
   const openView = (tab: MainTab) => {
     setFocusedPane('main');
@@ -112,14 +108,11 @@ export default function SessionHeader({
           >
             {active.name}
           </button>
-          {!cohorte.state?.replacesStatus && (
-            <span className={`session-header__state session-header__state--${kind}`}>
-              <StateIcon kind={kind} size={11} />
-              {sessionStateLabel(active.status)}
-              {busy && ` · ${formatElapsed(elapsedMs)}`}
-            </span>
-          )}
-          <CohorteHeaderChips header={cohorte} />
+          <span className={`session-header__state session-header__state--${kind}`}>
+            <StateIcon kind={kind} size={11} />
+            {sessionStateLabel(active.status)}
+            {busy && ` · ${formatElapsed(elapsedMs)}`}
+          </span>
         </div>
         <div className="session-header__meta" title={meta.title}>
           {meta.branch !== null && <Icon name="branch" size={12} />}

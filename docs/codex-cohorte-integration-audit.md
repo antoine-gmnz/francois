@@ -1,5 +1,14 @@
 # Audit et corrections Codex / Cohorte — 30 septembre 2026
 
+> **Remplacé — 17 novembre 2026.** L'intégration Cohorte intégrée à François a été retirée
+> (voir `specs/_decisions.md`, entrée du 2026-11-17). Ce document est conservé comme trace
+> historique ; ses constats Cohorte ne décrivent plus l'application. En particulier,
+> « l'orchestration Codex passe par Cohorte » n'est plus vrai : les workflows ne sont pas
+> disponibles pour les sessions Codex. Les lignes ciblées (`cohorte-engine` Python, service
+> `cohorte/1`, répertoires `.cohorte/`, `cohorte run|loop|ship --live`) n'existent plus ;
+> Cohorte 3.x s'exécute dans des sessions Claude ordinaires, et l'extension
+> `francois-plugin-cohorte` couvre l'état de santé, les specs et les métriques.
+
 ## Périmètre et références
 
 Audit des fonctionnalités existantes de François, Codex d'abord, puis Cohorte. Les ressources MCP et les questions sont des exemples du périmètre, pas sa limite. Les adaptations concernent les contrats, React, le moteur de sessions Rust, les comptes et le service Cohorte Python.

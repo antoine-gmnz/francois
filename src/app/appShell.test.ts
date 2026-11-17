@@ -11,8 +11,6 @@ import {
   shellColumns,
   shellFooterPath,
   showsPanes,
-  showsSessionHeader,
-  showsSessionPanel,
   splitCandidate,
   type ShortcutActionsContext,
 } from './appShell';
@@ -130,17 +128,6 @@ describe('mainPaneBranch', () => {
     expect(mainPaneBranch('ext:git')).toBe('ext');
   });
 
-  // cohorte-integration FR-70 (AC-26): the run view.
-  it('routes a cohorte:<runId> tab to the cohorte branch, header hidden, panel kept, never split', () => {
-    expect(mainPaneBranch('cohorte:run_x')).toBe('cohorte');
-    expect(hostedTab('cohorte')).toBeNull();
-    expect(showsSessionHeader('cohorte:run_x')).toBe(false);
-    expect(showsSessionPanel('cohorte:run_x')).toBe(true);
-    expect(showsPanes(2, 'cohorte:run_x')).toBe(false);
-    expect(showsSessionHeader('session')).toBe(true);
-    expect(showsSessionPanel('overview')).toBe(false);
-  });
-
   // code-editor FR-2: Code takes the workspace — no header, no panel, no panes.
   it('routes the code tab to its own branch, app-scoped like overview/github', () => {
     expect(mainPaneBranch('code')).toBe('code');
@@ -148,8 +135,6 @@ describe('mainPaneBranch', () => {
     expect(isAppScopedTab('code')).toBe(true);
     expect(isAppScopedTab('github')).toBe(true);
     expect(isAppScopedTab('session')).toBe(false);
-    expect(showsSessionHeader('code')).toBe(false);
-    expect(showsSessionPanel('code')).toBe(false);
     expect(showsPanes(2, 'code')).toBe(false);
   });
 
@@ -168,7 +153,7 @@ describe('hostedTab', () => {
   });
 
   it('answers null on every other branch — the host stays mounted, showing nothing', () => {
-    for (const branch of ['overview', 'diff', 'panel', 'agent', 'workflow', 'ext', 'cohorte'] as const) {
+    for (const branch of ['overview', 'diff', 'panel', 'agent', 'workflow', 'ext'] as const) {
       expect(hostedTab(branch)).toBeNull();
     }
   });

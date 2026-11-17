@@ -6,8 +6,8 @@ status: draft            # draft → frozen → in-progress → in-review → sh
 branch: feat/<feature-id>
 created: <YYYY-MM-DD>
 depends_on: []           # feature ids this spec builds on
-reviewed_base:           # merge-base sha at the last SHIP verdict — freshness-gate anchor (written by /cohorte-review)
-reviewed_digest:         # sha256 (16 hex) of the reviewed source diff vs reviewed_base, specs excluded — /cohorte-ship re-checks
+reviewed_base:           # merge-base sha at the last SHIP verdict — freshness-gate anchor (written at review)
+reviewed_digest:         # sha256 (16 hex) of the reviewed source diff vs reviewed_base, specs excluded — re-checked before ship
 design_files: []         # design page links — full URLs https://claude.ai/design/p/<projectId>?file=<file>; blank until designed; omit if no UI
 ---
 

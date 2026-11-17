@@ -95,13 +95,6 @@ export interface ComposerProps {
   pending: readonly PendingPrompt[];
   /** A row's `✕` (FR-17/18). Inert on an unfocused pane (no control renders at all). */
   onRetractPending: (blockId: string, text: string) => void;
-  /**
-   * cohorte-actions FR-33: the composer chip that opens the actions menu —
-   * undefined when the session's cwd has no Cohorte detection (no chip at all).
-   */
-  cohorteChip?: ReactNode;
-  /** cohorte-actions FR-32: the actions popover, anchored above the bar like the slash menu. */
-  cohorteMenu?: ReactNode;
   /** code-editor-agents FR-6: the context-chip strip, above the bar. */
   contextChips?: ReactNode;
   /** FR-6: chips are waiting — an empty composer is sendable. */
@@ -136,8 +129,6 @@ export default function Composer({
   onInertClick,
   pending,
   onRetractPending,
-  cohorteChip,
-  cohorteMenu,
   contextChips,
   hasContext = false,
 }: ComposerProps) {
@@ -165,9 +156,6 @@ export default function Composer({
             unavailableReason={popupUnavailableReason}
           />
         )}
-        {/* cohorte-actions FR-32: same anchoring as the slash menu above — never
-            both at once (the composer chip/⌘⇧C/palette all close the slash popup first). */}
-        {cohorteMenu && !inert && cohorteMenu}
         {/* One line per failing source, stacked above the bar (the wrapper is what
             is positioned, so a second line pushes the first up instead of
             overlapping it). pi-turn-controls FR-8: compaction/retry progress
@@ -297,14 +285,9 @@ export default function Composer({
             key below is really bound: ⌃C in onInputKey, `@`/`/` by the
             attachment + slash-menu tokens, ⌘K by the global capture listener. */}
         <span className="composer-hint">
-          {/* The prompt's two settings live here, under the bar, so the bar
+          {/* The prompt's settings live here, under the bar, so the bar
               itself stays attach · text · send. */}
-          {(cohorteChip || runChip) && (
-            <span className="composer-tools">
-              {cohorteChip}
-              {runChip}
-            </span>
-          )}
+          {runChip && <span className="composer-tools">{runChip}</span>}
           <span className="composer-hint__keys">
           {/* the mock's copy reads "esc interrupt", but the real binding here is
               ⌃C (ComposerPane.onInputKey) — the hint names the hotkey that

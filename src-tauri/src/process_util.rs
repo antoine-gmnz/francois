@@ -160,7 +160,7 @@ pub fn grok_program() -> String {
 
 /// One implementation for both, which is what moving them here bought: the
 /// second one used to be a copy of the first with the constant swapped.
-pub(crate) fn resolve_cli_program(bin: &str) -> String {
+fn resolve_cli_program(bin: &str) -> String {
     // Non-Windows installs are a real binary (or a shebang script, which
     // `execvp` handles); the bare name is correct and PATH does the work.
     if !cfg!(windows) {
@@ -276,8 +276,9 @@ pub(crate) fn login_shell_path_env() -> Option<String> {
 
 /// FR-5: drop every `':'`-separated entry that is empty or not absolute,
 /// keeping the remaining entries' original order. A repo-controlled `cwd`
-/// (e.g. a hostile clone with `./cohorte` or `node_modules/.bin/cohorte` and a
-/// login-shell PATH containing `.` or a relative entry) must never make a
+/// (e.g. a hostile clone shipping a binary named like the CLI being resolved,
+/// at its root or in `node_modules/.bin`, and a login-shell PATH containing
+/// `.` or a relative entry) must never make a
 /// bare `argv0` resolve inside the open repo. Returns `None` when filtering
 /// leaves nothing, so the caller can fall back to the unfiltered PATH.
 pub fn filter_absolute_path_entries(path: &str) -> Option<String> {

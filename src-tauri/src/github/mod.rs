@@ -24,7 +24,7 @@ pub(crate) mod actions_log;
 mod branches;
 mod commands;
 mod commits;
-pub(crate) mod gh;
+mod gh;
 mod gitlab;
 mod gitlab_ci;
 mod pulls;

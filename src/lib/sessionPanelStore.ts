@@ -7,9 +7,8 @@
 import type { StateCreator } from 'zustand';
 import type { AppState } from './store';
 
-/** The panel's tabs, in the design's order. cohorte-integration FR-67: `cohorte`
- *  is last, and only shown where a Cohorte project is detected. */
-export const SESSION_PANEL_TABS = ['changes', 'plan', 'activity', 'context', 'cohorte'] as const;
+/** The panel's four tabs, in the design's order. */
+export const SESSION_PANEL_TABS = ['changes', 'plan', 'activity', 'context'] as const;
 export type SessionPanelTab = (typeof SESSION_PANEL_TABS)[number];
 
 const OPEN_KEY = 'francois.sessionPanel';

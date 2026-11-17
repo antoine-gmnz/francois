@@ -8,13 +8,11 @@
 // compact figure, exactly as drawn.
 
 import type { SessionMeta } from '../../../contract/common';
-import { useCohorteStore } from '../../lib/cohorteStore';
 import { useStore } from '../../lib/store';
 import { Icon } from '../../ui/Icon';
 import { IconButton } from '../../ui/IconButton';
 import { SidePanelEmpty } from '../../ui/SidePanel';
 import { panelContext } from './panel-context';
-import { visibleSections } from './resolve-section';
 import { resolveSection, SESSION_PANEL_SECTIONS, type SessionPanelSection } from './sections';
 import './session-panel.css';
 
@@ -22,17 +20,12 @@ export default function SessionPanel({ session }: { session: SessionMeta | null 
   const tab = useStore((s) => s.sessionPanelTab);
   const setTab = useStore((s) => s.setSessionPanelTab);
   const setShow = useStore((s) => s.setShowSessionPanel);
-  // cohorte-integration FR-67: a section's visibility reads the Cohorte store,
-  // so the strip re-renders when a detection or the pref changes.
-  useCohorteStore((s) => s.detections);
-  useCohorteStore((s) => s.prefs.showPanelTab);
-  const sections = visibleSections(SESSION_PANEL_SECTIONS, session);
-  const current = resolveSection(SESSION_PANEL_SECTIONS, tab, session);
+  const current = resolveSection(SESSION_PANEL_SECTIONS, tab);
 
   return (
     <aside className="session-panel" aria-label="session panel">
       <div className="session-panel__tabs" role="tablist">
-        {sections.map((section) => (
+        {SESSION_PANEL_SECTIONS.map((section) => (
           <PanelTab
             key={section.id}
             section={section}
@@ -67,7 +60,6 @@ function PanelTab({
   onSelect: () => void;
 }) {
   const Badge = section.Badge;
-  const Glyph = section.Icon;
   return (
     <button
       type="button"
@@ -77,8 +69,8 @@ function PanelTab({
       className={selected ? 'session-panel__tab session-panel__tab--on' : 'session-panel__tab'}
       onClick={onSelect}
     >
-      {Glyph ? <Glyph /> : <Icon name={section.icon} size={14} />}
-      {(selected || section.showLabel) && <span className="session-panel__tab-label">{section.label}</span>}
+      <Icon name={section.icon} size={14} />
+      {selected && <span className="session-panel__tab-label">{section.label}</span>}
       {Badge && session && (
         <span className="session-panel__tab-count">
           <Badge session={session} />
