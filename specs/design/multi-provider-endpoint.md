@@ -1,6 +1,6 @@
 # DESIGN BRIEF — Endpoint accounts (`multi-provider-endpoint`)
 
-> The "spec return". Paste into the design tool (see `PIPELINE.md` §design). This is §8 of
+> The "spec return". Paste into the design tool (see `CONVENTIONS.md` §design). This is §8 of
 > `specs/multi-provider-endpoint.md`, standalone.
 
 **Goal:** Register an OpenAI-compatible endpoint (label, base URL, API key, optional model list) as an

@@ -144,7 +144,7 @@ a **one-way pull** — after it, the cloud copy no longer receives the user's wo
 ## 5. API contract
 
 `contract/cloud-sessions.ts`. New domain **`cloud`** (`remote` belongs to `remote-control`;
-appended to PIPELINE.md §Domains). Shared types are imported from `contract/common.ts` and
+appended to CONVENTIONS.md §Domains). Shared types are imported from `contract/common.ts` and
 never redefined.
 
 ```ts

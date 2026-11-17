@@ -11,7 +11,7 @@ design_project: bbe7b653-3cdc-4772-a79d-ec08c546db22
 
 # Projects — configured workspaces
 
-> **needs new domain: `project`** — PIPELINE.md §Conventions currently lists
+> **needs new domain: `project`** — CONVENTIONS.md §Conventions currently lists
 > `app · session · conversation · diff · shell · agents · mcp · skills · palette · cli`.
 > This feature adds `project` (channels `francois:project:*` → commands `project_*`).
 > Add it to the Domains line at `/build` time.

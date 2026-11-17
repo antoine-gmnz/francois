@@ -3,7 +3,7 @@
 // TypeScript; the Rust core mirrors these with serde structs. Imported READ-ONLY
 // by both surfaces — neither edits it.
 //
-// Physical binding (PIPELINE.md §Conventions):
+// Physical binding (CONVENTIONS.md §Conventions):
 //   francois:extensions:<verb>  → invoke('extensions_<verb_snake_case>', payload) → Result<T>
 //   francois:extensions:event   → listen('francois://extensions/event')           → ExtensionEvent
 

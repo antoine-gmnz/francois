@@ -489,12 +489,12 @@ describe('sanitizeForDisplay', () => {
 // Regression guard for the round-7 remediation: panel.emptyCopy is
 // manifest-declared free text, same trust class as PanelInfo.label, and must
 // be sanitized before render in both places that display it. No DOM test
-// runner is wired for this project (see PIPELINE.md §Testing), so this
+// runner is wired for this project (see CONVENTIONS.md §Testing), so this
 // asserts the call sites directly against source rather than a rendered DOM.
 describe('panel.emptyCopy sanitization at render call sites', () => {
   it('PanelSection wraps panel.emptyCopy in sanitizeForDisplay before rendering it', async () => {
     // Vite's `?raw` import (no DOM renderer is wired for this project — see
-    // PIPELINE.md §Testing) gives a source-text regression guard against
+    // CONVENTIONS.md §Testing) gives a source-text regression guard against
     // reverting the round-7 fix that mirrors the earlier panel.label fix.
     const src = (await import('./PanelSection.tsx?raw')).default as string;
     expect(src).toMatch(/EmptyPane[^<]*>\s*\{sanitizeForDisplay\(panel\.emptyCopy\)\}/s);

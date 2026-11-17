@@ -79,6 +79,11 @@ pub fn classify_block(b: &BufBlock) -> Value {
             if let Some(execution) = &b.execution {
                 o["execution"] = execution.clone();
             }
+            // hook-diagnostics: `ToolConversationBlock.tone` — set only when
+            // the result was an error; absent otherwise (pre-feature parity).
+            if let Some(tone) = &b.tone {
+                o["tone"] = Value::String(tone.clone());
+            }
             with_at(o, b)
         }
         BlockKind::Subagent => {

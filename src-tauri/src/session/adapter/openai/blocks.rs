@@ -1,6 +1,6 @@
 //! Pure round-trip decision helpers (FR-6/FR-7/§7) and the transcript
 //! block-emission helpers `runner.rs`'s loop drives them into. Split out of
-//! `runner.rs` (PIPELINE.md §Code layout's ~1000-line ceiling) — same
+//! `runner.rs` (CONVENTIONS.md §Code layout's ~1000-line ceiling) — same
 //! one-concern-per-child pattern `gate.rs`/`tools.rs`/`wire.rs`/`thread.rs`/
 //! `skills.rs` already follow. `pub(super)`: every item here is called from
 //! `runner.rs`, a sibling module, not a descendant of this one.
@@ -140,7 +140,7 @@ pub(super) fn finish_tool_block(
     let block = app
         .state::<Engine>()
         .with_session_mut(session_id, |s| {
-            s.buf_tool_done(block_id, meta.to_string(), has_detail)
+            s.buf_tool_done(block_id, meta.to_string(), has_detail, None)
         })
         .flatten();
     if let Some(b) = &block {
@@ -158,6 +158,7 @@ pub(super) fn finish_tool_block(
             block_id: block_id.to_string(),
             meta: meta.to_string(),
             has_detail: has_detail.then_some(true),
+            tone: None,
         },
     );
 }

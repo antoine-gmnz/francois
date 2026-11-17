@@ -281,6 +281,9 @@ pub fn build_ask(tool: &str, input: &Value, cwd: &str) -> PermissionAsk {
         cwd: cwd.to_string(),
         pattern_label: label_for_pattern(&pattern),
         pattern,
+        decision_reason: None,
+        decision_reason_type: None,
+        decision_reason_hook_event: None,
     }
 }
 
@@ -541,6 +544,19 @@ mod tests {
             assert!(keys.contains(&k), "missing {k} in {keys:?}");
         }
         assert_eq!(keys.len(), 6);
+    }
+
+    #[test]
+    fn permission_ask_serializes_its_decision_reason_when_present() {
+        let mut ask = build_ask("Bash", &json!({ "command": "echo ASKME" }), "/r");
+        ask.decision_reason = Some("stub-gate: ASKME needs confirmation".into());
+        ask.decision_reason_type = Some("hook".into());
+        ask.decision_reason_hook_event = Some("PreToolUse".into());
+        let v = serde_json::to_value(&ask).unwrap();
+        assert_eq!(v["decisionReason"], "stub-gate: ASKME needs confirmation");
+        assert_eq!(v["decisionReasonType"], "hook");
+        assert_eq!(v["decisionReasonHookEvent"], "PreToolUse");
+        assert_eq!(v.as_object().unwrap().len(), 9);
     }
 
     #[test]

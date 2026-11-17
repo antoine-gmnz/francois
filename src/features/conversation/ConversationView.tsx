@@ -2,8 +2,6 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { isBusyStatus } from '../../../contract/fleet-board';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useSessionMeta } from '../../lib/hooks/useSessionMeta';
-import { CohorteInlineGate } from '../cohorte/CohorteSessionBits';
-import { CohorteActionResultCards } from '../cohorte/CohorteActionResultCard';
 import { Stitch } from '../../ui/Loaders';
 import { hasPendingPermissionBlock } from '../permissions/permission-card';
 import { hasPendingQuestionBlock } from '../questions/question-card';
@@ -14,6 +12,7 @@ import { compactBlocks, TRANSCRIPT_TEXT_SELECT_STYLE, windowedBlocks } from './c
 import './conversation.css';
 import EarlierBlocksRow from './EarlierBlocksRow';
 import JumpToLatestChip from './JumpToLatestChip';
+import ProjectHealthBanners from './ProjectHealthBanners';
 import ResumeFailBanner from './ResumeFailBanner';
 import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
 import TranscriptSkeleton from './TranscriptSkeleton';
@@ -161,6 +160,11 @@ export default function ConversationView({
             event fires for). */}
         {resumeFailed && <ResumeFailBanner onDismiss={dismissResumeFailed} />}
 
+        {/* claude-project-health: untrusted folder ignoring its allow rules, and
+            Cohorte's guard missing its interpreter. Probed on open/switch. */}
+        <ProjectHealthBanners sessionId={sessionId} visible={visible} />
+
+
         {/* pi-session-durability §8: missing/corrupt/incompatible/account-missing
             refuse resume with one cause plus Retry/Create new session (FR-3/7).
             `ready`/`disconnected` render nothing — resume then happens
@@ -235,11 +239,6 @@ export default function ConversationView({
                     )}
                   </div>
                 ))}
-                {/* cohorte-integration FR-61: a pending Cohorte gate, in the trailing
-                    slot after the last turn — never persisted into the transcript. */}
-                <CohorteInlineGate sessionId={sessionId} keysActive={visible && !inert} />
-                {/* cohorte-actions FR-51: intake result cards, same trailing slot, after the gate. */}
-                <CohorteActionResultCards sessionId={sessionId} keysActive={visible && !inert} />
               </>
             )}
           </div>

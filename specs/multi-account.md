@@ -207,8 +207,8 @@ after `MODEL`.
 
 ## 5. API contract
 
-New domain **`account`** (add it to PIPELINE.md §Conventions "Domains"). Physical binding per
-PIPELINE §Conventions: `francois:account:<verb>` → `invoke('account_<verb>')`;
+New domain **`account`** (add it to CONVENTIONS.md §Conventions "Domains"). Physical binding per
+CONVENTIONS §Conventions: `francois:account:<verb>` → `invoke('account_<verb>')`;
 `francois:account:event` → `listen('francois://account/event')`.
 
 `contract/multi-account.ts`:
@@ -367,9 +367,9 @@ compact badge shown only for non-default accounts.
 
 ### 2026-07-31 — review findings (`/review multi-account`, verdict REVISE, round 2)
 
-- [x] CRITICAL · `PIPELINE.md` §Conventions "Domains" line · spec-violation · Spec §5 requires the
+- [x] CRITICAL · `CONVENTIONS.md` §Conventions "Domains" line · spec-violation · Spec §5 requires the
   `account` domain to be added to the Domains list, but it was never appended. → append `account` to
-  the `Domains` bullet in `PIPELINE.md` §Conventions. — fixed: lead, appended `account` to the Domains
+  the `Domains` bullet in `CONVENTIONS.md` §Conventions. — fixed: lead, appended `account` to the Domains
   line directly (not a surface path).
 - [x] HIGH · `src-tauri/src/account/mod.rs:192-193,209-210,243` · quality · `config_dir_of`,
   `known_ids`, and `default_account_id` call `.lock().unwrap()` on `AccountState`, panicking on a

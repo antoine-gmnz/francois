@@ -58,7 +58,7 @@ flows, numbered functional requirements, the exact contract shapes, data & state
 design brief, and acceptance criteria. A feature moves through a disciplined pipeline: brainstorm
 → spec (frozen) → contract authored → one implementer agent per surface, in parallel, strictly
 test-first → smoke-tested end to end → reviewed against the spec → shipped. The full doctrine
-lives in `PIPELINE.md` at the repo root, alongside every shipped feature's spec in `specs/`.
+lives in `CONVENTIONS.md` at the repo root, alongside every shipped feature's spec in `specs/`.
 
 ## Testing
 
@@ -86,7 +86,7 @@ commits, a three-platform build (Windows, macOS universal, Linux), and a republi
   `Francois Redesign.dc.html` is the current system (through turn 7a — two chrome tiers, the
   panels dissolved into the roster, agent tabs); `Francois Design System v2.dc.html` is the
   extracted system; `Claude Terminal.dc.html` is the original.
-- **`PIPELINE.md`** — the complete build pipeline: stack decisions, contract conventions, code
+- **`CONVENTIONS.md`** — the complete build pipeline: stack decisions, contract conventions, code
   layout rules, testing philosophy, and CI/release mechanics.
 - **`specs/`** — one frozen spec per shipped feature; the closest thing to a living functional
   spec for the whole app.

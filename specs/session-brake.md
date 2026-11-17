@@ -216,7 +216,7 @@ for review).
 
 Lives in `contract/session-brake.ts` (new), with small additions to three
 existing contract files. Shared types are imported from `contract/common.ts` and
-never redefined. Physical Tauri binding per PIPELINE.md: request
+never redefined. Physical Tauri binding per CONVENTIONS.md: request
 `francois:session:stop` → command `session_stop`; the isolation flag rides the
 existing `francois:session:create` → `session_create`. **No new events. No new
 `ErrorCode`s** — `SESSION_NOT_FOUND`, `SESSION_NOT_RUNNING`, `NOT_A_GIT_REPO`,
@@ -250,7 +250,7 @@ on `francois://session/event`, which every consumer already handles).
 // Authored from specs/session-brake.md §5. Imports shared vocabulary from
 // common.ts and never redefines it.
 //
-// Physical Tauri binding (PIPELINE.md):
+// Physical Tauri binding (CONVENTIONS.md):
 //   francois:session:stop → command `session_stop` (Result<null>, never rejects).
 //   Worktree isolation has NO channel of its own: it rides francois:session:create
 //   via the new optional `isolate` flag (SessionCreateInput / NewSessionRequest),

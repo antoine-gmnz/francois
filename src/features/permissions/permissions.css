@@ -244,6 +244,12 @@
 .pcard__why .icon {
   margin-top: 1.5px;
 }
+/* hook-diagnostics: the CLI's own reason for asking reads above the blast
+   radius, in the primary text colour — it is the answer to "why me?". */
+.pcard__why--reason {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
 
 /* ── the rule an "always" would write ── */
 .pcard__rule {

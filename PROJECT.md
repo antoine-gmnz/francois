@@ -53,7 +53,7 @@ grid below that (design turn 7a — the earlier three-column grid with a right r
 
 > **The design mocks are the reference for layout, colors, glyphs and micro-interactions — this
 > section describes what ships.** The authoritative **feature** list is the feature map in
-> [`PIPELINE.md`](PIPELINE.md); each feature's behavior is its frozen spec in `specs/`.
+> [`CONVENTIONS.md`](CONVENTIONS.md); each feature's behavior is its frozen spec in `specs/`.
 
 ## Features
 
@@ -286,7 +286,7 @@ is certified on each supported OS (`specs/pi-migration-rollout.md` FR-8).
 
 ## Open decisions
 
-- ~~**Delivery target**~~: resolved — a **native desktop app, not a web app**: Tauri 2 with a Rust core and a React + TypeScript frontend; xterm.js + `portable-pty` for the terminal panes; Claude Code driven through its headless `stream-json` interface. Details in PIPELINE.md.
+- ~~**Delivery target**~~: resolved — a **native desktop app, not a web app**: Tauri 2 with a Rust core and a React + TypeScript frontend; xterm.js + `portable-pty` for the terminal panes; Claude Code driven through its headless `stream-json` interface. Details in CONVENTIONS.md.
 - ~~**Name**~~: resolved — **Francois** (after Claude François, the French singer).
 - ~~**Scope of v1**~~: resolved — multi-pane split views (up to four), session persistence/restore and
   remote sessions all shipped. What is still open is tracked as specs in `specs/`, not here:

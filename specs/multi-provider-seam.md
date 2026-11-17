@@ -297,7 +297,7 @@ switch model, quit and resume, run a subagent, open an agent tab.
     review — **not** on a pre/post golden diff. The clause asserting a proof this artefact does not
     deliver is struck rather than left standing.
 - **FR-19** `npm test`, `npx tsc --noEmit` and `cargo test` are green, with no test deleted or
-  weakened to accommodate the refactor. A test that must move follows its code (PIPELINE
+  weakened to accommodate the refactor. A test that must move follows its code (CONVENTIONS
   §Code layout); a test that must *change shape* is called out in the PR body with its reason.
 
 ## 5. API contract

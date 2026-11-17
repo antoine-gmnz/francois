@@ -224,14 +224,14 @@ State for sessions other than `activeSessionId` may be kept warm in memory (chea
 
 **Derived (pure, no state):** `formatContextTokens(n)` (FR-4) and `formatElapsed(elapsedMs)` (FR-6) are pure functions of `meta` + a 1Hz clock tick; not persisted.
 
-**Rust core:** conversation-view contributes exactly one Tauri command handler (`francois:conversation:getTranscript`) that reads session-engine's exported buffer accessor for the session and maps it to `ConversationBlock[]` (the block-classification logic in FR-13's glyph map is defined once, in the shared TypeScript contract, and mirrored between the Rust core, for building the snapshot, and the frontend, for live events, per this project's contract-mirroring convention — see PIPELINE.md). It owns no persistent state of its own; session-engine owns the buffer's lifetime (creation on session start, eviction on `session.removed`).
+**Rust core:** conversation-view contributes exactly one Tauri command handler (`francois:conversation:getTranscript`) that reads session-engine's exported buffer accessor for the session and maps it to `ConversationBlock[]` (the block-classification logic in FR-13's glyph map is defined once, in the shared TypeScript contract, and mirrored between the Rust core, for building the snapshot, and the frontend, for live events, per this project's contract-mirroring convention — see CONVENTIONS.md). It owns no persistent state of its own; session-engine owns the buffer's lifetime (creation on session start, eviction on `session.removed`).
 
 ## 7. Edge cases & errors
 
 | Case | Behavior |
 |---|---|
 | `getTranscript` resolves `SESSION_NOT_FOUND` | Transcript area shows an inline error block: "session not found" (dim/error styling), no input bar; typically transient during session teardown — app-shell clearing `activeSessionId` on `session.removed` resolves it. |
-| `getTranscript` rejects due to IPC/transport failure (should not happen — invoke never throws per PIPELINE.md convention, but defensively) | Treated identically to `ok: false` with code `INTERNAL`; retry affordance shown. |
+| `getTranscript` rejects due to IPC/transport failure (should not happen — invoke never throws per CONVENTIONS.md convention, but defensively) | Treated identically to `ok: false` with code `INTERNAL`; retry affordance shown. |
 | `activeSessionId` changes mid-hydration | Stale response discarded (FR-9); new hydration for the new id proceeds normally. |
 | Session removed (`session.removed`) while it is the active session | app-shell clears `activeSessionId`; this feature drops that session's slice and falls into the no-session empty state (FR-27). |
 | `session:send` resolves `SESSION_NOT_FOUND` / `SESSION_NOT_RUNNING` / `INVALID_INPUT` | FR-26 applies: optimistic block removed, text restored to input, transient inline error shown. |

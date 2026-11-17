@@ -271,6 +271,7 @@ pub fn close_open_block(
             meta: "interrupted".into(),
             detail: None,
             affects_workspace: false,
+            tone: None,
         }),
     }
 }

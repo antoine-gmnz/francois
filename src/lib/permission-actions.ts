@@ -3,7 +3,7 @@
 // inline Allow / Deny (features/sessions), so it lives here rather than being
 // imported across feature folders.
 
-import type { PermissionDecision } from '../../contract/permission-guardrails';
+import type { PermissionAsk, PermissionDecision } from '../../contract/permission-guardrails';
 
 export interface PermissionAction {
   decision: PermissionDecision;
@@ -42,4 +42,20 @@ export function permissionActions(allowed?: PermissionDecision[]): PermissionAct
  */
 export function writesRule(decision: PermissionDecision): boolean {
   return decision === 'allowAlways' || decision === 'denyAlways';
+}
+
+/**
+ * hook-diagnostics: the line an approval card shows saying WHY the CLI is
+ * asking — `decisionReason*` from the `can_use_tool` request. A PreToolUse hook
+ * that answered `ask` reads `Project hook (PreToolUse): <reason>`; any other
+ * type shows the reason plainly. `null` (render nothing) for a payload from
+ * before the field existed, or a blank reason. Shared by the transcript card
+ * and the roster's inline Allow / Deny.
+ */
+export function askReasonLine(ask: Pick<PermissionAsk, 'decisionReason' | 'decisionReasonType' | 'decisionReasonHookEvent'>): string | null {
+  const reason = ask.decisionReason?.trim() ?? '';
+  if (reason === '') return null;
+  if (ask.decisionReasonType !== 'hook') return reason;
+  const event = ask.decisionReasonHookEvent?.trim() ?? '';
+  return event === '' ? `Project hook: ${reason}` : `Project hook (${event}): ${reason}`;
 }

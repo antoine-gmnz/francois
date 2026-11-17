@@ -41,6 +41,8 @@ mod mcp;
 mod mcp_approval;
 pub(crate) mod models;
 mod persistence;
+// claude-project-health: folder trust as `-p` reads it + Cohorte guard checks.
+mod project_health;
 mod remote;
 mod remote_discovery;
 /// response-mode FR-6: the closed `ResponseMode` enum and the CORE-OWNED
@@ -219,6 +221,11 @@ pub use models::{
     model_cache, refresh_models, refresh_models_for, resolve_context_tokens, resolve_model_display,
     resolve_model_display_from_catalog, session_models, warm_model_cache, ModelInfo,
     DEFAULT_CONTEXT_LIMIT,
+};
+pub use project_health::{
+    __cmd__session_project_health, __cmd__session_trust_folder,
+    __tauri_command_name_session_project_health, __tauri_command_name_session_trust_folder,
+    session_project_health, session_trust_folder,
 };
 pub use teardown::{
     dispose_session_resources, register_teardown, SessionAccountObserver, SessionTeardown,
@@ -1446,6 +1453,7 @@ impl Session {
         block_id: &str,
         meta: String,
         has_detail: bool,
+        tone: Option<String>,
     ) -> Option<BufBlock> {
         let out = self
             .block_buffer
@@ -1454,6 +1462,9 @@ impl Session {
             .map(|b| {
                 b.meta = Some(meta);
                 b.has_detail = has_detail;
+                // hook-diagnostics: only a Tool block ever settles with a tone
+                // here (`classify_block`/persistence gate it by kind).
+                b.tone = tone;
                 b.streaming = false;
                 b.clone()
             });
@@ -1897,7 +1908,7 @@ mod tests {
         assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "tool-1");
 
-        let done = s.buf_tool_done("tool-1", "3 lines".into(), false);
+        let done = s.buf_tool_done("tool-1", "3 lines".into(), false, None);
         assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("tool-1"));
         assert_eq!(done.unwrap().meta.as_deref(), Some("3 lines"));
         // Settling it unpins eviction, which catches back up to the cap in the

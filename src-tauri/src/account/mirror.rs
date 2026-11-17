@@ -10,7 +10,7 @@
 // global root.
 //
 // SYMLINKS, not copies, on purpose: the global root is the single install the
-// user maintains (`npx cohorte install --global` and friends), so an update
+// user maintains (plugin and skill installers write there), so an update
 // there must be visible from every account without a re-seed.
 //
 // Best-effort throughout — a failure to mirror degrades an account to the

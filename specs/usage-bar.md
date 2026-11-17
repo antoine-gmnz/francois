@@ -192,7 +192,7 @@ there (`common.ts:143`) and is reused as-is.
 | `francois:app:refreshUsage` | frontend → core (`invoke`) | `void` | `UsageRefreshAck` | `INTERNAL` |
 | `francois:app:event` | core → frontend (`listen`) | — | `AppEvent` (tagged union) | — |
 
-Physical binding (PIPELINE §Conventions):
+Physical binding (CONVENTIONS §Conventions):
 
 ```
 francois:app:getUsage      → invoke('app_get_usage')      → Promise<Result<UsageSnapshot>>

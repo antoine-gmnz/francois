@@ -37,8 +37,8 @@ describe('session panel parsers', () => {
     expect(parseSessionPanelTab('nope')).toBe('changes');
   });
 
-  it('lists the design tabs in order, Cohorte last', () => {
-    expect(SESSION_PANEL_TABS).toEqual(['changes', 'plan', 'activity', 'context', 'cohorte']);
+  it('lists the design tabs in order', () => {
+    expect(SESSION_PANEL_TABS).toEqual(['changes', 'plan', 'activity', 'context']);
   });
 });
 

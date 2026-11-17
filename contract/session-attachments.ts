@@ -1,5 +1,5 @@
 // contract/session-attachments.ts — session-attachments feature contract.
-// Binding per PIPELINE.md: francois:session:<verb> -> invoke('session_<verb>') -> Promise<Result<T>>.
+// Binding per CONVENTIONS.md: francois:session:<verb> -> invoke('session_<verb>') -> Promise<Result<T>>.
 // Request/response only — no new SessionEvent member. The four ATTACHMENT_* error codes live in
 // contract/common.ts (spec §5.3).
 

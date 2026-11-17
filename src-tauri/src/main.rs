@@ -6,8 +6,8 @@
 // crate relative to it.
 
 use francois::{
-    account, cohorte, diagnostics, diff, dnd, editor, extensions, github, lsp, permissions,
-    profiles, project, session, shell, update, usage, vsx, window,
+    account, diagnostics, diff, dnd, editor, extensions, github, lsp, permissions, profiles,
+    project, session, shell, update, usage, vsx, window,
 };
 
 use tauri::RunEvent;
@@ -55,11 +55,6 @@ fn main() {
         // log-tail streams. Another LEAF lock — nothing under extensions/ ever
         // takes Engine.sessions, and no other domain takes this one.
         .manage(extensions::ExtensionState::default())
-        // cohorte-integration §6: detection/probe caches + the per-root watchers.
-        .manage(cohorte::CohorteState::default())
-        .manage(std::sync::Arc::new(
-            cohorte::python_service::PythonState::default(),
-        ))
         .setup(|app| {
             diagnostics::install_panic_log(app.handle());
             // core-architecture-wave3 FR-9: the crate root is the one place that
@@ -214,6 +209,9 @@ fn main() {
             session::mcp_attach,
             session::mcp_approvals,
             session::mcp_decide,
+            // claude-project-health: folder trust + Cohorte guard diagnostics.
+            session::session_project_health,
+            session::session_trust_folder,
             session::skills_list,
             session::skills_install,
             session::skills_run,
@@ -270,43 +268,6 @@ fn main() {
             github::github_get_job,
             github::github_get_step_log,
             github::github_rerun_failed,
-            cohorte::cohorte_detect,
-            cohorte::cohorte_doctor,
-            cohorte::cohorte_policy,
-            cohorte::cohorte_init,
-            cohorte::cohorte_watch,
-            cohorte::cohorte_list_runs,
-            cohorte::cohorte_get_run,
-            cohorte::cohorte_run_log,
-            cohorte::cohorte_approve,
-            cohorte::cohorte_send_to_fix,
-            cohorte::cohorte_deny,
-            cohorte::cohorte_pause,
-            cohorte::cohorte_resume,
-            cohorte::cohorte_cancel,
-            cohorte::python_service::cohorte_v3_detect,
-            cohorte::python_service::cohorte_v3_doctor,
-            cohorte::python_service::cohorte_v3_policy,
-            cohorte::python_service::cohorte_v3_init,
-            cohorte::python_service::cohorte_v3_watch,
-            cohorte::python_service::cohorte_v3_list_runs,
-            cohorte::python_service::cohorte_v3_get_run,
-            cohorte::python_service::cohorte_v3_run_log,
-            cohorte::python_service::cohorte_v3_features,
-            cohorte::python_service::cohorte_v3_start,
-            cohorte::python_service::cohorte_v3_approve,
-            cohorte::python_service::cohorte_v3_answer,
-            cohorte::python_service::cohorte_v3_send_to_fix,
-            cohorte::python_service::cohorte_v3_deny,
-            cohorte::python_service::cohorte_v3_pause,
-            cohorte::python_service::cohorte_v3_resume,
-            cohorte::python_service::cohorte_v3_cancel,
-            cohorte::actions_cli::cohorte_action_intake,
-            cohorte::actions_cli::cohorte_action_preview,
-            cohorte::actions_cli::cohorte_action_brainstorm,
-            cohorte::actions_cli::cohorte_action_ideas,
-            cohorte::actions_cli::cohorte_action_brief,
-            cohorte::spec_cli::cohorte_action_spec,
             permissions::permissions_list,
             permissions::permissions_set_enabled,
             permissions::permissions_remove,
@@ -353,7 +314,6 @@ fn main() {
                 shell::kill_all_shells(app);
                 // code-editor-lsp FR-7: shutdown + exit, killed 2 s later.
                 lsp::stop_all(app);
-                cohorte::python_service::kill_workers(app);
                 session::kill_model_probes();
                 session::kill_all(app);
                 // remote-control: the hosts are real interactive `claude`

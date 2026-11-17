@@ -184,8 +184,10 @@ pub fn handle_control_request(
             request_id,
             tool_name,
             input,
+            reason,
         } => {
-            let ask = crate::permissions::build_ask(&tool_name, &input, &settings.cwd);
+            let mut ask = crate::permissions::build_ask(&tool_name, &input, &settings.cwd);
+            reason.apply_to(&mut ask);
             let block_id = uuid();
             pending_perms.lock().unwrap().insert(
                 block_id.clone(),

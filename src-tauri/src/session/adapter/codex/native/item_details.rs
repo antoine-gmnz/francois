@@ -144,6 +144,7 @@ impl Details {
                 meta: if failed { "failed" } else { "done" }.into(),
                 detail: Some(detail),
                 affects_workspace: false,
+                tone: None,
             });
         }
         events
@@ -170,6 +171,7 @@ impl Details {
                     meta: "interrupted".into(),
                     detail: Some(detail),
                     affects_workspace: false,
+                    tone: None,
                 }
             })
             .collect()

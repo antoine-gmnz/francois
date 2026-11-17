@@ -20,7 +20,6 @@
 //    the panic log.
 
 pub mod account;
-pub mod cohorte;
 pub mod diagnostics;
 pub mod diff;
 pub mod dnd;

@@ -136,13 +136,16 @@ fn apply_projected(
             meta,
             detail,
             affects_workspace,
+            tone,
         } => {
             let has_detail = detail.is_some();
             if let Some(detail) = detail {
                 env.append_step_detail(id, &detail);
             }
             let block = engine
-                .with_session_mut(id, |s| s.buf_tool_done(&block_id, meta.clone(), has_detail))
+                .with_session_mut(id, |s| {
+                    s.buf_tool_done(&block_id, meta.clone(), has_detail, tone.clone())
+                })
                 .flatten();
             if let Some(block) = block {
                 env.append_transcript(id, &block);
@@ -155,6 +158,7 @@ fn apply_projected(
                 block_id,
                 meta,
                 has_detail: has_detail.then_some(true),
+                tone,
             });
         }
         RuntimeEvent::Metrics(metrics) => {

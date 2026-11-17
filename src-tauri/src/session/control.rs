@@ -158,9 +158,46 @@ pub enum ControlDecision {
         request_id: String,
         tool_name: String,
         input: Value,
+        reason: AskReason,
     },
     /// Answer immediately with this control_response payload (FR-7/9 + allowGit).
     Respond(Value),
+}
+
+/// hook-diagnostics: WHY the CLI raised a `can_use_tool` — its optional
+/// `decision_reason`, `decision_reason_type` (e.g. `hook`) and
+/// `decision_reason_hook_event` (e.g. `PreToolUse`). A PreToolUse hook that
+/// answers `ask` arrives here even in bypassPermissions mode. Each field is
+/// `None` when absent or blank (every pre-2.1.3xx CLI, and a plain gate).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AskReason {
+    pub reason: Option<String>,
+    pub kind: Option<String>,
+    pub hook_event: Option<String>,
+}
+
+impl AskReason {
+    pub fn from_request(req: Option<&Value>) -> AskReason {
+        let field = |key: &str| {
+            req.and_then(|r| r.get(key))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        };
+        AskReason {
+            reason: field("decision_reason"),
+            kind: field("decision_reason_type"),
+            hook_event: field("decision_reason_hook_event"),
+        }
+    }
+
+    /// Copy onto the ask the frontend receives (`PermissionAsk.decisionReason*`).
+    pub fn apply_to(self, ask: &mut crate::permissions::PermissionAsk) {
+        ask.decision_reason = self.reason;
+        ask.decision_reason_type = self.kind;
+        ask.decision_reason_hook_event = self.hook_event;
+    }
 }
 
 pub fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
@@ -189,7 +226,12 @@ pub fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
         // permission-guardrails FR-1(c): the allowGit fast path is evaluated
         // BEFORE parking, so an allowGit session still auto-approves a direct
         // git/gh Bash call with no card (pre-feature parity, §3 flow 8).
-        if allow_git && tool == "Bash" && is_git_command(&input) {
+        // A project hook that explicitly asked (e.g. a guard confirming a
+        // `git push` on the default branch) is never auto-approved: the fast
+        // path only stands in for Claude Code's own permission prompt.
+        let reason = AskReason::from_request(req);
+        let hook_asked = reason.kind.as_deref() == Some("hook");
+        if allow_git && !hook_asked && tool == "Bash" && is_git_command(&input) {
             return ControlDecision::Respond(allow_tool_response(&request_id, &input));
         }
         // FR-1(d): everything else parks an approval card.
@@ -197,6 +239,7 @@ pub fn decide_control_request(v: &Value, allow_git: bool) -> ControlDecision {
             request_id,
             tool_name: tool.to_string(),
             input,
+            reason,
         };
     }
     match parse_questions(&input) {
@@ -328,6 +371,7 @@ mod tests {
             request_id,
             tool_name,
             input,
+            reason,
         } = decide_control_request(&v, false)
         else {
             panic!("expected Permission");
@@ -335,6 +379,49 @@ mod tests {
         assert_eq!(request_id, "req-9");
         assert_eq!(tool_name, "Bash");
         assert_eq!(input, json!({ "command": "npm test" })); // FR-3: verbatim
+                                                             // hook-diagnostics: a request without decision_reason* carries none.
+        assert_eq!(reason, AskReason::default());
+    }
+
+    #[test]
+    fn a_hook_ask_capture_carries_its_decision_reason() {
+        // Real claude 2.1.326 captures (production argv): a PreToolUse hook
+        // answering `ask` raises can_use_tool in default AND bypass mode.
+        for fixture in [
+            include_str!("stream/fixtures/hook-ask-default.ndjson"),
+            include_str!("stream/fixtures/hook-ask-bypass.ndjson"),
+        ] {
+            let line = fixture
+                .lines()
+                .find(|l| l.contains("\"control_request\""))
+                .expect("fixture has a control_request");
+            let v: Value = serde_json::from_str(line).unwrap();
+            let ControlDecision::Permission { reason, .. } = decide_control_request(&v, false)
+            else {
+                panic!("expected Permission");
+            };
+            assert_eq!(
+                reason,
+                AskReason {
+                    reason: Some("stub-gate: ASKME needs confirmation".into()),
+                    kind: Some("hook".into()),
+                    hook_event: Some("PreToolUse".into()),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn blank_decision_reason_fields_read_as_absent() {
+        let req = json!({ "decision_reason": "  ", "decision_reason_type": "rule" });
+        assert_eq!(
+            AskReason::from_request(Some(&req)),
+            AskReason {
+                reason: None,
+                kind: Some("rule".into()),
+                hook_event: None,
+            }
+        );
     }
 
     #[test]
@@ -345,6 +432,38 @@ mod tests {
                 "subtype": "success", "request_id": "r", "response": { "behavior": "deny",
                 "message": "Francois: the user denied this tool call." } } })
         );
+    }
+
+    #[test]
+    fn allow_git_never_auto_approves_a_hook_ask() {
+        let v = json!({
+            "type": "control_request",
+            "request_id": "r1",
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "Bash",
+                "input": { "command": "git push origin main" },
+                "decision_reason": "gate: push to the default branch needs confirmation",
+                "decision_reason_type": "hook",
+                "decision_reason_hook_event": "PreToolUse"
+            }
+        });
+        match decide_control_request(&v, true) {
+            ControlDecision::Permission { reason, .. } => {
+                assert_eq!(reason.kind.as_deref(), Some("hook"));
+            }
+            _ => panic!("a hook ask must park a card even with allowGit"),
+        }
+        // Without a hook reason the fast path still applies.
+        let mut plain = v.clone();
+        let req = plain["request"].as_object_mut().unwrap();
+        req.remove("decision_reason");
+        req.remove("decision_reason_type");
+        req.remove("decision_reason_hook_event");
+        assert!(matches!(
+            decide_control_request(&plain, true),
+            ControlDecision::Respond(_)
+        ));
     }
 
     #[test]

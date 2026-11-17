@@ -69,7 +69,7 @@ export function PullDetail({ cwd, number, onChanged }: PullDetailProps): JSX.Ele
     setDetail(null);
     setError(null);
     if (number !== null) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, number]);
 
   if (number === null) {

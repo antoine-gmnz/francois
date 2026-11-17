@@ -90,7 +90,7 @@ const CAPABILITIES: Record<AgentRuntime, RuntimeCapabilities> = {
     subagents: { available: true },
     skills: { available: true },
     skillsInstall: { available: true },
-    workflows: { available: false, reason: 'Use the Cohorte integration to orchestrate Codex workflows.' },
+    workflows: { available: false, reason: 'Workflows are not available for Codex sessions.' },
     interactiveCommands: { available: true },
     permissions: { available: false, reason: 'Native approvals require a live Codex connection.' },
     remoteControl: { available: false, reason: 'Start a Codex session to connect remote control.' },

@@ -64,7 +64,7 @@ data, no registry change.
 - **FR-1** `ProjectSwitcher` renders inside `UsageBar`'s `.titlebar-brand` cluster, replacing the current
   `.titlebar-path` button. It is the **only** project control in the app.
 - **FR-2** The component file stays at `src/features/projects/ProjectSwitcher.tsx` and is *imported* by
-  `UsageBar` (PIPELINE §Code layout — group by feature). It is **not** inlined into `features/usage/`.
+  `UsageBar` (CONVENTIONS §Code layout — group by feature). It is **not** inlined into `features/usage/`.
 - **FR-3** The button label is `switcherLabel(active)` — the project `name`, else `All projects`. It truncates
   with the existing `.truncate` rule; the name (not the meter) gives way. `MAX_PROJECT_NAME_LENGTH` is 80, so
   the button's `max-width: 320px` cap stays and the label ellipsizes inside it.

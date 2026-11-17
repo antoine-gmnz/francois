@@ -6,7 +6,7 @@
 // of parent gets a discriminated union on the entity and every event, never an optional id
 // per parent kind). Imports shared vocabulary from common.ts; never redefines it.
 //
-// Physical Tauri binding (see PIPELINE.md): logical channel
+// Physical Tauri binding (see CONVENTIONS.md): logical channel
 // `francois:shell:<verb>` → Tauri command `shell_<verb>`; the event stream
 // `francois:shell:event` → Tauri event `francois://shell/event`. Every command
 // RESOLVES a `Result<T>` (never rejects across the bridge).

@@ -9,7 +9,6 @@ import { EMPTY_PANEL_COUNTS, type CountedPane } from '../../lib/panelCountsStore
 import { abbreviate } from '../../lib/path';
 import { useStore } from '../../lib/store';
 import { AdoptCloudButton } from '../cloud-sessions/AdoptCloudButton';
-import { useCohorteRoster } from '../cohorte/useCohorteRoster';
 import { showToast } from '../palette/palette';
 import { prunePaletteSession } from '../palette/paletteData';
 import { visibleSessions } from '../projects/projects';
@@ -116,25 +115,20 @@ export default function Sidebar({ home }: { home: string }) {
   // design 12b: the roster groups by STATE and nothing else, so a blocked
   // session can never be the fourth row down behind two repos you are not
   // looking at. ARCHIVED starts collapsed (state-groups' own record).
-  // cohorte-integration FR-85/FR-86: gated runs pull their origin session into
-  // NEEDS YOU; step sessions nest under their run's origin (both pref-gated).
-  const cohorte = useCohorteRoster(inScope);
   // A turn that finished while you were elsewhere floats to the top of IDLE.
   const unseenTurns = useStore((s) => s.unseenTurns);
   const stateNodes = useMemo(
-    () => groupSessionsByState(inScope, cohorte.forced, unseenTurns),
-    [inScope, cohorte.forced, unseenTurns],
+    () => groupSessionsByState(inScope, unseenTurns),
+    [inScope, unseenTurns],
   );
   const [collapsedStates, setCollapsedStates] = useState<ReadonlySet<string>>(loadCollapsedStates);
 
   // roster-group-tier: the innermost tier, nested inside every state band —
   // paint only, derived per render from the already-registered projects/groups.
-  const tieredStateNodes = useMemo(
+  const groupedStateNodes = useMemo(
     () => withGroupTiers(stateNodes, projects, groupRegistry),
     [stateNodes, projects, groupRegistry],
   );
-  const nesting = useMemo(() => cohorte.nest(tieredStateNodes), [cohorte, tieredStateNodes]);
-  const groupedStateNodes = nesting.nodes;
   const [collapsedTiers, setCollapsedTiers] = useState<ReadonlySet<string>>(loadCollapsedTiers);
 
   // The FLAT painted order — what the keyboard cursor indexes, so ↑/↓ always
@@ -387,7 +381,6 @@ export default function Sidebar({ home }: { home: string }) {
       >
         <StateRosterBody
           nodes={groupedStateNodes}
-          cohorte={{ gated: cohorte.plan.gated, orphanGates: cohorte.plan.orphanGates, nested: nesting.nested, runTags: nesting.runTags }}
           collapsed={collapsedStates}
           onToggle={toggleState}
           collapsedTiers={collapsedTiers}

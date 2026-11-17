@@ -128,7 +128,7 @@ pub fn cli_project_key(cwd: &str) -> String {
 /// root, resolved without spawning git because this sits on `mcp_list`, which
 /// runs on every session switch. `.git` is a FILE in a linked worktree and a
 /// directory otherwise; both mark a root the CLI resolves.
-fn git_root(cwd: &str) -> Option<String> {
+pub(super) fn git_root(cwd: &str) -> Option<String> {
     let mut dir = std::path::Path::new(cwd);
     loop {
         // `Path::parent` bottoms out at "", whose `.git` would resolve against the
@@ -209,7 +209,7 @@ pub fn trust_accepted(doc: &Value, cwd: &str) -> bool {
 }
 
 /// `projects[<key>].hasTrustDialogAccepted === true`, for one key.
-fn node_trusted(doc: &Value, key: &str) -> bool {
+pub(super) fn node_trusted(doc: &Value, key: &str) -> bool {
     project_node(doc, key)
         .and_then(|n| n.get("hasTrustDialogAccepted"))
         .and_then(|t| t.as_bool())

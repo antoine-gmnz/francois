@@ -50,7 +50,7 @@ export default defineConfig({
       reporter: ['text-summary', 'lcov', 'json-summary', 'html'],
       // Only what the tests are meant to cover: pure helpers, stores, hooks and
       // the contract-typed wrappers. Components are not unit-tested (no DOM
-      // framework is wired — see PIPELINE.md §Testing), so counting .tsx would
+      // framework is wired — see CONVENTIONS.md §Testing), so counting .tsx would
       // report a number that measures the testing STRATEGY rather than the
       // suite, and a number nobody can act on gets ignored.
       include: ['src/**/*.ts', 'contract/**/*.ts', 'scripts/**/*.mjs', 'packaging/**/*.js'],

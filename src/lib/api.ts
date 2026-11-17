@@ -1,4 +1,5 @@
 import type { OpenTargetRequest, OpenTargetResponse } from '../../contract/open-target';
+import type { SessionProjectHealthResponse, SessionTrustFolderResponse } from '../../contract/claude-project-health';
 import { invalidateRequestReplies } from './request-replies';
 import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
 // Typed wrappers over the Tauri session commands + the session event stream.
@@ -39,8 +40,6 @@ import type {
     GithubUpdatePullBranchResponse,
     GithubWorktreeDiskUsageResponse,
 } from '../../contract/github-page';
-import { COHORTE_EVENT_CHANNEL, type CohorteApproveRequest, type CohorteCommandMap, type CohorteDenyRequest, type CohorteDetectRequest, type CohorteEvent, type CohorteInitRequest, type CohorteRootRequest, type CohorteRunControlRequest, type CohorteRunLogRequest, type CohorteRunRequest, type CohorteSendToFixRequest, type CohorteWatchRequest } from '../../contract/cohorte-integration';
-import type { CohorteBrainstormRequest, CohorteBrainstormTurn, CohorteFeatureChoice, CohorteIdea, CohorteIntakeRequest, CohorteIntakeResponse, CohortePreviewResponse, CohorteSpecData, CohorteSpecRequest } from '../../contract/cohorte-actions';
 import type {
     AccountAddCodexPayload,
     AccountAddCodexResponse,
@@ -512,6 +511,14 @@ export const mcpDetach = (sessionId: SessionId, name: string) => ipc<Result<null
 export const mcpRegistry = () => ipc<Result<McpRegistryEntry[]>>('mcp_registry');
 export const mcpAttach = (sessionId: SessionId, entry: McpAttachRequest) =>
   ipc<Result<null>>('mcp_attach', { sessionId, entry });
+// claude-project-health: folder trust as `claude -p` reads it + Cohorte guard
+// interpreter check. `sessionTrustFolder` writes the account's .claude.json —
+// only ever from an explicit click.
+export const sessionProjectHealth = (sessionId: SessionId) =>
+  ipc<SessionProjectHealthResponse>('session_project_health', { sessionId });
+export const sessionTrustFolder = (sessionId: SessionId) =>
+  ipc<SessionTrustFolderResponse>('session_trust_folder', { sessionId });
+
 export const mcpApprovals = (sessionId: SessionId) => ipc<Result<McpApprovalState>>('mcp_approvals', { sessionId });
 export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>
   ipc<Result<McpApprovalState>>('mcp_decide', { sessionId, ...decision });
@@ -740,53 +747,5 @@ export const githubGetStepLog = (req: GithubGetStepLogRequest) =>
   ipc<GithubGetStepLogResponse>('github_get_step_log', { req });
 export const githubRerunFailed = (req: GithubRerunFailedRequest) =>
   ipc<GithubRerunFailedResponse>('github_rerun_failed', { req });
-
-// ---------- cohorte-integration (francois:cohorte:*) ----------
-// Keep the existing UI contract while routing actions to the Python cohorte/1
-// service adapter. Every command takes its request as `req`.
-
-function cohorte<K extends keyof CohorteCommandMap>(cmd: K, req: CohorteCommandMap[K]['req']): Promise<CohorteCommandMap[K]['res']> {
-  return ipc<CohorteCommandMap[K]['res']>(`cohorte_v3_${cmd.slice('cohorte_'.length)}`, { req });
-}
-
-export type { CohorteFeatureChoice };
-export const cohorteFeatures = (root: string) => ipc<Result<CohorteFeatureChoice[]>>('cohorte_v3_features', { req: { root } });
-export const cohorteStart = (req: { root: string; featureId: string; stage?: string }) =>
-  ipc<Result<import('../../contract/cohorte-integration').CohorteRun>>('cohorte_v3_start', { req });
-// cohorte-actions FR-10/FR-4: intake spawns the CLI once; preview builds the
-// same argv/display without spawning (used only when a live TS mirror isn't
-// wanted — the sheet itself mirrors FR-3 locally, see command-display.ts).
-export const cohorteActionIntake = (req: CohorteIntakeRequest) => ipc<CohorteIntakeResponse>('cohorte_action_intake', { req });
-export const cohorteActionPreview = (req: CohorteIntakeRequest) => ipc<CohortePreviewResponse>('cohorte_action_preview', { req });
-export const cohorteActionBrainstorm = (req: CohorteBrainstormRequest) =>
-  ipc<Result<CohorteBrainstormTurn>>('cohorte_action_brainstorm', { req });
-export const cohorteActionIdeas = (root: string) =>
-  ipc<Result<CohorteIdea[]>>('cohorte_action_ideas', { req: { root } });
-export const cohorteActionBrief = (root: string, featureId: string) =>
-  ipc<Result<CohorteBrainstormTurn>>('cohorte_action_brief', { req: { root, featureId } });
-export const cohorteActionSpec = (req: CohorteSpecRequest) =>
-  ipc<Result<CohorteSpecData>>('cohorte_action_spec', { req });
-export const cohorteAnswer = (req: { root: string; runId: string; approvalId: string; answer: string }) =>
-  ipc<Result<import('../../contract/cohorte-integration').CohorteCommandOutcome>>('cohorte_v3_answer', { req });
-
-export const cohorteDetect = (req: CohorteDetectRequest) => cohorte('cohorte_detect', req);
-export const cohorteDoctor = (req: CohorteRootRequest) => cohorte('cohorte_doctor', req);
-export const cohortePolicy = (req: CohorteRootRequest) => cohorte('cohorte_policy', req);
-export const cohorteInit = (req: CohorteInitRequest) => cohorte('cohorte_init', req);
-export const cohorteWatch = (req: CohorteWatchRequest) => cohorte('cohorte_watch', req);
-export const cohorteListRuns = (req: CohorteRootRequest) => cohorte('cohorte_list_runs', req);
-export const cohorteGetRun = (req: CohorteRunRequest) => cohorte('cohorte_get_run', req);
-export const cohorteRunLog = (req: CohorteRunLogRequest) => cohorte('cohorte_run_log', req);
-export const cohorteApprove = (req: CohorteApproveRequest) => cohorte('cohorte_approve', req);
-export const cohorteSendToFix = (req: CohorteSendToFixRequest) => cohorte('cohorte_send_to_fix', req);
-export const cohorteDeny = (req: CohorteDenyRequest) => cohorte('cohorte_deny', req);
-export const cohortePause = (req: CohorteRunControlRequest) => cohorte('cohorte_pause', req);
-export const cohorteResume = (req: CohorteRunControlRequest) => cohorte('cohorte_resume', req);
-export const cohorteCancel = (req: CohorteRunControlRequest) => cohorte('cohorte_cancel', req);
-
-/** Subscribe to francois://cohorte/event (every CohorteEvent member). */
-export function listenCohorte(cb: (e: CohorteEvent) => void): Promise<UnlistenFn> {
-  return stream<CohorteEvent>(COHORTE_EVENT_CHANNEL, cb);
-}
 
 export const editorOpenTarget = (req: OpenTargetRequest) => ipc<OpenTargetResponse>('editor_open_target', { req });

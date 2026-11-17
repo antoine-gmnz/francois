@@ -65,7 +65,7 @@ export function CommitsTab({ cwd, repo, refreshKey }: CommitsTabProps): JSX.Elem
     setCommits(null);
     setSelectedSha(null);
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [cwd, ref, refreshKey]);
 
   async function openMenu(): Promise<void> {
@@ -85,7 +85,7 @@ export function CommitsTab({ cwd, repo, refreshKey }: CommitsTabProps): JSX.Elem
       return;
     }
     if (selectedSha === null || !filtered.some((c) => c.sha === selectedSha)) setSelectedSha(filtered[0].sha);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (PIPELINE.md §Code quality gates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- known backlog (CONVENTIONS.md §Code quality gates)
   }, [filtered]);
 
   function moveSelection(delta: 1 | -1): void {

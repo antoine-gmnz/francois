@@ -56,13 +56,6 @@ sha2 = "0.10"
 # ([models]/[model.<id>] tables) — the vendor's own format, not JSON, and no
 # dependency already in this tree parses TOML.
 toml = "1.1"
-# cohorte-integration FR-27: every agent-controlled string that crosses IPC is
-# collapsed to NFC (DESIGN §2.3.6) — std has no Unicode normalisation.
-unicode-normalization = "0.1"
-# cohorte-integration FR-5: the supported CLI range `>=3.0.0-dev.1 <4.0.0` needs
-# semver PRERELEASE ordering (dev.1 < dev.8 < 3.0.0). Already in the lock
-# transitively; named here so the comparison is the crate's, not a hand-rolled one.
-semver = "1"
 # code-editor-vsx FR-4: a .vsix is a zip, and std has no zip reader. Deflate
 # only (stored is always on) — every other codec, AES and the time crate are
 # off, because a .vsix never uses them and each is parser surface fed

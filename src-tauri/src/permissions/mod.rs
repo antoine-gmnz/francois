@@ -49,6 +49,18 @@ pub struct PermissionAsk {
     pub pattern: String,
     #[serde(rename = "patternLabel")]
     pub pattern_label: String,
+    /// hook-diagnostics: `decision_reason*` from the `can_use_tool` request —
+    /// every key omitted when the CLI states none, so a pre-feature ask is
+    /// byte-identical on the wire.
+    #[serde(rename = "decisionReason", skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
+    #[serde(rename = "decisionReasonType", skip_serializing_if = "Option::is_none")]
+    pub decision_reason_type: Option<String>,
+    #[serde(
+        rename = "decisionReasonHookEvent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decision_reason_hook_event: Option<String>,
 }
 
 /// Mirrors PermissionRule in contract/common.ts. Every field name is a single

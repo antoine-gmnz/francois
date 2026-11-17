@@ -129,7 +129,9 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
             o["outcome"] = Value::String(outcome.clone());
         }
     }
-    if kind == "notice" {
+    // hook-diagnostics: a Tool block's explicit result tone round-trips too,
+    // so a reopened transcript colours a refused row exactly as it did live.
+    if kind == "notice" || kind == "tool" {
         if let Some(tone) = &b.tone {
             o["tone"] = Value::String(tone.clone());
         }
@@ -1154,6 +1156,34 @@ mod tests {
         let back = parse_persisted_block(&line).expect("parse");
         assert!(matches!(back.kind, BlockKind::Notice));
         assert_eq!(back.tone.as_deref(), Some("warning"));
+    }
+
+    #[test]
+    fn transcript_tool_block_roundtrips_its_result_tone() {
+        // hook-diagnostics: a hook-refused row reopens with the same tone and
+        // reason it showed live.
+        let b = BufBlock {
+            kind: BlockKind::Tool,
+            tool: "Bash".into(),
+            summary: "echo DENYME".into(),
+            meta: Some("stub-gate: DENYME is forbidden".into()),
+            tone: Some("hookRefusal".into()),
+            ..BufBlock::new("t1", BlockKind::Tool)
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"tone\":\"hookRefusal\""));
+        let back = parse_persisted_block(&line).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Tool));
+        assert_eq!(back.tone.as_deref(), Some("hookRefusal"));
+        let ipc = crate::session::classify_block(&back);
+        assert_eq!(ipc["tone"], "hookRefusal");
+        assert_eq!(ipc["meta"], "stub-gate: DENYME is forbidden");
+        // A clean tool line never grows the key.
+        let clean = BufBlock {
+            meta: Some("3 lines".into()),
+            ..BufBlock::new("t2", BlockKind::Tool)
+        };
+        assert!(persisted_block_json(&clean).get("tone").is_none());
     }
 
     #[test]

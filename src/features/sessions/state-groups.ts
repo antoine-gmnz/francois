@@ -94,16 +94,10 @@ export function stateGroupKey(state: SessionState): string {
  * The one exception: IDLE rows whose turn finished while you were elsewhere
  * (`unseen`) float to the top of IDLE — they are the ones with news.
  */
-export function groupSessionsByState(
-  sessions: readonly SessionMeta[],
-  forceAttention?: ReadonlySet<string>,
-  unseen?: UnseenTurns,
-): RosterStateNode[] {
+export function groupSessionsByState(sessions: readonly SessionMeta[], unseen?: UnseenTurns): RosterStateNode[] {
   const byState = new Map<SessionState, SessionMeta[]>();
   for (const session of sessions) {
-    // cohorte-integration FR-85: a session whose Cohorte run waits at a gate
-    // joins NEEDS YOU whatever its own status.
-    const state = forceAttention?.has(session.id) ? 'attention' : stateOf(session.status);
+    const state = stateOf(session.status);
     const bucket = byState.get(state);
     if (bucket) bucket.push(session);
     else byState.set(state, [session]);

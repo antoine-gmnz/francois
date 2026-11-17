@@ -262,7 +262,7 @@ export const NOTIFY_CLASS_LABEL: Record<NotifyClass, string> = {
 ### Runtime module surface (`src/features/notifications/notifications.ts`)
 
 The two gate functions are **pure and exported**, so the whole rule set is unit
-testable with no DOM and no Tauri (§Testing in PIPELINE.md):
+testable with no DOM and no Tauri (§Testing in CONVENTIONS.md):
 
 ```ts
 export interface DeriveState { lastStatus: Map<SessionId, SessionStatus>; seenAsks: Set<BlockId> }

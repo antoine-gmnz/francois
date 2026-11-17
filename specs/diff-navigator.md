@@ -223,7 +223,7 @@ mark. Filter matches emphasize with `--text-bright` and weight (≤ 600), never 
 family (`--success` / `--error`), never acid, never a border or padding (FR-24). Hidden-checked
 warning in `--warn`. Desktop only; per-feature CSS in `src/features/diff/diff.css`, BEM-lite, no
 inline `style` except runtime-computed values. Icons from `lucide-react`; the disclosure caret stays
-a typographic glyph per PIPELINE.md.
+a typographic glyph per CONVENTIONS.md.
 
 ## 9. Acceptance criteria
 

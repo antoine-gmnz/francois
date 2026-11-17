@@ -251,26 +251,6 @@ pub enum ErrorCode {
     GhLogGone,
     /// github-ci-logs: raw log exceeds the 32 MiB output cap (detail: { capBytes })
     GhLogTooLarge,
-    /// cohorte-integration: no .cohorte/ for that root (detail: { startDir })
-    CohorteNotDetected,
-    /// cohorte-integration: `cohorte` does not resolve on the login-shell PATH
-    CohorteCliMissing,
-    /// cohorte-integration: version outside the supported range (detail: { version, supportedRange })
-    CohorteCliIncompatible,
-    /// cohorte-integration: a CLI spawn was killed at its deadline (detail: { cli, timeoutMs })
-    CohorteTimeout,
-    /// cohorte-integration: stdout past the cap (detail: { cli, capBytes })
-    CohorteOutputCapped,
-    /// cohorte-integration: stdout is not a document Francois can read (detail: { cli })
-    CohorteOutputInvalid,
-    /// cohorte-integration: exit code other than 0/3/4 (detail: { cli, code, stderr })
-    CohorteCommandFailed,
-    /// cohorte-integration: exit 3 on the FIRST step (detail: { cli, cohorteCode, message })
-    CohorteRejected,
-    /// cohorte-integration: runId unknown to status (detail: { runId })
-    CohorteRunNotFound,
-    /// cohorte-integration: the approval is no longer pending (resolved elsewhere)
-    CohorteGateNotPending,
     /// code-editor-vsx: the Open VSX registry did not answer usably (detail: { status? })
     VsxUnreachable,
     /// code-editor-vsx: no such extension/version on the registry, or not installed
@@ -405,16 +385,6 @@ impl ErrorCode {
         ErrorCode::GhLogNotReady,
         ErrorCode::GhLogGone,
         ErrorCode::GhLogTooLarge,
-        ErrorCode::CohorteNotDetected,
-        ErrorCode::CohorteCliMissing,
-        ErrorCode::CohorteCliIncompatible,
-        ErrorCode::CohorteTimeout,
-        ErrorCode::CohorteOutputCapped,
-        ErrorCode::CohorteOutputInvalid,
-        ErrorCode::CohorteCommandFailed,
-        ErrorCode::CohorteRejected,
-        ErrorCode::CohorteRunNotFound,
-        ErrorCode::CohorteGateNotPending,
         ErrorCode::VsxUnreachable,
         ErrorCode::VsxNotFound,
         ErrorCode::VsxInvalidPackage,
@@ -545,16 +515,6 @@ impl ErrorCode {
             ErrorCode::GhLogNotReady => "GH_LOG_NOT_READY",
             ErrorCode::GhLogGone => "GH_LOG_GONE",
             ErrorCode::GhLogTooLarge => "GH_LOG_TOO_LARGE",
-            ErrorCode::CohorteNotDetected => "COHORTE_NOT_DETECTED",
-            ErrorCode::CohorteCliMissing => "COHORTE_CLI_MISSING",
-            ErrorCode::CohorteCliIncompatible => "COHORTE_CLI_INCOMPATIBLE",
-            ErrorCode::CohorteTimeout => "COHORTE_TIMEOUT",
-            ErrorCode::CohorteOutputCapped => "COHORTE_OUTPUT_CAPPED",
-            ErrorCode::CohorteOutputInvalid => "COHORTE_OUTPUT_INVALID",
-            ErrorCode::CohorteCommandFailed => "COHORTE_COMMAND_FAILED",
-            ErrorCode::CohorteRejected => "COHORTE_REJECTED",
-            ErrorCode::CohorteRunNotFound => "COHORTE_RUN_NOT_FOUND",
-            ErrorCode::CohorteGateNotPending => "COHORTE_GATE_NOT_PENDING",
             ErrorCode::VsxUnreachable => "VSX_UNREACHABLE",
             ErrorCode::VsxNotFound => "VSX_NOT_FOUND",
             ErrorCode::VsxInvalidPackage => "VSX_INVALID_PACKAGE",

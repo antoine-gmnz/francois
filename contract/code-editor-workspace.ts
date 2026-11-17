@@ -1,5 +1,5 @@
 // contract/code-editor-workspace.ts — code-editor-workspace feature contract
-// (specs/code-editor-workspace.md §5). Binding per PIPELINE.md:
+// (specs/code-editor-workspace.md §5). Binding per CONVENTIONS.md:
 // francois:editor:<verb> -> invoke('editor_<verb>') -> Promise<Result<T>>.
 // No new event stream: a replace-all write reaches open tabs through the existing
 // 'francois://editor/event' watch (editor.changed), exactly like any other disk write.

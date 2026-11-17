@@ -159,7 +159,7 @@
 .model-picker__trigger { text-align: left; }
 
 /* pi-models-metrics: search box, unavailable rows, favorites — flat treatment,
-   no new border/shadow (PIPELINE.md's Flat rules), tonal steps only. Grouped
+   no new border/shadow (CONVENTIONS.md's Flat rules), tonal steps only. Grouped
    with the provider heading under one grid item (row 1) so families/submenu
    (row 2) stay the same two-column layout whether or not the box is rendered. */
 .model-picker__header {

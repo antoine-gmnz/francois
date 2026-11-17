@@ -1,11 +1,11 @@
 # Decisions
 
 > The project's **transverse decision journal** — the non-obvious rules a stateless agent would
-> otherwise re-discover or contradict, one feature at a time. `PIPELINE.md` says *how this repo is
+> otherwise re-discover or contradict, one feature at a time. `CONVENTIONS.md` says *how this repo is
 > built* (surfaces, commands, conventions); this file says *what was decided and why*.
 >
 > **Append-only. One line per decision. No prose blocks, no code.** The bound is the point: this file
-> is read by `/cohorte-spec`, `/cohorte-brainstorm` and `/cohorte-audit` — the deciding stages — and by **nothing else**.
+> is read by the deciding stages (spec, brainstorm, audit) and by **nothing else**.
 > Implementers and reviewers never read it: they work from the frozen contract, which already tells
 > them what to do; handing them the rationale too would cost `surfaces × dispatches` tokens per
 > feature for a fact they cannot act on.
@@ -29,7 +29,7 @@
 > `## Superseded` (the audit trail survives; the section the deciding stages actually read stays
 > short). Never summarize or merge live lines — a decision either holds or has been superseded.
 >
-> **What does NOT belong here:** anything the code, the tests, `PIPELINE.md` §Conventions or a spec
+> **What does NOT belong here:** anything the code, the tests, `CONVENTIONS.md` §Conventions or a spec
 > already states; a feature-local choice (that lives in its spec); a task, a TODO or a finding (those
 > are `## Remediation` and `specs/refactor-backlog.md`).
 
@@ -99,6 +99,8 @@
 - 2026-09-21 · data · Retired Pi records remain raw and read-only; never reinterpret their identity or defaults · pi-retirement-data-compatibility
 - 2026-09-21 · requests · Pending requests belong to live session state; transcript replay never grants reply authority · process-runtime-boundaries
 - 2026-09-24 · api · Live GitHub data is polled only while its view is visible AND something it shows is still in progress; a finished or hidden view makes zero gh calls — because every poll spends the user's own GitHub rate limit · github-ci-logs
+
+- 2026-11-17 · surfaces · No built-in Cohorte integration: no `cohorte` IPC domain, error codes, run view, gates, panel tab or Settings page; Cohorte reaches Francois only as the francois-plugin-cohorte extension — because the integration targeted retired Cohorte lines (cohorte-engine, `cohorte/1`, `.cohorte/`, `cohorte run|loop|ship --live`) and Cohorte 3.x runs inside ordinary Claude sessions · retires cohorte-integration, cohorte-actions
 
 ## Superseded
 

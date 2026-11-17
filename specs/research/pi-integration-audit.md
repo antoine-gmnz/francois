@@ -14,7 +14,7 @@ Rust trait with the same name. Extend `SessionAdapter` and `TurnControl` instead
 
 | Concern | Actual code / contract | Pi change |
 |---|---|---|
-| Product / stack | `README.md`, `PROJECT.md`, `PIPELINE.md` | Update marketing only at rollout; keep native Tauri/Rust/React |
+| Product / stack | `README.md`, `PROJECT.md`, `CONVENTIONS.md` | Update marketing only at rollout; keep native Tauri/Rust/React |
 | Runtime dispatch | `session/adapter/mod.rs`, `contract/common.ts`, `contract/multi-provider-seam.ts` | Add Pi, nullable provider wire dialect, live capabilities |
 | Per-turn lifetime | `session/turn.rs`, `session/commands/lifecycle.rs`, `session/status.rs` | Separate Pi child lifetime from turn lifetime |
 | Process / paths | `process_util.rs`, `session/spawn.rs`, `wsl.rs` | Use existing safe executable resolution and process cleanup |

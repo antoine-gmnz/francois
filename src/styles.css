@@ -410,7 +410,7 @@ a {
     transform: scale(1);
   }
 }
-/* Floating menus anchored to the composer (run settings, Cohorte actions):
+/* Floating menus anchored to the composer (run settings):
    rise 4px and fade in on --dur-slow; leave faster, on --dur-base. Exit is kept
    on screen by usePresence (POPOVER_EXIT_MS). */
 @keyframes popoverIn {
