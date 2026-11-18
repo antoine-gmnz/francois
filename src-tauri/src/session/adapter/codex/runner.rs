@@ -167,6 +167,7 @@ mod tests {
             cwd: "/repo".into(),
             model_id: "gpt".into(),
             effort: None,
+            advisor_model: None,
             permission_mode: "default".into(),
             runtime: "native".into(),
             worktree_distro: None,

@@ -65,6 +65,8 @@ export type SessionStatus =
  * allowedTools list.
  */
 export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+export type AdvisorModel = 'off' | 'sonnet' | 'opus' | 'fable'; // advisor-switch: `--advisor` aliases + 'off'; the CLI drops a weaker-than-main advisor
+export const ADVISOR_MODELS: readonly AdvisorModel[] = ['off', 'sonnet', 'opus', 'fable'];
 
 /**
  * response-mode FR-1: how the model should WRITE, orthogonal to what it may do.
@@ -405,6 +407,7 @@ export interface SessionMeta {
    * is also the only state for a model whose ModelInfo advertises no `efforts`.
    */
   effort?: string;
+  advisorModel?: AdvisorModel; // advisor-switch (Claude Code, next turn): absent = inherit account setting; 'off' = disabled
   /** CLI runtime for this session; 'wsl' spawns `wsl.exe -- claude …` (Windows only). */
   runtime: ClaudeRuntime;
   /**

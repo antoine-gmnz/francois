@@ -10,6 +10,9 @@ pub struct TurnContext {
     pub(crate) cwd: String,
     pub(crate) model_id: String,
     pub(crate) effort: Option<String>,
+    /// advisor-switch: Claude Code's advisor alias (`off` forces it off); None
+    /// inherits the account's setting. Only `ClaudeCodeAdapter` reads it.
+    pub(crate) advisor_model: Option<String>,
     pub(crate) permission_mode: String,
     pub(crate) runtime: String,
     pub(crate) worktree_distro: Option<String>,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo, SessionMeta } from '../../../contract/common';
 import {
+  advisorAvailable,
+  advisorRows,
   bypassSinceLine,
   effortSurvivesSwitch,
   familyNote,
@@ -129,5 +131,49 @@ describe('runSettingsPlacement', () => {
   });
   it('drops below the chip when there is no room above', () => {
     expect(runSettingsPlacement({ top: 100, right: 1054, bottom: 128 }, viewport, size)).toEqual({ right: 386, top: 136 });
+  });
+});
+
+describe('advisorRows (advisor-switch)', () => {
+  const claude = (over: Partial<SessionMeta> = {}) => session({ agentRuntime: 'claude-code', ...over });
+
+  it('lists Default then the contract models, in order', () => {
+    const rows = advisorRows(claude());
+    expect(rows.map((r) => r.label)).toEqual(['Default', 'Off', 'Sonnet', 'Opus', 'Fable']);
+    expect(rows.map((r) => r.value)).toEqual([null, 'off', 'sonnet', 'opus', 'fable']);
+  });
+
+  it('selects Default when the session inherits, with the account note', () => {
+    const rows = advisorRows(claude());
+    expect(rows.filter((r) => r.selected).map((r) => r.value)).toEqual([null]);
+    expect(rows[0]!.note).toBe('account setting');
+  });
+
+  it('selects the override and notes only the selected row', () => {
+    const rows = advisorRows(claude({ advisorModel: 'opus' }));
+    expect(rows.filter((r) => r.selected).map((r) => r.value)).toEqual(['opus']);
+    expect(rows.find((r) => r.value === 'opus')!.note).toBe('needs ≥ main model');
+    expect(rows.filter((r) => !r.selected).every((r) => r.note === '')).toBe(true);
+  });
+
+  it('gives Off a plain note', () => {
+    const rows = advisorRows(claude({ advisorModel: 'off' }));
+    expect(rows.find((r) => r.selected)!.note).toBe('disabled');
+  });
+});
+
+describe('advisorAvailable (advisor-switch)', () => {
+  it('is available for a Claude Code session', () => {
+    expect(advisorAvailable(session({ agentRuntime: 'claude-code' })).available).toBe(true);
+  });
+
+  it('is unavailable with a reason for other runtimes', () => {
+    const cap = advisorAvailable(session({ agentRuntime: 'codex' }));
+    expect(cap.available).toBe(false);
+    expect(cap.reason).toMatch(/Claude Code/);
+  });
+
+  it('is unavailable for retired history', () => {
+    expect(advisorAvailable(session({ agentRuntime: 'pi' } as Partial<SessionMeta>)).available).toBe(false);
   });
 });

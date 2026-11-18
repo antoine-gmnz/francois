@@ -75,6 +75,14 @@ export function accountSupportsClaudeTools(account: { kind?: Account['kind'] } |
   return account?.kind === 'claude-code-oauth';
 }
 
+/** advisor-switch: Claude Code's advisor tool, switched alongside the model (same gate as effort). */
+export function advisorCapability(meta: SessionMeta | null | undefined): CapabilityState {
+  if (sessionIsRetired(meta)) return { available: false, reason: PI_UNAVAILABLE };
+  return meta?.agentRuntime === 'claude-code'
+    ? sessionCapability(meta, 'modelSwitching')
+    : { available: false, reason: 'The advisor is available only for Claude Code sessions.' };
+}
+
 export function accountUsesCodex(account: { kind?: Account['kind'] } | null | undefined): boolean {
   return account?.kind === 'codex-cli';
 }

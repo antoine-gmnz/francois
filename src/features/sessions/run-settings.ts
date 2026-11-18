@@ -1,12 +1,15 @@
 // Run settings popover — the pure half. Redesign "Graphite & Signal", Figma
 // "20 · Run settings (model · effort · permissions)" (139:7373, light 142:16053).
 // The run chip opens it: Model (one row per family, versions in a segmented
-// track), then its own Effort section for the selected model, then the four
-// permission modes as radio rows, `bypass` tinted with a line saying how long
-// it has been on and where. RunSettingsPopover.tsx renders this.
+// track), then its own Effort section for the selected model, then the
+// Advisor (Claude Code sessions only), then the four permission modes as radio
+// rows, `bypass` tinted with a line saying how long it has been on and where.
+// RunSettingsPopover.tsx renders this.
 
-import type { ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
+import { ADVISOR_MODELS, type AdvisorModel, type ModelInfo, type PermissionMode, type SessionMeta } from '../../../contract/common';
+import type { CapabilityState } from '../../../contract/multi-provider-seam';
 import { PERMISSION_MODE_OPTIONS } from '../../../contract/session-permission-mode';
+import { advisorCapability } from '../../lib/runtimeCapability';
 
 export interface PermissionRow {
   mode: PermissionMode;
@@ -31,6 +34,36 @@ export function permissionRows(): PermissionRow[] {
     note: PERMISSION_COPY[o.mode]?.note ?? o.hint,
     danger: o.danger === true,
   }));
+}
+
+/** One advisor radio row. `value: null` is Default — inherit the account setting. */
+export interface AdvisorRow {
+  value: AdvisorModel | null;
+  label: string;
+  selected: boolean;
+  /** Only the selected row carries a note; the others are ''. */
+  note: string;
+}
+
+const ADVISOR_LABELS: Record<AdvisorModel, string> = { off: 'Off', sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable' };
+
+/**
+ * Default · Off · Sonnet · Opus · Fable, the session's override selected (absent
+ * = Default). A model row's note is the CLI's rule: an advisor weaker than the
+ * main model is silently skipped, not rejected.
+ */
+export function advisorRows(session: SessionMeta): AdvisorRow[] {
+  const current = session.advisorModel ?? null;
+  const noteFor = (value: AdvisorModel | null) => (value === null ? 'account setting' : value === 'off' ? 'disabled' : 'needs ≥ main model');
+  return [null, ...ADVISOR_MODELS].map((value) => {
+    const selected = value === current;
+    return { value, label: value === null ? 'Default' : ADVISOR_LABELS[value], selected, note: selected ? noteFor(value) : '' };
+  });
+}
+
+/** The advisor is a Claude Code tool, switched alongside the model (same capability gate as effort). */
+export function advisorAvailable(session: SessionMeta): CapabilityState {
+  return advisorCapability(session);
 }
 
 /**

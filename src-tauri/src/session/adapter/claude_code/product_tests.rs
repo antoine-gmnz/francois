@@ -296,6 +296,7 @@ fn text_turn_keeps_the_claude_protocol_and_projects_parent_context_usage() {
             &ctx.model_id,
             None,
             ctx.effort.as_deref(),
+            ctx.advisor_model.as_deref(),
             &ctx.permission_mode,
             None,
             &[],

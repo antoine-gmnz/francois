@@ -77,6 +77,7 @@ pub(super) fn context(generation: u64, resume: Option<&str>) -> TurnContext {
         cwd: std::env::temp_dir().to_string_lossy().into_owned(),
         model_id: "fixture-model".into(),
         effort: Some("low".into()),
+        advisor_model: None,
         permission_mode: "default".into(),
         runtime: "native".into(),
         worktree_distro: None,

@@ -46,6 +46,7 @@ export const DENIED_ARG_FLAGS: readonly string[] = [
   '--permission-mode',
   '--dangerously-skip-permissions',
   '--permission-prompt-tool',
+  '--advisor', // advisor-switch: the session's advisor control already sets this
 ];
 
 // ---------- the entity ----------

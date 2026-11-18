@@ -18,6 +18,12 @@ pub fn valid_effort(e: &str) -> bool {
     matches!(e, "low" | "medium" | "high" | "xhigh" | "max")
 }
 
+/// advisor-switch: contract/common.ts `AdvisorModel`. Validated core-side
+/// because an unknown `--advisor` value is a hard CLI error that kills the turn.
+pub fn valid_advisor_model(a: &str) -> bool {
+    matches!(a, "off" | "sonnet" | "opus" | "fable")
+}
+
 /// contract/common.ts PermissionMode. The CLI's `auto`/`dontAsk` are deliberately
 /// excluded (auto aborts headless -p runs on classifier blocks; dontAsk needs a
 /// paired allowedTools list).

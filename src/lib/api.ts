@@ -7,7 +7,7 @@ import type { SessionModelsInput, SessionModelsResponse } from '../../contract/s
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AccountId, AgentInfo, AgentStep, BlockId, McpServerInfo, PermissionMode, ProjectId, ResponseMode, Result, SessionEvent, SessionId, SessionMeta, SkillInfo, SlashCommandInfo, WorkflowRun, WorkflowRunId } from '../../contract/common';
+import type { AccountId, AdvisorModel, AgentInfo, AgentStep, BlockId, McpServerInfo, PermissionMode, ProjectId, ResponseMode, Result, SessionEvent, SessionId, SessionMeta, SkillInfo, SlashCommandInfo, WorkflowRun, WorkflowRunId } from '../../contract/common';
 import type {
     GithubCreateWorktreeRequest,
     GithubCreateWorktreeResponse,
@@ -452,6 +452,11 @@ export const sessionSwitchPermissionMode = (sessionId: SessionId, mode: Permissi
 // accompanying session.meta event, never the Result.
 export const sessionSwitchEffort = (sessionId: SessionId, effort: string | null) =>
   ipc<Result<SessionMeta>>('session_switch_effort', { sessionId, effort });
+// advisor-switch: Claude Code's server-side advisor for the session's NEXT turn.
+// `null` clears the override so the account's own `advisorModel` setting applies;
+// 'off' disables it. Same single update path: the accompanying session.meta event.
+export const sessionSwitchAdvisor = (sessionId: SessionId, advisorModel: AdvisorModel | null) =>
+  ipc<Result<SessionMeta>>('session_switch_advisor', { sessionId, advisorModel });
 // response-mode FR-2: the fourth member of the switch family — HOW the model is
 // told to write, from the next turn on (FR-4: a running turn is unaffected). The
 // `mode` is re-validated by the core, so this wrapper's narrowing is a convenience
