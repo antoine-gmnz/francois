@@ -179,14 +179,7 @@ export type SessionStatus =
  * allowedTools list.
  */
 export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
-
-/**
- * advisor-switch: Claude Code's server-side advisor tool. The model values are the
- * CLI's public aliases (`--advisor <alias>`); `'off'` disables it for the session.
- * The CLI only honours an advisor at least as capable as the main model — a weaker
- * one is silently dropped by the CLI, not rejected.
- */
-export type AdvisorModel = 'off' | 'sonnet' | 'opus' | 'fable';
+export type AdvisorModel = 'off' | 'sonnet' | 'opus' | 'fable'; // advisor-switch: `--advisor` aliases + 'off'; the CLI drops a weaker-than-main advisor
 export const ADVISOR_MODELS: readonly AdvisorModel[] = ['off', 'sonnet', 'opus', 'fable'];
 
 /**
@@ -528,12 +521,7 @@ export interface SessionMeta {
    * is also the only state for a model whose ModelInfo advertises no `efforts`.
    */
   effort?: string;
-  /**
-   * advisor-switch: the model behind Claude Code's server-side advisor tool for this
-   * session's NEXT turn. Absent (never null) = inherit `advisorModel` from the account's
-   * Claude settings; `'off'` = disabled for this session. Claude Code sessions only.
-   */
-  advisorModel?: AdvisorModel;
+  advisorModel?: AdvisorModel; // advisor-switch (Claude Code, next turn): absent = inherit account setting; 'off' = disabled
   /** CLI runtime for this session; 'wsl' spawns `wsl.exe -- claude …` (Windows only). */
   runtime: ClaudeRuntime;
   /**
