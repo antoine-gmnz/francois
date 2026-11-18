@@ -40,6 +40,7 @@ pub fn turn_args(
     model_id: &str,
     resume: Option<&str>,
     effort: Option<&str>,
+    advisor: Option<&str>,
     permission_mode: &str,
     system_prompt: Option<&str>,
     extra_args: &[String],
@@ -62,6 +63,13 @@ pub fn turn_args(
     if let Some(e) = effort {
         args.extend(["--effort".into(), e.into()]);
     }
+    // advisor-switch: per-invocation like the permission mode — --resume does
+    // not carry it. Absent adds nothing, so the argv stays byte-identical for
+    // older CLIs without the flag. 'off' is not a flag value the CLI accepts;
+    // it rides the environment instead (`advisor_env`).
+    if let Some(a) = advisor.filter(|a| *a != "off") {
+        args.extend(["--advisor".into(), a.into()]);
+    }
     // session-profiles FR-12/FR-13: REPLACE-mode prompt rides EVERY invocation,
     // including a --resume turn (--resume itself carries neither).
     if let Some(sp) = system_prompt {
@@ -80,6 +88,37 @@ pub fn turn_args(
     // session-profiles FR-12: appended LAST, after every argument Francois builds.
     args.extend(extra_args.iter().cloned());
     args
+}
+
+/// advisor-switch: the CLI's own kill switch for the advisor tool. Verified
+/// against CLI 2.1.308: `--settings {"advisorModel":""}` does NOT disable it
+/// (the CLI falls back to a default advisor), this variable does.
+pub(crate) const ADVISOR_OFF_ENV: &str = "CLAUDE_CODE_DISABLE_ADVISOR_TOOL";
+
+/// advisor-switch: a turn's spawn environment with the session's advisor
+/// applied — unchanged unless the advisor is `off`. Under WSL the variable is
+/// merged into the existing `WSLENV` entry rather than added as a second one,
+/// which would replace the account's config-dir forwarding. Pure; unit-tested.
+pub(crate) fn advisor_env(
+    mut env: Vec<(String, String)>,
+    advisor: Option<&str>,
+    runtime: &str,
+) -> Vec<(String, String)> {
+    if advisor != Some("off") {
+        return env;
+    }
+    env.push((ADVISOR_OFF_ENV.to_string(), "1".to_string()));
+    if runtime == "wsl" {
+        let entry = format!("{ADVISOR_OFF_ENV}/u");
+        match env.iter_mut().find(|(k, _)| k == "WSLENV") {
+            Some((_, v)) => *v = crate::wsl::merge_wsl_env(Some(v), &[&entry]),
+            None => env.push((
+                "WSLENV".to_string(),
+                crate::wsl::merge_wsl_env(std::env::var("WSLENV").ok().as_deref(), &[&entry]),
+            )),
+        }
+    }
+    env
 }
 
 /// The §5.5 NDJSON user line carrying a turn's text over stdin (FR-1).
@@ -104,6 +143,7 @@ pub fn run_compact(
     model_id: &str,
     resume: Option<&str>,
     effort: Option<&str>,
+    advisor: Option<&str>,
     permission_mode: &str,
     runtime: &str,
     worktree_distro: Option<&str>,
@@ -117,6 +157,7 @@ pub fn run_compact(
         model_id,
         resume,
         effort,
+        advisor,
         permission_mode,
         system_prompt,
         extra_args,
@@ -125,7 +166,11 @@ pub fn run_compact(
     let (program, argv) = claude_invocation(runtime, cwd, args, worktree_distro);
     let mut cmd = crate::process_util::spawn(program)
         .args(argv)
-        .envs(account_env(account_config_dir, runtime, &[]))
+        .envs(advisor_env(
+            account_env(account_config_dir, runtime, &[]),
+            advisor,
+            runtime,
+        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     if runtime != "wsl" {
@@ -317,6 +362,7 @@ pub(super) fn begin_native_turn(
         &ctx.model_id,
         ctx.resume.as_deref(),
         ctx.effort.as_deref(),
+        ctx.advisor_model.as_deref(),
         &ctx.permission_mode,
         ctx.system_prompt.as_deref(),
         &ctx.extra_args,
@@ -327,7 +373,11 @@ pub(super) fn begin_native_turn(
     let (program, argv) = launch(program, argv);
     let mut command = crate::process_util::spawn(program)
         .args(argv)
-        .envs(ctx.execution.environment.clone())
+        .envs(advisor_env(
+            ctx.execution.environment.clone(),
+            ctx.advisor_model.as_deref(),
+            &ctx.runtime,
+        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     if ctx.runtime != "wsl" {
@@ -399,6 +449,7 @@ mod tests {
             "sonnet",
             Some("thread-1"),
             Some("high"),
+            None,
             "plan",
             None,
             &[],
@@ -427,6 +478,7 @@ mod tests {
             "sonnet",
             None,
             None,
+            None,
             "default",
             None,
             &[],
@@ -440,6 +492,7 @@ mod tests {
     fn turn_args_append_a_present_system_prompt() {
         let args = turn_args(
             "sonnet",
+            None,
             None,
             None,
             "default",
@@ -458,6 +511,7 @@ mod tests {
             "sonnet",
             Some("thread-1"),
             Some("high"),
+            None,
             "plan",
             Some("be terse"),
             &extra,
@@ -476,6 +530,7 @@ mod tests {
             "sonnet",
             None,
             None,
+            None,
             "default",
             None,
             &[],
@@ -491,6 +546,7 @@ mod tests {
         // `--append-system-prompt <directive>`, in that order.
         let args = turn_args(
             "sonnet",
+            None,
             None,
             None,
             "default",
@@ -515,7 +571,16 @@ mod tests {
             ResponseMode::Explanatory,
             ResponseMode::Learning,
         ] {
-            let args = turn_args("sonnet", Some("thread-1"), None, "default", None, &[], mode);
+            let args = turn_args(
+                "sonnet",
+                Some("thread-1"),
+                None,
+                None,
+                "default",
+                None,
+                &[],
+                mode,
+            );
             let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
             assert!(has_pair("--resume", "thread-1"));
             assert!(has_pair(
@@ -533,6 +598,7 @@ mod tests {
             "sonnet",
             Some("thread-1"),
             None,
+            None,
             "default",
             Some("be terse"),
             &extra,
@@ -542,6 +608,79 @@ mod tests {
         assert!(has_pair("--system-prompt", "be terse"));
         assert!(has_pair("--resume", "thread-1"));
         assert!(args.iter().any(|a| a == "--add-dir"));
+    }
+
+    // ---------- advisor-switch ----------
+
+    fn advisor_args(advisor: Option<&str>, resume: Option<&str>) -> Vec<String> {
+        turn_args(
+            "sonnet",
+            resume,
+            Some("high"),
+            advisor,
+            "default",
+            None,
+            &[],
+            ResponseMode::Default,
+        )
+    }
+
+    #[test]
+    fn turn_args_pass_an_advisor_model_right_after_effort() {
+        let args = advisor_args(Some("opus"), None);
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert_eq!(args[at("--advisor") + 1], "opus");
+        assert_eq!(at("--advisor"), at("--effort") + 2);
+        assert!(!args.iter().any(|a| a == "--settings"));
+    }
+
+    #[test]
+    fn turn_args_add_no_flag_when_the_advisor_is_off() {
+        // 'off' rides the environment (advisor_env), never the argv.
+        let args = advisor_args(Some("off"), None);
+        assert!(!args.iter().any(|a| a == "--advisor" || a == "--settings"));
+    }
+
+    #[test]
+    fn advisor_env_disables_the_tool_only_when_off() {
+        let base = vec![("CLAUDE_CONFIG_DIR".to_string(), "/a".to_string())];
+        assert_eq!(advisor_env(base.clone(), None, "native"), base);
+        assert_eq!(advisor_env(base.clone(), Some("opus"), "native"), base);
+        let off = advisor_env(base.clone(), Some("off"), "native");
+        assert_eq!(off[0], base[0]);
+        assert!(off.contains(&(ADVISOR_OFF_ENV.to_string(), "1".to_string())));
+        assert!(!off.iter().any(|(k, _)| k == "WSLENV"));
+    }
+
+    #[test]
+    fn advisor_env_forwards_the_off_switch_into_wsl() {
+        // Merged into the one existing WSLENV entry — a second WSLENV pair
+        // would replace the account's CLAUDE_CONFIG_DIR/up forwarding.
+        let base = vec![
+            ("CLAUDE_CONFIG_DIR".to_string(), "D:\\a".to_string()),
+            ("WSLENV".to_string(), "CLAUDE_CONFIG_DIR/up".to_string()),
+        ];
+        let off = advisor_env(base, Some("off"), "wsl");
+        let wslenv: Vec<_> = off.iter().filter(|(k, _)| k == "WSLENV").collect();
+        assert_eq!(wslenv.len(), 1);
+        assert!(wslenv[0].1.contains("CLAUDE_CONFIG_DIR/up"));
+        assert!(wslenv[0].1.contains(&format!("{ADVISOR_OFF_ENV}/u")));
+    }
+
+    #[test]
+    fn turn_args_add_nothing_when_the_advisor_is_inherited() {
+        let args = advisor_args(None, None);
+        assert!(!args.iter().any(|a| a == "--advisor" || a == "--settings"));
+        assert_eq!(args.last().unwrap(), "high"); // nothing past --effort
+    }
+
+    #[test]
+    fn turn_args_carry_the_advisor_on_the_resume_path_too() {
+        // --resume does not carry --advisor: it must ride every invocation.
+        let args = advisor_args(Some("fable"), Some("thread-1"));
+        let has_pair = |a: &str, b: &str| args.windows(2).any(|w| w[0] == a && w[1] == b);
+        assert!(has_pair("--advisor", "fable"));
+        assert!(has_pair("--resume", "thread-1"));
     }
 
     #[test]

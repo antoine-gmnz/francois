@@ -116,3 +116,38 @@ fn surviving_legacy_runtimes_keep_their_existing_account_resolution() {
         );
     }
 }
+
+#[test]
+fn advisor_model_round_trips_and_unknown_values_load_as_inherited() {
+    for advisor in ["off", "sonnet", "opus", "fable"] {
+        let engine = Engine::default();
+        let record = json!({"id":"s", "name":"n", "cwd":"/repo", "advisorModel":advisor});
+        load_session_records(&engine, vec![record], &HashSet::new(), &HashSet::new());
+        assert_eq!(
+            engine
+                .with_session("s", |s| s.advisor_model.clone())
+                .flatten()
+                .as_deref(),
+            Some(advisor)
+        );
+        assert_eq!(
+            persisted_session_records(&engine)[0]["advisorModel"],
+            advisor
+        );
+    }
+    for bad in [
+        json!("haiku"),
+        json!(""),
+        json!("OFF"),
+        json!(42),
+        Value::Null,
+    ] {
+        let engine = Engine::default();
+        let record = json!({"id":"s", "name":"n", "cwd":"/repo", "advisorModel":bad});
+        load_session_records(&engine, vec![record], &HashSet::new(), &HashSet::new());
+        assert_eq!(
+            engine.with_session("s", |s| s.advisor_model.clone()),
+            Some(None)
+        );
+    }
+}

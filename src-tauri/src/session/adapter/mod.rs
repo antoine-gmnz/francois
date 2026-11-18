@@ -370,6 +370,7 @@ mod tests {
             cwd: "/x".into(),
             model_id: "sonnet".into(),
             effort: None,
+            advisor_model: None,
             permission_mode: "default".into(),
             runtime: "native".into(),
             worktree_distro: None,

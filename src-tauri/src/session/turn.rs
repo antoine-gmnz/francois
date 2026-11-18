@@ -47,6 +47,7 @@ pub(crate) fn build_turn_context(
             cwd: s.cwd.clone(),
             model_id: s.model_id.clone(),
             effort: s.effort.clone(),
+            advisor_model: s.advisor_model.clone(),
             permission_mode: s.permission_mode.clone(),
             runtime: s.runtime.clone(),
             worktree_distro: s.worktree_distro.clone(),

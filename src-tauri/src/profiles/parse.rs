@@ -17,6 +17,7 @@ pub const DENIED_ARG_FLAGS: &[&str] = &[
     "--permission-mode",
     "--dangerously-skip-permissions",
     "--permission-prompt-tool",
+    "--advisor",
 ];
 
 /// The named reason behind a denial (FR-9). Grouped the same way the contract
@@ -41,6 +42,7 @@ fn reason_for(flag: &str) -> &'static str {
             "the session's permission mode control already sets this"
         }
         "--permission-prompt-tool" => "reserved for the stdio control channel Francois depends on",
+        "--advisor" => "the session's advisor control already sets this",
         _ => "this flag is not allowed in a profile's extra args",
     }
 }
@@ -183,6 +185,13 @@ mod tests {
         let (flag, reason) = check_denied(&["--foo".into(), "--model".into()]).unwrap();
         assert_eq!(flag, "--model");
         assert!(!reason.is_empty());
+    }
+
+    #[test]
+    fn denies_the_advisor_flag_because_the_session_control_sets_it() {
+        let (flag, reason) = check_denied(&["--advisor=opus".into()]).unwrap();
+        assert_eq!(flag, "--advisor");
+        assert_eq!(reason, "the session's advisor control already sets this");
     }
 
     #[test]

@@ -147,6 +147,7 @@ pub fn test_session() -> Session {
         last_activity_at: 0,
         error_message: None,
         effort: None,
+        advisor_model: None,
         permission_mode: "default".into(),
         permission_mode_since: 0,
         runtime: "native".into(),

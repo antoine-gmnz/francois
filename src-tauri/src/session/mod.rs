@@ -156,7 +156,7 @@ pub use commands::{
     __cmd__session_clear, __cmd__session_compact, __cmd__session_create, __cmd__session_interrupt,
     __cmd__session_list, __cmd__session_open_request_url, __cmd__session_pick_directory,
     __cmd__session_remove, __cmd__session_rename, __cmd__session_send,
-    __cmd__session_switch_effort, __cmd__session_switch_model,
+    __cmd__session_switch_advisor, __cmd__session_switch_effort, __cmd__session_switch_model,
     __cmd__session_switch_permission_mode, __cmd__session_switch_response_mode,
     __cmd__session_unqueue, __cmd__session_update_settings,
     __tauri_command_name_conversation_get_transcript, __tauri_command_name_permissions_decide,
@@ -165,15 +165,17 @@ pub use commands::{
     __tauri_command_name_session_interrupt, __tauri_command_name_session_list,
     __tauri_command_name_session_open_request_url, __tauri_command_name_session_pick_directory,
     __tauri_command_name_session_remove, __tauri_command_name_session_rename,
-    __tauri_command_name_session_send, __tauri_command_name_session_switch_effort,
-    __tauri_command_name_session_switch_model, __tauri_command_name_session_switch_permission_mode,
+    __tauri_command_name_session_send, __tauri_command_name_session_switch_advisor,
+    __tauri_command_name_session_switch_effort, __tauri_command_name_session_switch_model,
+    __tauri_command_name_session_switch_permission_mode,
     __tauri_command_name_session_switch_response_mode, __tauri_command_name_session_unqueue,
     __tauri_command_name_session_update_settings, apply_model_switch, conversation_get_transcript,
     do_send, permissions_decide, session_answer_question, session_clear, session_compact,
     session_create, session_interrupt, session_list, session_open_request_url,
-    session_pick_directory, session_remove, session_rename, session_send, session_switch_effort,
-    session_switch_model, session_switch_permission_mode, session_switch_response_mode,
-    session_unqueue, session_update_settings, SendSource, SessionSettingsPatch,
+    session_pick_directory, session_remove, session_rename, session_send, session_switch_advisor,
+    session_switch_effort, session_switch_model, session_switch_permission_mode,
+    session_switch_response_mode, session_unqueue, session_update_settings, SendSource,
+    SessionSettingsPatch,
 };
 #[cfg(test)]
 pub(crate) use control::QuestionOption;
@@ -255,7 +257,7 @@ pub use slash::{
 };
 pub(crate) use spawn::{
     account_env, account_env_for_kind, claude_invocation, claude_path_env, permission_args,
-    valid_effort, valid_permission_mode, valid_runtime,
+    valid_advisor_model, valid_effort, valid_permission_mode, valid_runtime,
 };
 pub(crate) use stdio::{
     claim_pending, close_or_hold_channel, handle_control_request, write_control_line,
@@ -391,6 +393,10 @@ pub struct SessionMeta {
     /// `Session`; it simply had no way onto the wire before the run chip needed it.
     #[serde(skip_serializing_if = "Option::is_none")]
     effort: Option<String>,
+    /// advisor-switch: the advisor model this session's next turn spawns with —
+    /// ABSENT (never null) when the session inherits the account's setting.
+    #[serde(rename = "advisorModel", skip_serializing_if = "Option::is_none")]
+    advisor_model: Option<String>,
     runtime: String,
     /// projects FR-18: the project this session was created under; ABSENT (never
     /// null) when unlinked, so a pre-projects frontend and a pre-projects
@@ -755,7 +761,11 @@ pub struct Session {
     started_at: u64,
     last_activity_at: u64,
     error_message: Option<String>,
-    effort: Option<String>,  // --effort level (None = model default)
+    effort: Option<String>, // --effort level (None = model default)
+    /// advisor-switch: `--advisor` alias, or "off" (forced off); None = inherit
+    /// the account's `advisorModel`. NOT a `Session::new` parameter — every
+    /// creation path starts inheriting; only load and the switch set it.
+    advisor_model: Option<String>,
     permission_mode: String, // contract PermissionMode; "default" = inherit ~/.claude settings
     /// rework-top-bar (design 11c): epoch ms of the last `permission_mode` write.
     /// Seeded at creation (and at load, from the persisted key) so the value is
@@ -1015,6 +1025,7 @@ impl Session {
             last_activity_at,
             error_message: None,
             effort,
+            advisor_model: None,
             permission_mode,
             permission_mode_since: started_at,
             runtime,
@@ -1142,6 +1153,7 @@ impl Session {
             permission_mode: self.permission_mode.clone(),
             permission_mode_since: self.permission_mode_since,
             effort: self.effort.clone(),
+            advisor_model: self.advisor_model.clone(),
             runtime: self.runtime.clone(),
             project_id: self.project_id.clone(),
             worktree: self.worktree.clone(),

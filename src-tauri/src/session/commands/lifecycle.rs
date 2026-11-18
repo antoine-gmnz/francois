@@ -1048,6 +1048,68 @@ pub fn session_switch_effort(
     ok(serde_json::to_value(meta).unwrap())
 }
 
+/// advisor-switch: the engine half of `session_switch_advisor` — the twin of
+/// `switch_effort_in_engine`, pure for the same reason. `None` clears the
+/// override (the account's own `advisorModel` setting applies again). The
+/// advisor is a Claude Code CLI flag, so any other runtime is
+/// `RUNTIME_UNSUPPORTED` rather than a value it would silently ignore.
+pub fn switch_advisor_in_engine(
+    engine: &Engine,
+    accounts: &dyn crate::account::AccountKinds,
+    session_id: &str,
+    advisor_model: Option<&str>,
+) -> Result<SessionMeta, AppError> {
+    engine
+        .with_session_mut(session_id, |s| {
+            if status::is_terminal(&s.status) {
+                return Err(AppError::new(
+                    ErrorCode::SessionNotRunning,
+                    "session has ended",
+                ));
+            }
+            if s.agent_runtime != AgentRuntime::ClaudeCode {
+                return Err(AppError::new(
+                    ErrorCode::RuntimeUnsupported,
+                    "the advisor is a Claude Code setting",
+                ));
+            }
+            s.settings_revision += 1;
+            s.advisor_model = advisor_model.map(String::from);
+            Ok(s.meta(accounts))
+        })
+        .ok_or(AppError::new(ErrorCode::SessionNotFound, "no such session"))?
+}
+
+/// advisor-switch: `francois:session:switchAdvisor`. Same shape as
+/// `session_switch_effort` — reaches only the NEXT turn (the in-flight turn
+/// keeps its `TurnContext` snapshot), persists, emits one `session.meta`.
+/// An absent/blank value clears the override; anything outside
+/// `AdvisorModel` is `INVALID_INPUT`, since the CLI would fail the whole turn.
+#[tauri::command(async)]
+pub fn session_switch_advisor(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    session_id: String,
+    advisor_model: Option<String>,
+) -> IpcResult<Value> {
+    if let Err(e) = engine.ensure_available(&session_id) {
+        return e.into();
+    }
+    let advisor = advisor_model
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty());
+    if advisor.as_deref().is_some_and(|a| !valid_advisor_model(a)) {
+        return err(ErrorCode::InvalidInput, "unknown advisor model");
+    }
+    let meta = match switch_advisor_in_engine(&engine, &app, &session_id, advisor.as_deref()) {
+        Ok(meta) => meta,
+        Err(e) => return e.into(),
+    };
+    persist(&app, &engine);
+    emit(&app, SessionEvent::Meta { meta: meta.clone() });
+    ok(serde_json::to_value(meta).unwrap())
+}
+
 /// session-permission-mode FR-1: `francois:session:switchPermissionMode`.
 /// Semantics and code shape mirror `apply_model_switch` — set the field,
 /// persist with the existing atomic write, emit one `session.meta`, resolve
@@ -1940,6 +2002,80 @@ mod tests {
         };
         assert_eq!(terminal.code, ErrorCode::SessionNotRunning);
         assert_eq!(engine.with_session("s1", |s| s.effort.clone()), Some(None));
+    }
+
+    // ---------- advisor-switch ----------
+
+    #[test]
+    fn switch_advisor_in_engine_sets_and_clears_the_override() {
+        let engine = test_engine_with(test_session());
+        let before = engine.with_session("s1", |s| s.settings_revision).unwrap();
+
+        let meta = switch_advisor_in_engine(&engine, &fake_accounts(), "s1", Some("opus")).unwrap();
+        assert_eq!(meta.advisor_model.as_deref(), Some("opus"));
+        assert_eq!(serde_json::to_value(&meta).unwrap()["advisorModel"], "opus");
+        assert_eq!(
+            engine.with_session("s1", |s| s.settings_revision),
+            Some(before + 1)
+        );
+
+        let off = switch_advisor_in_engine(&engine, &fake_accounts(), "s1", Some("off")).unwrap();
+        assert_eq!(off.advisor_model.as_deref(), Some("off"));
+
+        // Absent (never null) once cleared — inherit the account setting.
+        let cleared = switch_advisor_in_engine(&engine, &fake_accounts(), "s1", None).unwrap();
+        assert_eq!(cleared.advisor_model, None);
+        assert!(serde_json::to_value(&cleared)
+            .unwrap()
+            .get("advisorModel")
+            .is_none());
+    }
+
+    #[test]
+    fn switch_advisor_in_engine_rejects_unknown_terminal_and_non_claude_sessions() {
+        let engine = test_engine_with(test_session());
+        let Err(unknown) =
+            switch_advisor_in_engine(&engine, &fake_accounts(), "nope", Some("opus"))
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(unknown.code, ErrorCode::SessionNotFound);
+
+        let mut done = test_session();
+        done.status = status::DONE.into();
+        let engine = test_engine_with(done);
+        let Err(terminal) = switch_advisor_in_engine(&engine, &fake_accounts(), "s1", Some("opus"))
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(terminal.code, ErrorCode::SessionNotRunning);
+        assert_eq!(
+            engine.with_session("s1", |s| s.advisor_model.clone()),
+            Some(None)
+        );
+
+        let mut codex = test_session();
+        codex.agent_runtime = AgentRuntime::Codex;
+        let engine = test_engine_with(codex);
+        let Err(foreign) = switch_advisor_in_engine(&engine, &fake_accounts(), "s1", Some("opus"))
+        else {
+            panic!("expected an error");
+        };
+        assert_eq!(foreign.code, ErrorCode::RuntimeUnsupported);
+        assert_eq!(
+            engine.with_session("s1", |s| s.advisor_model.clone()),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn valid_advisor_model_is_the_gate_the_switch_command_applies() {
+        for advisor in ["off", "sonnet", "opus", "fable"] {
+            assert!(valid_advisor_model(advisor));
+        }
+        for bad in ["OFF", "haiku", "", " opus"] {
+            assert!(!valid_advisor_model(bad));
+        }
     }
 
     // ---------- pi-models-metrics: the settled gate ----------

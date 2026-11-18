@@ -247,6 +247,7 @@ fn context(id: &str) -> TurnContext {
         cwd: "/fixture".into(),
         model_id: "model-a".into(),
         effort: None,
+        advisor_model: None,
         permission_mode: "default".into(),
         runtime: "native".into(),
         worktree_distro: None,

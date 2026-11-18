@@ -22,6 +22,7 @@ import type {
   SessionEvent,
   Result,
   PermissionMode,
+  AdvisorModel,
   ClaudeRuntime,
   ProfileId,
   ResponseMode,
@@ -189,6 +190,26 @@ export interface SessionSwitchEffortInput {
 //   the current model (never Claude's subset). An unsupported level is INVALID_INPUT — a
 //   clamped value is never silently accepted; the published effort is the read-back one.
 //   Adds SESSION_BUSY (not settled) and RUNTIME_UNSUPPORTED (model reports no levels).
+
+// ---------- francois:session:switchAdvisor ----------
+
+/**
+ * advisor-switch — the twin of switchEffort for Claude Code's advisor tool. Reaches
+ * only the NEXT turn (the in-flight turn keeps its own snapshot). The core passes a
+ * model as `--advisor <alias>` on every invocation (`--resume` does not carry it) and
+ * `'off'` as the env var `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` (an empty `advisorModel`
+ * setting does not disable it — the CLI falls back to a default advisor); an absent value adds nothing, so the
+ * account's own `advisorModel` setting applies.
+ */
+export interface SessionSwitchAdvisorInput {
+  sessionId: SessionId;
+  /** The advisor, or omitted/null to CLEAR the override and inherit the account setting. */
+  advisorModel?: AdvisorModel | null;
+}
+// invoke('session_switch_advisor', req: SessionSwitchAdvisorInput): Promise<Result<SessionMeta>>
+//   ok:false — 'SESSION_NOT_FOUND' | 'SESSION_NOT_RUNNING' | 'INVALID_INPUT' (not one of
+//   ADVISOR_MODELS) | 'RUNTIME_UNSUPPORTED' (session runtime is not claude-code) | 'INTERNAL'
+//   Accompanied by exactly one `session.meta` emission carrying the same snapshot.
 
 // ---------- francois:session:compact ----------
 

@@ -418,6 +418,9 @@ pub struct PersistedMeta {
     /// record.
     context_limit_tokens: Option<u64>,
     effort: Option<String>,
+    /// advisor-switch: None on every pre-feature record, and on any value
+    /// outside `AdvisorModel` — an unknown alias would fail every turn.
+    advisor_model: Option<String>,
     permission_mode: String, // "default" when absent (pre-feature records)
     /// rework-top-bar (design 11c): `None` on every pre-feature record — the load
     /// path then falls back to the session's own `lastActivityAt`, which is the
@@ -587,6 +590,11 @@ pub fn parse_session_record(rec: &Value, now: u64) -> Option<PersistedMeta> {
                     valid_effort(e)
                 }
             })
+            .map(String::from),
+        advisor_model: rec
+            .get("advisorModel")
+            .and_then(|v| v.as_str())
+            .filter(|a| valid_advisor_model(a))
             .map(String::from),
         permission_mode: rec
             .get("permissionMode")
@@ -2543,6 +2551,7 @@ fn persisted_session_records(engine: &Engine) -> Vec<Value> {
             if let Some(raw) = engine.retired_runtime_records.lock().unwrap().get(&s.id) { return raw.clone(); }
             let mut rec = serde_json::json!({
                 "id": s.id, "name": s.name, "cwd": s.cwd, "modelId": s.model_id, "effort": s.effort,
+                "advisorModel": s.advisor_model, // advisor-switch
                 // display-openai-model-name FR-1: always written, like modelId —
                 // every session has both, resolved once at creation/switch/reconcile
                 // and never re-derived on load (FR-8).
@@ -2775,6 +2784,7 @@ fn load_session_records(
                 last_activity_at: m.last_activity_at,
                 error_message: None,
                 effort: m.effort,
+                advisor_model: m.advisor_model,
                 permission_mode: m.permission_mode,
                 permission_mode_since: m.permission_mode_since.unwrap_or(m.last_activity_at),
                 runtime: m.runtime,

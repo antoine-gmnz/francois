@@ -1,15 +1,17 @@
 // Run settings popover — redesign "Graphite & Signal", Figma "20 · Run settings
 // (model · effort · permissions)" (139:7373; light 142:16053). Opened by the run
-// chip in the composer. Three sections in order: Model (one radio row per model
+// chip in the composer. Four sections in order: Model (one radio row per model
 // FAMILY — Opus/Sonnet/… — with a compact segmented version track on the
 // selected family, newest version first), Effort (the SELECTED model's own
 // levels, in its own section rather than nested in the model row — a model
 // with no effort setting still gets the section, with a muted "no effort
-// setting" line), then the four permission modes, `bypass` tinted with a line
-// saying how long it has been on and in which tree.
+// setting" line), Advisor (Default = the account's setting · Off · Sonnet ·
+// Opus · Fable; Claude Code sessions only — advisorAvailable), then the four
+// permission modes, `bypass` tinted with a line saying how long it has been on
+// and in which tree.
 //
 // Every pick goes through the existing switch verbs (session_switch_model /
-// _effort / _permission_mode); the session.meta event that comes back is the
+// _effort / _advisor / _permission_mode); the session.meta event that comes back is the
 // single update path, so nothing here writes the session into the store. A
 // setting the session's runtime cannot change renders disabled, titled with the
 // capability's own reason (settingCapability — the same gate the settings
@@ -17,8 +19,8 @@
 // settings sheet (session header name / palette "Session settings…").
 
 import { useState } from 'react';
-import type { ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
-import { sessionSwitchEffort, sessionSwitchModel, sessionSwitchPermissionMode } from '../../lib/api';
+import type { AdvisorModel, ModelInfo, PermissionMode, SessionMeta } from '../../../contract/common';
+import { sessionSwitchAdvisor, sessionSwitchEffort, sessionSwitchModel, sessionSwitchPermissionMode } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
 import { useModelCatalog } from '../../lib/hooks/useModelCatalog';
 import { useMounted } from '../../lib/hooks/useMounted';
@@ -28,7 +30,7 @@ import { LoaderCaret } from '../../ui/Loaders';
 import { Radio } from '../../ui/Radio';
 import { Tab, TabGroup } from '../../ui/Tab';
 import { effortLevels } from './run-chip';
-import { bypassSinceLine, effortSurvivesSwitch, familyNote, groupModelFamilies, permissionRows } from './run-settings';
+import { advisorAvailable, advisorRows, bypassSinceLine, effortSurvivesSwitch, familyNote, groupModelFamilies, permissionRows } from './run-settings';
 import { settingCapability } from './session-settings';
 
 type SwitchResult = { ok: true } | { ok: false; error: { message: string } };
@@ -62,6 +64,7 @@ export function RunSettingsPopover({
   const levels = effortLevels(selectedModel);
   const modelCap = settingCapability(session, 'modelId');
   const modeCap = settingCapability(session, 'permissionMode');
+  const advisorCap = advisorAvailable(session);
   const bypassLine = bypassSinceLine(session, Date.now());
 
   async function run(call: Promise<SwitchResult>): Promise<boolean> {
@@ -89,6 +92,11 @@ export function RunSettingsPopover({
     if (!modelCap.available) return;
     // Re-picking the level in force hands the model back its own default.
     void run(sessionSwitchEffort(session.id, level === session.effort ? null : level));
+  };
+
+  const pickAdvisor = (value: AdvisorModel | null) => {
+    if (!advisorCap.available || value === (session.advisorModel ?? null)) return;
+    void run(sessionSwitchAdvisor(session.id, value));
   };
 
   const pickMode = async (mode: PermissionMode) => {
@@ -160,6 +168,27 @@ export function RunSettingsPopover({
             <span className="run-settings__note--muted">This model has no effort setting</span>
           )}
         </div>
+      </div>
+
+      <div className="run-settings__rule" />
+      <div className="run-settings__section">Advisor</div>
+      <div role="radiogroup" aria-label="Advisor" className="run-settings__group" title={advisorCap.available ? undefined : advisorCap.reason}>
+        {advisorRows(session).map((row) => (
+          <div key={row.value ?? 'default'} className={row.selected ? 'run-settings__option run-settings__option--on' : 'run-settings__option'}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={row.selected}
+              disabled={!advisorCap.available}
+              className="run-settings__head"
+              onClick={() => pickAdvisor(row.value)}
+            >
+              <Radio on={row.selected} />
+              <span className="run-settings__label">{row.label}</span>
+              {row.note && <span className="run-settings__note truncate">{row.note}</span>}
+            </button>
+          </div>
+        ))}
       </div>
 
       <div className="run-settings__rule" />
