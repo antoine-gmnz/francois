@@ -66,6 +66,7 @@ mod spawn;
 // Deliberately NOT glob-exported below: its names (RUNNING, IDLE, is_busy) are
 // generic, and `status::is_busy(..)` at the call site is what makes the check
 // readable. The glob still brings the module path itself into scope.
+mod keep_awake;
 pub(crate) mod status;
 mod stdio;
 /// command-inspect: the `StepDetail` capture record, its sidecar, and the
@@ -205,6 +206,7 @@ pub(crate) use interactive::{
     intercepted_command, parse_command, probe_card, run_intercepted_command, usage_card,
     CommandCard, HelpEntry,
 };
+pub use keep_awake::start_keep_awake;
 pub use mcp::{
     __cmd__mcp_attach, __cmd__mcp_detach, __cmd__mcp_detail, __cmd__mcp_list, __cmd__mcp_reconnect,
     __cmd__mcp_registry, __tauri_command_name_mcp_attach, __tauri_command_name_mcp_detach,

@@ -353,6 +353,27 @@ mod tests {
     }
 
     #[test]
+    fn the_follow_up_turns_init_resumes_a_settled_turn() {
+        use crate::session::stream::resumes_settled_turn;
+        // Regression: after the last background task drained, the CLI's follow-up
+        // turn emits `init`, then nothing until the API answers. Left settled, the
+        // closer cut stdin in that gap and the turn's asks died on `Stream closed`.
+        assert!(resumes_settled_turn(
+            &json!({ "type": "system", "subtype": "init" })
+        ));
+        for line in ["stream_event", "assistant", "control_request"] {
+            assert!(resumes_settled_turn(&json!({ "type": line })));
+        }
+        // These arrive while the CLI idles and must not read as new work.
+        for subtype in ["background_tasks_changed", "task_notification", "status"] {
+            assert!(!resumes_settled_turn(
+                &json!({ "type": "system", "subtype": subtype })
+            ));
+        }
+        assert!(!resumes_settled_turn(&json!({ "type": "result" })));
+    }
+
+    #[test]
     fn question_block_lifecycle_pending_answered() {
         // FR-6/FR-15: pending block streams; resolution updates IN PLACE; the
         // answers key exists only once answered.
