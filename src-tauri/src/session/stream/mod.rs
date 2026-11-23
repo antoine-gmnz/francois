@@ -159,7 +159,7 @@ fn parse_frames(
         // reports, or a background subagent's ask. The session is busy again.
         // An injected reply clears `settled` itself before writing, so it
         // never reaches this branch (see `TurnHandle::send_live`).
-        if resumes_settled_turn(line_type) && settled.swap(false, Ordering::SeqCst) {
+        if resumes_settled_turn(&v) && settled.swap(false, Ordering::SeqCst) {
             env.publish(RuntimeEvent::TurnResumed);
         }
         match line_type {
@@ -340,11 +340,21 @@ pub fn run_reader(
     );
 }
 
-/// The parent-stream lines that mean a settled CLI has begun work again. A
-/// `system` line never does (`background_tasks_changed`, `task_notification`
-/// and friends arrive while it idles), nor does a stray `result`.
-pub(crate) fn resumes_settled_turn(line_type: &str) -> bool {
-    matches!(line_type, "stream_event" | "assistant" | "control_request")
+/// The parent-stream lines that mean a settled CLI has begun work again.
+///
+/// `system/init` is the first line of the follow-up turn the CLI runs when a
+/// background task reports. It must count: the next line only arrives after the
+/// API's time to first byte, routinely longer than the closer's quiet window, and
+/// a channel closed in that gap kills every permission ask of the follow-up with
+/// `AbortError: Stream closed`. Other `system` lines (`background_tasks_changed`,
+/// `task_notification` and friends) arrive while the CLI idles, and a stray
+/// `result` starts nothing.
+pub(crate) fn resumes_settled_turn(v: &Value) -> bool {
+    match v.get("type").and_then(Value::as_str) {
+        Some("stream_event" | "assistant" | "control_request") => true,
+        Some("system") => v.get("subtype").and_then(Value::as_str) == Some("init"),
+        _ => false,
+    }
 }
 
 fn publish_attributed(env: &dyn StreamEnvironment, parent_tool_use_id: &str, value: &Value) {

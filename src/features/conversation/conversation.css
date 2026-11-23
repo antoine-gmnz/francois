@@ -607,6 +607,8 @@
 /* MONO: this is the terminal's own input line, not a chat box (design 7a). */
 .composer-input {
   flex: 1;
+  /* A textarea's intrinsic width would otherwise push send out of a narrow pane. */
+  min-width: 0;
   resize: none;
   border: none;
   outline: none;
@@ -693,6 +695,8 @@
    carrying at the bottom edge, since it is what decides when to /compact. */
 .composer-hint__ctx {
   margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 

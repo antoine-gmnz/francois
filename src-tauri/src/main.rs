@@ -66,6 +66,7 @@ fn main() {
                 Box::new(shell::ShellTeardown),
                 Box::new(editor::EditorTeardown),
             ]);
+            session::start_keep_awake(app.handle().clone());
             // Same wiring, the other direction: removing an account repoints the
             // sessions bound to it, and `account` no longer names `session` to
             // say so.

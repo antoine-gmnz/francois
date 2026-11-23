@@ -17,6 +17,7 @@
 //  · the project switcher → the roster's scope chips (+N opens the same menu);
 //  · the roster fold chevron → the roster footer / the rail / `[`.
 
+import { useEffect, useRef } from 'react';
 import type { SessionMeta } from '../../contract/common';
 import { formatElapsed } from '../../contract/conversation-view';
 import { isBusyStatus } from '../../contract/fleet-board';
@@ -76,6 +77,13 @@ export default function SessionHeader({
   // ambiguous one, so it steps aside while split.
   const split = useStore((s) => s.extraPanes.length > 0);
   const tier = topbarTier(useWindowWidth());
+  // The agent strip scrolls on its own, so the open tab must not end up out of view.
+  const agentsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    agentsRef.current
+      ?.querySelector('.session-header__agent--on')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [mainTab, agentTabs.length]);
 
   const openView = (tab: MainTab) => {
     setFocusedPane('main');
@@ -97,6 +105,7 @@ export default function SessionHeader({
   const meta = sessionMetaLine(active, home, active.worktree ? worktreeChipLabel(active.worktree) : null);
 
   return (
+    <div className="session-header-box">
     <div className="session-header">
       <div className="session-header__title">
         <div className="session-header__name-row">
@@ -132,7 +141,9 @@ export default function SessionHeader({
           <ExtensionsBarMenu display={extTabDisplay(tier)} mainTab={mainTab} root={active.cwd} openExtTab={openExtTab} />
 
           {/* agent-tab FR-12: one chip per opened subagent / workflow run — content,
-              not chrome, hence their own close affordance. */}
+              not chrome, hence their own close affordance. They scroll in their
+              own strip, so any number of runs cannot push the header wider. */}
+          <div ref={agentsRef} className="session-header__agents">
           {agentTabs.map((t) => (
             <span
               key={tabIdFor(t)}
@@ -156,6 +167,7 @@ export default function SessionHeader({
               </span>
             </span>
           ))}
+          </div>
         </div>
       )}
 
@@ -167,6 +179,7 @@ export default function SessionHeader({
       )}
 
       <PanelToggle on={showSessionPanel} onToggle={toggleSessionPanel} />
+    </div>
     </div>
   );
 }

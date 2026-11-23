@@ -12,6 +12,16 @@
   border-bottom: 1px solid var(--line-subtle);
   min-width: 0;
 }
+/* Sizes the header off its COLUMN, not the window: with the roster and the session
+   panel open, a wide window can still leave the main column very narrow. Raised so
+   the extensions menu opens above the transcript. */
+.session-header-box {
+  container-type: inline-size;
+  position: relative;
+  z-index: 5;
+  flex: 0 0 auto;
+  min-width: 0;
+}
 .session-header--empty {
   gap: var(--space-8);
 }
@@ -112,8 +122,24 @@
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  flex-shrink: 0;
+  flex: 0 1 auto;
   min-width: 0;
+}
+/* Only the strip scrolls: a scroller here would clip the extensions menu. */
+.session-header__agents {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.session-header__agents::-webkit-scrollbar {
+  display: none;
+}
+.session-header__agents:empty {
+  display: none;
 }
 /* A subagent / workflow run's tab — same 28px pill as a Tab, quieter. */
 .session-header__agent {
@@ -153,4 +179,25 @@
 }
 .session-header__stop-glyph {
   color: var(--state-danger);
+}
+/* Narrow column: identity + Stop + panel toggle on the first row, the tabs on a
+   full-width second row. Last in the file so it wins over the base rules above. */
+@container (max-width: 560px) {
+  .session-header {
+    height: auto;
+    flex-wrap: wrap;
+    gap: var(--space-6) var(--space-8);
+    padding: var(--space-8) var(--space-16);
+  }
+  .session-header__title {
+    flex: 1 1 0;
+  }
+  .session-header__spacer {
+    display: none;
+  }
+  .session-header__tabs {
+    order: 1;
+    flex: 1 0 100%;
+    max-width: 100%;
+  }
 }
