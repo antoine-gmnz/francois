@@ -43,18 +43,22 @@ pub(super) fn apply(
             model,
             plan,
         } => {
-            engine.with_session_mut(id, |s| {
-                s.buf_tool(
-                    &block_id,
-                    tool.clone(),
-                    summary.clone(),
-                    is_task,
-                    model.clone(),
-                );
-                if let Some(b) = s.block_buffer.last_mut().filter(|_| plan.is_some()) {
-                    b.plan = plan.clone();
-                }
-            });
+            let plan = engine
+                .with_session_mut(id, |s| {
+                    s.buf_tool(
+                        &block_id,
+                        tool.clone(),
+                        summary.clone(),
+                        is_task,
+                        model.clone(),
+                    );
+                    let snapshot = serde_json::Value::Array(s.apply_plan_op(plan.as_ref()?));
+                    if let Some(b) = s.block_buffer.last_mut() {
+                        b.plan = Some(snapshot.clone());
+                    }
+                    Some(snapshot)
+                })
+                .flatten();
             env.emit_session(SessionEvent::ToolStart {
                 session_id: id.into(),
                 block_id,

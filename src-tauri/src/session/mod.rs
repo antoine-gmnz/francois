@@ -945,6 +945,11 @@ pub struct Session {
     /// in the persisted transcript" (`getTranscript`'s `hasMore` with no
     /// `before`), computed without re-reading the file.
     transcript_truncated: bool,
+    /// plan-view: the running task list `TaskCreate`/`TaskUpdate` calls fold
+    /// into. `None` until first touched, then seeded from the newest block
+    /// that carries a plan — so a reopened session keeps counting from where
+    /// its transcript left off.
+    plan: Option<Vec<Value>>,
     /// session-attachments §6: the staged/sent refs of this session, persisted
     /// alongside the rest of the record in sessions.json so FR-17's start-up
     /// sweep survives a crash. The attachments DIR is never stored — it is
@@ -1097,6 +1102,7 @@ impl Session {
             // `Session::new` callers (session_create, cloud adoption) pass an
             // empty or freshly-hydrated buffer that has never been trimmed.
             transcript_truncated: false,
+            plan: None,
             attachments: Vec::new(),
             mcp: HashMap::new(),
             workflows: HashMap::new(),
@@ -1211,6 +1217,21 @@ impl Session {
     /// after every append AND after every mutation that can settle a block
     /// (finishing a stream, resolving an ask), since either can unblock an
     /// eviction that was previously pinned.
+    /// plan-view: fold one plan-changing tool call into the session's task
+    /// list and return the snapshot its block carries.
+    fn apply_plan_op(&mut self, op: &tools::PlanOp) -> Vec<Value> {
+        let buffer = &self.block_buffer;
+        let plan = self.plan.get_or_insert_with(|| {
+            buffer
+                .iter()
+                .rev()
+                .find_map(|b| b.plan.as_ref()?.as_array().cloned())
+                .unwrap_or_default()
+        });
+        tools::apply_plan_op(plan, op);
+        plan.clone()
+    }
+
     fn trim_block_buffer(&mut self) {
         if trim_transcript(&mut self.block_buffer, TRANSCRIPT_BUFFER_CAP) {
             self.transcript_truncated = true;

@@ -2920,6 +2920,7 @@ fn load_session_records(
                 agent_blocks_dropped: HashMap::new(),
                 block_buffer,
                 transcript_truncated,
+                plan: None,
                 // session-attachments FR-17: the file of every attachment still
                 // 'staged' is deleted right here, and the record dropped —
                 // composer drafts do not survive a restart, so a surviving

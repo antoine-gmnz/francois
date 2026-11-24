@@ -584,6 +584,59 @@ pub(crate) mod golden_replay_tests {
         env
     }
 
+    /// plan-view: a real CLI 2.1.331 capture (stream lines only, signatures and
+    /// the thread id scrubbed) — two `TaskCreate`s then two `TaskUpdate`s. Each
+    /// call's `tool.start` must carry the whole list as it stands after it.
+    #[test]
+    fn task_tool_calls_carry_the_running_plan_on_tool_start() {
+        let env = TestEnv {
+            engine: crate::session::testutil::test_engine_with(test_session()),
+            ..Default::default()
+        };
+        parse_stream(
+            &env,
+            "s1",
+            Cursor::new(include_str!("fixtures/plan.ndjson").as_bytes()),
+            &Arc::new(Mutex::new(None)),
+            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(HashMap::new())),
+            None,
+        );
+        let statuses: Vec<Vec<String>> = env
+            .session_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|ev| match ev {
+                SessionEvent::ToolStart {
+                    plan: Some(plan), ..
+                } => Some(
+                    plan.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|t| {
+                            format!(
+                                "{}:{}",
+                                t["id"].as_str().unwrap(),
+                                t["status"].as_str().unwrap()
+                            )
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![
+                vec!["1:pending"],
+                vec!["1:pending", "2:pending"],
+                vec!["1:completed", "2:pending"],
+                vec!["1:completed", "2:in_progress"],
+            ]
+        );
+    }
+
     #[test]
     fn golden_replay_produces_the_locked_session_event_sequence() {
         let env = run_fixture();

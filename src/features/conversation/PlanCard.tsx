@@ -1,4 +1,4 @@
-// plan-view — the latest `TodoWrite` checklist, drawn as a card between the
+// plan-view — the session's latest plan, drawn as a card between the
 // turn's prose and its next tool calls (the Claude app's plan view). Which
 // block earns the card is decided in ./plan-view; this file is DOM only.
 
@@ -24,7 +24,7 @@ function PlanCardImpl({ plan, live }: { plan: PlanItem[]; live: boolean }) {
   return (
     <ul className="plancard" aria-label="Plan">
       {plan.map((item, i) => (
-        <li key={i} className={`plancard__step plancard__step--${item.status}`}>
+        <li key={item.id ?? i} className={`plancard__step plancard__step--${item.status}`}>
           <StepIcon status={item.status} live={live} />
           <span className="plancard__label">{planStepLabel(item)}</span>
         </li>

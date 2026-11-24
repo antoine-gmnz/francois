@@ -157,8 +157,9 @@ pub(crate) enum RuntimeEvent {
         summary: String,
         is_task: bool,
         model: Option<String>,
-        /// plan-view: `PlanItem[]` JSON for a `TodoWrite` call, `None` otherwise.
-        plan: Option<Value>,
+        /// plan-view: how this call changes the session's plan, `None` for a
+        /// tool that does not touch it.
+        plan: Option<crate::session::tools::PlanOp>,
     },
     /// code-editor-agents FR-1: a file-mutating tool call's path, as the
     /// runtime spelled it — the projection resolves it against the cwd.

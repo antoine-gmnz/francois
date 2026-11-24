@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { classifyToolStart, type ConversationBlock, type ToolConversationBlock } from '../../../contract/conversation-view';
+import { classifyToolStart, type ToolConversationBlock } from '../../../contract/conversation-view';
 import type { PlanItem } from '../../../contract/common';
 import { latestPlanBlockId, planStepLabel } from './plan-view';
-import { transcriptReducer } from './conversation-blocks';
+import { compactBlocks, transcriptReducer } from './conversation-blocks';
 
 const plan = (status: PlanItem['status']): PlanItem[] => [{ content: 'Run tests', status, activeForm: 'Running tests' }];
-const planBlock = (blockId: string, items: PlanItem[]): ConversationBlock => ({
+const planBlock = (blockId: string, items: PlanItem[]): ToolConversationBlock => ({
   ...(classifyToolStart('TodoWrite', '1 step', blockId) as ToolConversationBlock),
   plan: items,
 });
@@ -42,6 +42,11 @@ describe('conversation reducer carries the plan', () => {
   it('toolStart without a plan leaves the key absent', () => {
     const s = transcriptReducer(empty, { t: 'toolStart', blockId: 'r1', tool: 'Read', summary: 'a.ts' });
     expect('plan' in s.blocks[0]!).toBe(false);
+  });
+
+  it('compactBlocks never merges two plan snapshots with the same summary', () => {
+    const blocks = [planBlock('p1', plan('pending')), planBlock('p2', plan('in_progress'))].map((b) => ({ ...b, isStreaming: false }));
+    expect(compactBlocks(blocks).map((b) => b.blockId)).toEqual(['p1', 'p2']);
   });
 
   it('toolDone keeps the plan', () => {

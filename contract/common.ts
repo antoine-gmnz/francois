@@ -834,9 +834,12 @@ export interface PermissionAsk {
  * Absent ⇒ not an error, or a block/event from before this field existed (the
  * row then falls back to reading the meta).
  */
-/** plan-view: one step of the checklist a `TodoWrite` call sets. */
+/** plan-view: one step of the session's plan — set whole by `TodoWrite`, or
+ *  built up one task at a time by `TaskCreate`/`TaskUpdate`. */
 export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
 export interface PlanItem {
+  /** The CLI's task id (`"1"`, `"2"`…) on a `TaskCreate` task; absent on a `TodoWrite` step. */
+  id?: string;
   content: string;
   status: PlanItemStatus;
   /** Present-continuous form ("Running tests") shown while the step is in progress. */

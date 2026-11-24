@@ -89,8 +89,9 @@ export interface ToolConversationBlock extends ConversationBlockBase {
    */
   execution?: RuntimeToolCall;
   /**
-   * plan-view: the whole checklist this `TodoWrite` call set (each call
-   * carries the full list, not a delta). Absent on every other tool.
+   * plan-view: the session's whole plan as it stands after this call — the
+   * list a `TodoWrite` set, or the running list after a `TaskCreate`/
+   * `TaskUpdate`. Absent on every tool that does not touch the plan.
    */
   plan?: PlanItem[];
 }

@@ -879,6 +879,10 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
  *    so matching words inside it would break a run on prose.
  */
 function breaksToolRun(b: ToolConversationBlock): boolean {
+  // plan-view: each TodoWrite is a distinct snapshot of the plan — flipping a
+  // step to in-progress keeps the same `N steps · M done` summary, and merging
+  // would drop the newer checklist (and the latest-plan card with it).
+  if (b.plan !== undefined) return true;
   if (b.execution !== undefined) {
     const { status } = b.execution;
     return status === 'failed' || status === 'cancelled' || status === 'unknown';

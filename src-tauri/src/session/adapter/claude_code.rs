@@ -56,6 +56,12 @@ pub fn turn_args(
         "stdio".into(),
         "--include-partial-messages".into(),
         "--verbose".into(),
+        // plan-view: verified against CLI 2.1.331 — without an allow rule
+        // naming a task tool, `-p` exposes no TaskCreate/TaskUpdate (nor
+        // TodoWrite), so the model has no way to keep a plan at all. Repeated
+        // `--allowedTools` flags accumulate, so a profile's own does not undo it.
+        "--allowedTools".into(),
+        "TaskCreate".into(),
         "--model".into(),
         model_id.into(),
     ];
@@ -498,6 +504,7 @@ mod tests {
         assert!(has_pair("--permission-mode", "plan"));
         assert!(has_pair("--effort", "high"));
         assert!(has_pair("--resume", "thread-1"));
+        assert!(has_pair("--allowedTools", "TaskCreate"));
     }
 
     #[test]
