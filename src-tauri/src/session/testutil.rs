@@ -193,6 +193,7 @@ pub fn test_session() -> Session {
         agent_blocks_dropped: HashMap::new(),
         block_buffer: Vec::new(),
         transcript_truncated: false,
+        plan: None,
         attachments: Vec::new(),
         mcp: HashMap::new(),
         workflows: HashMap::new(),

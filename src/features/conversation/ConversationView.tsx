@@ -15,6 +15,7 @@ import JumpToLatestChip from './JumpToLatestChip';
 import ProjectHealthBanners from './ProjectHealthBanners';
 import ResumeFailBanner from './ResumeFailBanner';
 import { groupTurns, turnIsStreaming, type TranscriptItem } from './transcript-turns';
+import { latestPlanBlockId } from './plan-view';
 import TranscriptSkeleton from './TranscriptSkeleton';
 import Turn from './Turn';
 import UsageLimitBanner from './UsageLimitBanner';
@@ -132,6 +133,8 @@ export default function ConversationView({
   // composer's placeholder should swap. Derived here (not passed as raw
   // `state.blocks`) so ComposerPane only re-renders when one of these
   // booleans actually flips, not on every streamed token.
+  // plan-view: only the latest TodoWrite is drawn as a card (see ./plan-view).
+  const planBlockId = useMemo(() => latestPlanBlockId(state.blocks), [state.blocks]);
   const hasPendingQuestion = useMemo(() => hasPendingQuestionBlock(state.blocks), [state.blocks]);
   const hasPendingPermission = useMemo(() => hasPendingPermissionBlock(state.blocks), [state.blocks]);
 
@@ -233,6 +236,11 @@ export default function ConversationView({
                         now={turnIsStreaming(item) ? transcriptClock : 0}
                         sessionId={sessionId}
                         onOpenShell={onOpenShell}
+                        planBlockId={
+                          planBlockId !== null && item.blocks.some((b) => b.blockId === planBlockId)
+                            ? planBlockId
+                            : undefined
+                        }
                       />
                     ) : (
                       <Block b={item.block} sessionId={sessionId} onOpenShell={onOpenShell} />

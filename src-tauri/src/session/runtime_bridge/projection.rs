@@ -108,6 +108,7 @@ fn apply_projected(
                 tool,
                 summary,
                 model: None,
+                plan: None,
             });
         }
         RuntimeEvent::ToolSnapshot { block_id, tool } => {

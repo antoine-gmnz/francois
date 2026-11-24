@@ -118,6 +118,10 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
         if let Some(execution) = &b.execution {
             o["execution"] = execution.clone();
         }
+        // plan-view: written only for a `TodoWrite` block.
+        if let Some(plan) = &b.plan {
+            o["plan"] = plan.clone();
+        }
     }
     if kind == "user" {
         if let Some(attachments) = &b.attachments {
@@ -286,6 +290,7 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
         // feature, and on every kind that never writes the matching key —
         // reads back as `None`, byte-identical to a pre-feature line.
         execution: v.get("execution").filter(|e| !e.is_null()).cloned(),
+        plan: v.get("plan").filter(|p| p.is_array()).cloned(),
         attachments: v.get("attachments").filter(|a| !a.is_null()).cloned(),
         outcome: v.get("outcome").and_then(|o| o.as_str()).map(String::from),
         tone: v.get("tone").and_then(|t| t.as_str()).map(String::from),
@@ -975,6 +980,26 @@ mod tests {
     }
 
     #[test]
+    fn transcript_tool_block_roundtrips_plan() {
+        let plan = json!([{ "content": "a", "status": "in_progress", "activeForm": "A-ing" }]);
+        let b = BufBlock {
+            tool: "TodoWrite".into(),
+            summary: "1 step".into(),
+            plan: Some(plan.clone()),
+            ..BufBlock::new("b1", BlockKind::Tool)
+        };
+        let line = persisted_block_json(&b);
+        assert_eq!(line["plan"], plan);
+        let parsed = parse_persisted_block(&line.to_string()).unwrap();
+        assert_eq!(parsed.plan, Some(plan));
+        let plain = BufBlock {
+            tool: "Read".into(),
+            ..BufBlock::new("b2", BlockKind::Tool)
+        };
+        assert!(persisted_block_json(&plain).get("plan").is_none());
+    }
+
+    #[test]
     fn transcript_block_roundtrips_finalized() {
         let b = BufBlock {
             has_detail: false,
@@ -988,6 +1013,7 @@ mod tests {
             streaming: true, // in-memory streaming flag must NOT round-trip
             at: 1_760_000_000_000,
             execution: None,
+            plan: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1025,6 +1051,7 @@ mod tests {
             streaming: false,
             at: 1_000,
             execution: None,
+            plan: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1071,6 +1098,7 @@ mod tests {
             streaming: false,
             at: 1_760_000_000_000,
             execution: Some(execution.clone()),
+            plan: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1101,6 +1129,7 @@ mod tests {
             streaming: false,
             at: 1_760_000_000_000,
             execution: None,
+            plan: None,
             attachments: Some(attachments.clone()),
             outcome: None,
             tone: None,
@@ -1128,6 +1157,7 @@ mod tests {
             streaming: false,
             at: 1_760_000_000_000,
             execution: None,
+            plan: None,
             attachments: None,
             outcome: Some("interrupted".into()),
             tone: None,
@@ -1154,6 +1184,7 @@ mod tests {
             streaming: false,
             at: 1_760_000_000_000,
             execution: None,
+            plan: None,
             attachments: None,
             outcome: None,
             tone: Some("warning".into()),
@@ -1221,6 +1252,7 @@ mod tests {
             streaming: false,
             at: 1_760_000_000_000,
             execution: None,
+            plan: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1256,6 +1288,7 @@ mod tests {
             streaming: false,
             at: 1_760_000_000_000,
             execution: None,
+            plan: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -2887,6 +2920,7 @@ fn load_session_records(
                 agent_blocks_dropped: HashMap::new(),
                 block_buffer,
                 transcript_truncated,
+                plan: None,
                 // session-attachments FR-17: the file of every attachment still
                 // 'staged' is deleted right here, and the record dropped —
                 // composer drafts do not survive a restart, so a surviving

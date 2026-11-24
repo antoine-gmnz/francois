@@ -480,6 +480,8 @@ pub fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) -> Clea
         return ClearOutcome::Running;
     }
     s.block_buffer.clear();
+    // plan-view: a new thread starts a new task list (the CLI's ids restart too).
+    s.plan = None;
     s.claude_session_id = None;
     // response-mode FR-10: the thread anchor is gone, so nothing has been told
     // to the thread the next turn will start — the directive is re-sent there.

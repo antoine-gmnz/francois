@@ -328,6 +328,7 @@ mod tests {
             tool: "Read".into(),
             summary: "README.md".into(),
             model: None,
+            plan: None,
         });
         env.emit_session(SessionEvent::AssistantDone {
             session_id: "s1".into(),

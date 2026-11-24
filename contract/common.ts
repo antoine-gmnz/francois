@@ -834,6 +834,18 @@ export interface PermissionAsk {
  * Absent ⇒ not an error, or a block/event from before this field existed (the
  * row then falls back to reading the meta).
  */
+/** plan-view: one step of the session's plan — set whole by `TodoWrite`, or
+ *  built up one task at a time by `TaskCreate`/`TaskUpdate`. */
+export type PlanItemStatus = 'pending' | 'in_progress' | 'completed';
+export interface PlanItem {
+  /** The CLI's task id (`"1"`, `"2"`…) on a `TaskCreate` task; absent on a `TodoWrite` step. */
+  id?: string;
+  content: string;
+  status: PlanItemStatus;
+  /** Present-continuous form ("Running tests") shown while the step is in progress. */
+  activeForm?: string;
+}
+
 export type ToolResultTone = 'error' | 'hookRefusal';
 
 /** One permission rule as it exists on disk (FR-16/FR-17). */
@@ -889,7 +901,8 @@ export type SessionEvent =
   | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId; text: string }
   // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
   // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
-  | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string }
+  // plan: plan-view — the checklist a `TodoWrite` call set; absent on every other tool.
+  | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string; plan?: PlanItem[] }
   | { type: 'tool.update'; sessionId: SessionId; blockId: BlockId; tool: RuntimeToolCall }
   | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10; tone: hook-diagnostics
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)

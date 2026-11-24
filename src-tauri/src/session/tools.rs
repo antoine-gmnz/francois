@@ -125,6 +125,27 @@ const TOOLS: &[(&str, ToolSpec)] = &[
             meta: meta_done,
         },
     ),
+    (
+        "TodoWrite",
+        ToolSpec {
+            summary: summary_plan,
+            meta: meta_done,
+        },
+    ),
+    (
+        "TaskCreate",
+        ToolSpec {
+            summary: summary_task_create,
+            meta: meta_done,
+        },
+    ),
+    (
+        "TaskUpdate",
+        ToolSpec {
+            summary: summary_task_update,
+            meta: meta_done,
+        },
+    ),
 ];
 
 fn tool_spec(tool: &str) -> Option<&'static ToolSpec> {
@@ -167,6 +188,158 @@ fn summary_url(input: &Value, _cwd: &str) -> String {
 
 fn summary_query(input: &Value, _cwd: &str) -> String {
     str_field(input, "query").unwrap_or("").to_string()
+}
+
+/// `TodoWrite`: its only field is an array, so the fallback would print raw
+/// JSON. The steps themselves ride the block's `plan` (see `tool_plan`).
+fn summary_plan(input: &Value, _cwd: &str) -> String {
+    let steps = tool_plan("TodoWrite", input)
+        .and_then(|p| p.as_array().cloned())
+        .unwrap_or_default();
+    let done = steps
+        .iter()
+        .filter(|s| s.get("status").and_then(Value::as_str) == Some("completed"))
+        .count();
+    let n = steps.len();
+    let plural = if n == 1 { "" } else { "s" };
+    format!("{n} step{plural} \u{00B7} {done} done")
+}
+
+/// plan-view: the checklist a `TodoWrite` call sets, normalized to
+/// `PlanItem[]` (contract/conversation-view.ts). `None` for every other tool,
+/// and for a `TodoWrite` whose `todos` is not an array. An entry without a
+/// `content` string is dropped; an unknown status reads as `pending`.
+pub fn tool_plan(tool: &str, input: &Value) -> Option<Value> {
+    if tool != "TodoWrite" {
+        return None;
+    }
+    let todos = input.get("todos")?.as_array()?;
+    let items = todos
+        .iter()
+        .filter_map(|t| {
+            let content = t.get("content")?.as_str()?;
+            let status = t
+                .get("status")
+                .and_then(Value::as_str)
+                .filter(|s| matches!(*s, "in_progress" | "completed"))
+                .unwrap_or("pending");
+            let mut item = serde_json::json!({ "content": content, "status": status });
+            if let Some(active) = t.get("activeForm").and_then(Value::as_str) {
+                item["activeForm"] = Value::String(active.into());
+            }
+            Some(item)
+        })
+        .collect();
+    Some(Value::Array(items))
+}
+
+fn summary_task_create(input: &Value, _cwd: &str) -> String {
+    truncate(str_field(input, "subject").unwrap_or(""), 60)
+}
+
+/// `#1 → completed`; without a status change, just the id.
+fn summary_task_update(input: &Value, _cwd: &str) -> String {
+    let id = str_field(input, "taskId").unwrap_or("?");
+    match str_field(input, "status") {
+        Some(status) => format!("#{id} \u{2192} {status}"),
+        None => format!("#{id}"),
+    }
+}
+
+/// plan-view: how one tool call changes the session's plan.
+///
+/// `TodoWrite` (CLIs up to ~2.1.2xx) restates the whole list every call.
+/// `TaskCreate`/`TaskUpdate` (verified against CLI 2.1.331) change ONE task
+/// each, so the session folds them into a running list (`apply_plan_op`) and
+/// every such block carries the post-op snapshot.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlanOp {
+    Snapshot(Value),
+    Create {
+        subject: String,
+        active_form: Option<String>,
+    },
+    Update {
+        task_id: String,
+        status: Option<String>,
+        subject: Option<String>,
+        active_form: Option<String>,
+    },
+}
+
+pub fn plan_op(tool: &str, input: &Value) -> Option<PlanOp> {
+    let owned = |k: &str| str_field(input, k).map(String::from);
+    match tool {
+        "TodoWrite" => tool_plan(tool, input).map(PlanOp::Snapshot),
+        "TaskCreate" => Some(PlanOp::Create {
+            subject: owned("subject")?,
+            active_form: owned("activeForm"),
+        }),
+        "TaskUpdate" => Some(PlanOp::Update {
+            task_id: owned("taskId")?,
+            status: owned("status"),
+            subject: owned("subject"),
+            active_form: owned("activeForm"),
+        }),
+        _ => None,
+    }
+}
+
+/// Fold `op` into `plan` (a `PlanItem[]` array). A created task takes the next
+/// sequential id — the CLI numbers a session's tasks `1, 2, 3…` and only says
+/// so in the result, which lands after the block is already drawn. An update
+/// for an id the list does not hold is ignored; `deleted` removes the task.
+pub fn apply_plan_op(plan: &mut Vec<Value>, op: &PlanOp) {
+    match op {
+        PlanOp::Snapshot(items) => *plan = items.as_array().cloned().unwrap_or_default(),
+        PlanOp::Create {
+            subject,
+            active_form,
+        } => {
+            let next = plan
+                .iter()
+                .filter_map(|t| t.get("id")?.as_str()?.parse::<u64>().ok())
+                .max()
+                .unwrap_or(0)
+                + 1;
+            let mut item = serde_json::json!({
+                "id": next.to_string(), "content": subject, "status": "pending",
+            });
+            if let Some(a) = active_form {
+                item["activeForm"] = Value::String(a.clone());
+            }
+            plan.push(item);
+        }
+        PlanOp::Update {
+            task_id,
+            status,
+            subject,
+            active_form,
+        } => {
+            let Some(i) = plan
+                .iter()
+                .position(|t| t.get("id").and_then(Value::as_str) == Some(task_id))
+            else {
+                return;
+            };
+            if status.as_deref() == Some("deleted") {
+                plan.remove(i);
+                return;
+            }
+            let item = &mut plan[i];
+            if let Some(s) = status.as_deref() {
+                if matches!(s, "pending" | "in_progress" | "completed") {
+                    item["status"] = Value::String(s.into());
+                }
+            }
+            if let Some(s) = subject {
+                item["content"] = Value::String(s.clone());
+            }
+            if let Some(a) = active_form {
+                item["activeForm"] = Value::String(a.clone());
+            }
+        }
+    }
 }
 
 /// Unknown tool: show the first non-internal string field, else the raw JSON.
@@ -395,6 +568,77 @@ mod tests {
     }
 
     #[test]
+    fn todo_write_summary_counts_steps_and_done() {
+        let input = json!({ "todos": [
+            { "content": "a", "status": "completed", "activeForm": "A-ing" },
+            { "content": "b", "status": "in_progress", "activeForm": "B-ing" },
+            { "content": "c", "status": "pending", "activeForm": "C-ing" },
+        ]});
+        assert_eq!(
+            tool_summary("TodoWrite", &input, ""),
+            "3 steps \u{00B7} 1 done"
+        );
+        assert_eq!(tool_meta("TodoWrite", &input, ""), "done");
+    }
+
+    #[test]
+    fn tool_plan_normalizes_todo_write_and_ignores_other_tools() {
+        let input = json!({ "todos": [
+            { "content": "a", "status": "completed", "activeForm": "A-ing" },
+            { "content": "b", "status": "weird" },
+            { "status": "pending" },
+        ]});
+        assert_eq!(
+            tool_plan("TodoWrite", &input),
+            Some(json!([
+                { "content": "a", "status": "completed", "activeForm": "A-ing" },
+                { "content": "b", "status": "pending" },
+            ]))
+        );
+        assert_eq!(tool_plan("Read", &input), None);
+        assert_eq!(tool_plan("TodoWrite", &json!({ "todos": "x" })), None);
+    }
+
+    #[test]
+    fn task_tools_fold_into_a_running_plan() {
+        let mut plan = Vec::new();
+        for subject in ["Boil water", "Steep", "Serve"] {
+            let op = plan_op(
+                "TaskCreate",
+                &json!({ "subject": subject, "description": "d" }),
+            );
+            apply_plan_op(&mut plan, &op.unwrap());
+        }
+        let update = |id: &str, status: &str| {
+            plan_op("TaskUpdate", &json!({ "taskId": id, "status": status })).unwrap()
+        };
+        apply_plan_op(&mut plan, &update("1", "completed"));
+        apply_plan_op(&mut plan, &update("2", "in_progress"));
+        apply_plan_op(&mut plan, &update("9", "completed")); // unknown id: ignored
+        apply_plan_op(&mut plan, &update("3", "deleted"));
+        assert_eq!(
+            plan,
+            vec![
+                json!({ "id": "1", "content": "Boil water", "status": "completed" }),
+                json!({ "id": "2", "content": "Steep", "status": "in_progress" }),
+            ]
+        );
+        assert_eq!(
+            tool_summary(
+                "TaskUpdate",
+                &json!({ "taskId": "2", "status": "completed" }),
+                ""
+            ),
+            "#2 \u{2192} completed"
+        );
+        assert_eq!(
+            tool_summary("TaskCreate", &json!({ "subject": "Boil water" }), ""),
+            "Boil water"
+        );
+        assert_eq!(plan_op("Read", &json!({})), None);
+    }
+
+    #[test]
     fn read_summary_relative_to_cwd() {
         let input = json!({ "file_path": "/proj/acme/src/x.ts" });
         assert_eq!(tool_summary("Read", &input, "/proj/acme"), "src/x.ts");
@@ -441,6 +685,9 @@ mod tests {
                 "Agent",
                 "WebFetch",
                 "WebSearch",
+                "TodoWrite",
+                "TaskCreate",
+                "TaskUpdate",
             ]
         );
         for name in &names {

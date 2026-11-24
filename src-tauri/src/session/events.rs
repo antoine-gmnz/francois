@@ -116,6 +116,10 @@ pub enum SessionEvent {
         /// path and `getTranscript` agree on "absent ⇒ inherits the session's".
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// plan-view: the `PlanItem[]` a `TodoWrite` call set — omitted on
+        /// every other tool, matching `ToolConversationBlock.plan`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        plan: Option<Value>,
     },
     #[serde(rename = "tool.update")]
     ToolUpdate {

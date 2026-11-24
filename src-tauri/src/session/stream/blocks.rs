@@ -374,6 +374,7 @@ fn finish_tool_block(
         summary,
         is_task: rec.is_task,
         model,
+        plan: crate::session::tools::plan_op(&rec.tool, &rec.input),
     });
     // code-editor-agents FR-1: announced as soon as the input is complete —
     // before any approval or execution. A block stops once, so this is

@@ -140,6 +140,7 @@ fn buf_block(
         // pi-transcript-events: an agent-tab block is never Pi-produced (Pi
         // has no subagent support, non-goals §2) — always absent here.
         execution: None,
+        plan: None,
         attachments: None,
         outcome: None,
         tone: None,
