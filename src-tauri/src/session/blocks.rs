@@ -79,6 +79,10 @@ pub fn classify_block(b: &BufBlock) -> Value {
             if let Some(execution) = &b.execution {
                 o["execution"] = execution.clone();
             }
+            // plan-view: present only on a `TodoWrite` block.
+            if let Some(plan) = &b.plan {
+                o["plan"] = plan.clone();
+            }
             // hook-diagnostics: `ToolConversationBlock.tone` — set only when
             // the result was an error; absent otherwise (pre-feature parity).
             if let Some(tone) = &b.tone {
@@ -278,6 +282,17 @@ mod tests {
         assert_eq!(s.block_buffer.len(), 2);
         assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
         assert_eq!(classify_block(&s.block_buffer[1])["kind"], "tool");
+    }
+
+    #[test]
+    fn classify_block_tool_carries_plan_only_when_set() {
+        let mut s = test_session();
+        s.buf_tool("t1", "Read".into(), "file.rs".into(), false, None);
+        s.buf_tool("t2", "TodoWrite".into(), "1 step".into(), false, None);
+        let plan = serde_json::json!([{ "content": "a", "status": "pending" }]);
+        s.block_buffer[1].plan = Some(plan.clone());
+        assert!(classify_block(&s.block_buffer[0]).get("plan").is_none());
+        assert_eq!(classify_block(&s.block_buffer[1])["plan"], plan);
     }
 
     #[test]

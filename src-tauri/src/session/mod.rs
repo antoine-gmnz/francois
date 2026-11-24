@@ -689,6 +689,9 @@ pub struct BufBlock {
     /// pi-transcript-events FR-3/FR-4: `ToolConversationBlock.execution`,
     /// serialized `RuntimeToolCall` JSON. Only ever set on a `Tool` block.
     execution: Option<Value>,
+    /// plan-view: `ToolConversationBlock.plan`, serialized `PlanItem[]` JSON.
+    /// Only ever set on a `Tool` block for a `TodoWrite` call.
+    plan: Option<Value>,
     /// pi-transcript-events FR-7: `UserConversationBlock.attachments`,
     /// serialized `RuntimeAttachmentRef[]` JSON. Only ever set on a `User` block.
     attachments: Option<Value>,
@@ -733,6 +736,7 @@ impl BufBlock {
             streaming: false,
             at: now_ms(),
             execution: None,
+            plan: None,
             attachments: None,
             outcome: None,
             tone: None,

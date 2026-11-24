@@ -6,7 +6,7 @@
 // Physical Tauri binding: `francois:conversation:getTranscript` → command
 // `conversation_get_transcript`.
 
-import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef, ToolResultTone } from './common';
+import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef, ToolResultTone, PlanItem } from './common';
 import type { CommandConversationBlock } from './interactive-commands';
 import type { PermissionConversationBlock } from './permission-guardrails';
 import type { QuestionConversationBlock } from './session-questions';
@@ -88,6 +88,11 @@ export interface ToolConversationBlock extends ConversationBlockBase {
    * absent on tool blocks from runtimes that predate this field.
    */
   execution?: RuntimeToolCall;
+  /**
+   * plan-view: the whole checklist this `TodoWrite` call set (each call
+   * carries the full list, not a delta). Absent on every other tool.
+   */
+  plan?: PlanItem[];
 }
 
 export interface SubagentConversationBlock extends ConversationBlockBase {

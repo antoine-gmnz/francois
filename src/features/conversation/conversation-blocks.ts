@@ -18,6 +18,7 @@ import type {
   SessionQuestion,
   SessionStatus,
   SlashCommandInfo,
+  PlanItem,
   ToolResultTone,
 } from '../../../contract/common';
 import {
@@ -165,7 +166,7 @@ export type TranscriptAction =
   // pi-transcript-events FR-9: `outcome` rides the Pi runtime's
   // assistant.complete event only — a plain Claude assistant.done carries none.
   | { t: 'assistantDone'; blockId: string; text: string; outcome?: 'complete' | 'interrupted' | 'error' }
-  | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string }
+  | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string; plan?: PlanItem[] } // plan: plan-view
   | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // hasDetail: command-inspect FR-10; tone: hook-diagnostics
   // pi-transcript-events FR-1/FR-3/FR-4: a normalized RuntimeToolCall snapshot —
   // insert-or-settle, keyed on the tool call's stable blockId.
@@ -406,7 +407,9 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
     }
     case 'toolStart': {
       if (idx(a.blockId) !== -1) return state;
-      return { blocks: [...state.blocks, classifyToolStart(a.tool, a.summary, a.blockId, a.model)], windowSize: state.windowSize };
+      const started = classifyToolStart(a.tool, a.summary, a.blockId, a.model);
+      const block = a.plan !== undefined && started.kind === 'tool' ? { ...started, plan: a.plan } : started;
+      return { blocks: [...state.blocks, block], windowSize: state.windowSize };
     }
     case 'toolDone': {
       const i = idx(a.blockId);
@@ -428,7 +431,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       }
       const b = state.blocks[i];
       if (b.kind !== 'tool') return state;
-      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail });
+      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail, ...(b.plan !== undefined ? { plan: b.plan } : {}) });
     }
     case 'notice': {
       // FR-5: keyed idempotent upsert, like every other rule in this reducer —
@@ -719,7 +722,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text, offset: e.offset }),
   'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId, text: e.text }),
   'tool.start': (dispatch, _setters, e) =>
-    dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model }),
+    dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model, ...(e.plan !== undefined ? { plan: e.plan } : {}) }),
   'tool.update': (dispatch, _setters, e) => dispatch({ t: 'toolUpdate', blockId: e.blockId, tool: e.tool }),
   'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail, tone: e.tone }),
   // interactive-commands FR-20: pending command block (loading card)

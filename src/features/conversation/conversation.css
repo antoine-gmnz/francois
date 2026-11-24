@@ -990,6 +990,64 @@
   border-top: 1px solid var(--line-subtle);
 }
 
+/* plan-view: the latest TodoWrite checklist — the same card surface as the
+   rail, but one undivided list, because the steps are one thing. Colour is
+   state only: the step in flight is the live thing (--state-running), done
+   steps recede, pending ones wait in the faint tone. */
+.plancard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 0;
+  padding: var(--space-12) var(--space-16);
+  list-style: none;
+  background: var(--bg-rail);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-6);
+}
+.plancard__step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+  font: var(--type-ui);
+}
+.plancard__icon {
+  flex-shrink: 0;
+}
+.plancard__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.plancard__step--completed {
+  color: var(--text-faint);
+}
+.plancard__step--in_progress {
+  color: var(--text-primary);
+}
+.plancard__step--in_progress .plancard__icon {
+  color: var(--state-running);
+}
+.plancard__step--pending {
+  color: var(--text-secondary);
+}
+.plancard__step--pending .plancard__icon {
+  color: var(--text-faint);
+}
+.plancard__icon--spin {
+  animation: plancard-spin 1.1s linear infinite;
+}
+@keyframes plancard-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plancard__icon--spin {
+    animation: none;
+  }
+}
+
 /* One call: glyph · tool · target · result. The result stopped being a
    ` · 14 failed` tail on a sentence and became chips at the right edge, so a
    column of calls can be scanned for the one that went wrong without reading

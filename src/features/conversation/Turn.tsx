@@ -11,9 +11,11 @@
 
 import { memo, useState } from 'react';
 import { AssistantBody, SubagentBanner, ToolRail, UserBody } from './Block';
+import { PlanCard } from './PlanCard';
 import {
   formatClock,
   isFreshPrompt,
+  turnIsStreaming,
   turnMeta,
   turnStartedAt,
   type TranscriptTurn,
@@ -38,6 +40,7 @@ function TurnImpl({
   now,
   sessionId,
   onOpenShell,
+  planBlockId,
 }: {
   turn: TranscriptTurn;
   /** The session's model, shown on a reply. Absent on an agent trail or before meta lands. */
@@ -48,6 +51,9 @@ function TurnImpl({
   sessionId: string;
   /** command-inspect FR-16: threaded to each tool row's StepDetailPanel — see ConversationView. */
   onOpenShell?: () => void;
+  /** plan-view: the transcript's latest plan block, passed ONLY to the turn
+   *  holding it (so a new plan re-renders two turns, not every one). */
+  planBlockId?: string;
 }) {
   const startedAt = turnStartedAt(turn);
   const meta = turnMeta(turn, now);
@@ -72,7 +78,7 @@ function TurnImpl({
           <span className="turn__rule" />
           {right !== '' && <span className="turn__meta">{right}</span>}
         </div>
-        <div className="turn__body">{renderBody(turn.blocks, sessionId, onOpenShell)}</div>
+        <div className="turn__body">{renderBody(turn.blocks, sessionId, onOpenShell, planBlockId, turnIsStreaming(turn))}</div>
       </div>
     </div>
   );
@@ -86,7 +92,13 @@ export default memo(TurnImpl);
  * indented UNDER, so folding them in would lose the ordering that makes a turn
  * readable as "said this, did that, then said this".
  */
-function renderBody(blocks: TurnBlock[], sessionId: string, onOpenShell?: () => void) {
+function renderBody(
+  blocks: TurnBlock[],
+  sessionId: string,
+  onOpenShell: (() => void) | undefined,
+  planBlockId: string | undefined,
+  live: boolean,
+) {
   const out: React.ReactNode[] = [];
   let run: ToolConversationBlock[] = [];
   const flush = () => {
@@ -95,6 +107,13 @@ function renderBody(blocks: TurnBlock[], sessionId: string, onOpenShell?: () => 
     run = [];
   };
   for (const b of blocks) {
+    // plan-view: the latest plan breaks the run and stands as its own card;
+    // an earlier one stays a compact row on the rail.
+    if (b.kind === 'tool' && b.blockId === planBlockId && b.plan !== undefined) {
+      flush();
+      out.push(<PlanCard key={b.blockId} plan={b.plan} live={live} />);
+      continue;
+    }
     if (b.kind === 'tool') {
       run.push(b);
       continue;

@@ -125,6 +125,13 @@ const TOOLS: &[(&str, ToolSpec)] = &[
             meta: meta_done,
         },
     ),
+    (
+        "TodoWrite",
+        ToolSpec {
+            summary: summary_plan,
+            meta: meta_done,
+        },
+    ),
 ];
 
 fn tool_spec(tool: &str) -> Option<&'static ToolSpec> {
@@ -167,6 +174,49 @@ fn summary_url(input: &Value, _cwd: &str) -> String {
 
 fn summary_query(input: &Value, _cwd: &str) -> String {
     str_field(input, "query").unwrap_or("").to_string()
+}
+
+/// `TodoWrite`: its only field is an array, so the fallback would print raw
+/// JSON. The steps themselves ride the block's `plan` (see `tool_plan`).
+fn summary_plan(input: &Value, _cwd: &str) -> String {
+    let steps = tool_plan("TodoWrite", input)
+        .and_then(|p| p.as_array().cloned())
+        .unwrap_or_default();
+    let done = steps
+        .iter()
+        .filter(|s| s.get("status").and_then(Value::as_str) == Some("completed"))
+        .count();
+    let n = steps.len();
+    let plural = if n == 1 { "" } else { "s" };
+    format!("{n} step{plural} \u{00B7} {done} done")
+}
+
+/// plan-view: the checklist a `TodoWrite` call sets, normalized to
+/// `PlanItem[]` (contract/conversation-view.ts). `None` for every other tool,
+/// and for a `TodoWrite` whose `todos` is not an array. An entry without a
+/// `content` string is dropped; an unknown status reads as `pending`.
+pub fn tool_plan(tool: &str, input: &Value) -> Option<Value> {
+    if tool != "TodoWrite" {
+        return None;
+    }
+    let todos = input.get("todos")?.as_array()?;
+    let items = todos
+        .iter()
+        .filter_map(|t| {
+            let content = t.get("content")?.as_str()?;
+            let status = t
+                .get("status")
+                .and_then(Value::as_str)
+                .filter(|s| matches!(*s, "in_progress" | "completed"))
+                .unwrap_or("pending");
+            let mut item = serde_json::json!({ "content": content, "status": status });
+            if let Some(active) = t.get("activeForm").and_then(Value::as_str) {
+                item["activeForm"] = Value::String(active.into());
+            }
+            Some(item)
+        })
+        .collect();
+    Some(Value::Array(items))
 }
 
 /// Unknown tool: show the first non-internal string field, else the raw JSON.
@@ -395,6 +445,38 @@ mod tests {
     }
 
     #[test]
+    fn todo_write_summary_counts_steps_and_done() {
+        let input = json!({ "todos": [
+            { "content": "a", "status": "completed", "activeForm": "A-ing" },
+            { "content": "b", "status": "in_progress", "activeForm": "B-ing" },
+            { "content": "c", "status": "pending", "activeForm": "C-ing" },
+        ]});
+        assert_eq!(
+            tool_summary("TodoWrite", &input, ""),
+            "3 steps \u{00B7} 1 done"
+        );
+        assert_eq!(tool_meta("TodoWrite", &input, ""), "done");
+    }
+
+    #[test]
+    fn tool_plan_normalizes_todo_write_and_ignores_other_tools() {
+        let input = json!({ "todos": [
+            { "content": "a", "status": "completed", "activeForm": "A-ing" },
+            { "content": "b", "status": "weird" },
+            { "status": "pending" },
+        ]});
+        assert_eq!(
+            tool_plan("TodoWrite", &input),
+            Some(json!([
+                { "content": "a", "status": "completed", "activeForm": "A-ing" },
+                { "content": "b", "status": "pending" },
+            ]))
+        );
+        assert_eq!(tool_plan("Read", &input), None);
+        assert_eq!(tool_plan("TodoWrite", &json!({ "todos": "x" })), None);
+    }
+
+    #[test]
     fn read_summary_relative_to_cwd() {
         let input = json!({ "file_path": "/proj/acme/src/x.ts" });
         assert_eq!(tool_summary("Read", &input, "/proj/acme"), "src/x.ts");
@@ -441,6 +523,7 @@ mod tests {
                 "Agent",
                 "WebFetch",
                 "WebSearch",
+                "TodoWrite",
             ]
         );
         for name in &names {

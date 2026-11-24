@@ -41,6 +41,7 @@ pub(super) fn apply(
             summary,
             is_task,
             model,
+            plan,
         } => {
             engine.with_session_mut(id, |s| {
                 s.buf_tool(
@@ -49,7 +50,10 @@ pub(super) fn apply(
                     summary.clone(),
                     is_task,
                     model.clone(),
-                )
+                );
+                if let Some(b) = s.block_buffer.last_mut().filter(|_| plan.is_some()) {
+                    b.plan = plan.clone();
+                }
             });
             env.emit_session(SessionEvent::ToolStart {
                 session_id: id.into(),
@@ -57,6 +61,7 @@ pub(super) fn apply(
                 tool,
                 summary,
                 model,
+                plan,
             });
         }
         RuntimeEvent::FileTouched {

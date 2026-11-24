@@ -76,6 +76,7 @@ fn apply(
                     tool,
                     summary,
                     model: None,
+                    plan: None,
                 },
             );
         }

@@ -115,6 +115,7 @@ pub(super) fn emit_tool_block(
             tool: tool.to_string(),
             summary: summary.to_string(),
             model: None,
+            plan: None,
         },
     );
 }
