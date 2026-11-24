@@ -76,6 +76,17 @@ pub fn result_closes_channel(bg_tasks: usize, parked: usize) -> bool {
     bg_tasks == 0 && parked == 0
 }
 
+/// The decision `close_or_hold_channel` makes at a `result` line. `held` ⇔ an
+/// earlier result already held the channel open (the closer thread is armed).
+/// A held channel is never closed at a later result: that result belongs to a
+/// follow-up turn the CLI ran for one background task, and the CLI may still
+/// owe another for a task that drained during it. Closing on the spot skipped
+/// the quiet window, and every ask in that owed turn died on `Stream closed`
+/// before it reached the transcript. The armed closer closes it instead.
+pub fn result_may_close_now(bg_tasks: usize, parked: usize, held: bool) -> bool {
+    !held && result_closes_channel(bg_tasks, parked)
+}
+
 /// FR-2: the held-open channel's close decision. Pure; unit-tested.
 /// `settled` ⇔ the CLI's last turn has emitted its result and nothing has
 /// started since (see the block comment above).
@@ -111,12 +122,12 @@ pub fn close_or_hold_channel(
     armed: &mut bool,
 ) {
     let parked = parked_count(pending_questions, pending_permissions);
-    if result_closes_channel(bg_tasks.load(Ordering::Relaxed), parked) {
+    if result_may_close_now(bg_tasks.load(Ordering::Relaxed), parked, *armed) {
         *stdin.lock().unwrap() = None;
         return;
     }
     if *armed {
-        return;
+        return; // the closer thread owns the close from here (quiet window)
     }
     *armed = true;
     let stdin = stdin.clone();
@@ -294,6 +305,22 @@ mod tests {
         // An ask already parked on a card must never have its channel pulled.
         assert!(!result_closes_channel(0, 1));
         assert!(!result_closes_channel(2, 3));
+    }
+
+    #[test]
+    fn a_follow_up_result_never_closes_a_held_channel_on_the_spot() {
+        // Regression (long sessions, many background subagents): A and B run in
+        // the background; A reports, the CLI runs a follow-up turn, and B drains
+        // during it. That follow-up's `result` saw `bg == 0 && parked == 0` and
+        // closed stdin immediately — skipping the quiet window — while the CLI
+        // still owed a turn for B. Every ask raised in it (an AskUserQuestion,
+        // a permission) died on `AbortError: Stream closed`, never reached the
+        // transcript, and the session went idle with its question lost.
+        // Once held, only the closer thread (quiet window) may close.
+        assert!(result_may_close_now(0, 0, false));
+        assert!(!result_may_close_now(0, 0, true));
+        assert!(!result_may_close_now(1, 0, false));
+        assert!(!result_may_close_now(0, 1, false));
     }
 
     #[test]
