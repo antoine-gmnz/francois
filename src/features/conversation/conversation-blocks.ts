@@ -33,6 +33,7 @@ import type { CommandConversationBlock } from '../../../contract/interactive-com
 import type { PermissionConversationBlock } from '../../../contract/permission-guardrails';
 import type { QuestionConversationBlock } from '../../../contract/session-questions';
 import { runtimeToolBlock } from './runtime-tool-blocks';
+import { applyThinking, THINKING_EVENT_HANDLERS, type ThinkingAction } from './thinking-blocks';
 
 // mac-text-selection FR-1: the transcript container overrides the app-wide
 // `body { user-select: none }` chrome rule (styles.css) so transcript CONTENT
@@ -42,10 +43,7 @@ import { runtimeToolBlock } from './runtime-tool-blocks';
 // already honor it unprefixed, so the -webkit- form is additive, not a
 // replacement. Exported (rather than inlined in ConversationView's JSX) so
 // the fix is unit-testable without a DOM environment.
-export const TRANSCRIPT_TEXT_SELECT_STYLE: { userSelect: 'text'; WebkitUserSelect: 'text' } = {
-  userSelect: 'text',
-  WebkitUserSelect: 'text',
-};
+export const TRANSCRIPT_TEXT_SELECT_STYLE: { userSelect: 'text'; WebkitUserSelect: 'text' } = { userSelect: 'text', WebkitUserSelect: 'text' };
 
 export interface TranscriptState {
   blocks: ConversationBlock[];
@@ -67,7 +65,7 @@ export const RENDER_WINDOW = 200;
  * is a turn BOUNDARY, never a block a run continues across.
  */
 function isOpenTurnBlock(b: ConversationBlock): boolean {
-  return b.kind === 'assistant' || b.kind === 'tool' || b.kind === 'subagent';
+  return b.kind === 'assistant' || b.kind === 'thinking' || b.kind === 'tool' || b.kind === 'subagent';
 }
 
 /**
@@ -187,7 +185,8 @@ export type TranscriptAction =
   // transcript-scale FR-13: prepend a fetched page, oldest-first, deduped by
   // blockId; the newly-added ones join the render window too (§ design brief
   // flow 3: they appear immediately above the row, not merely held).
-  | { t: 'prepend'; blocks: ConversationBlock[] };
+  | { t: 'prepend'; blocks: ConversationBlock[] }
+  | ThinkingAction; // thinking-blocks.ts
 
 /** True iff `text` is exactly the bare `/clear` command (no argument). */
 export function isClearCommand(text: string): boolean {
@@ -210,6 +209,7 @@ export const CARD_KIND_COMMAND: { [K in CommandCard['kind']]: (card: CardOfKind<
   status: () => 'status',
   help: () => 'help',
   notice: () => '', // notices carry no command token
+  compaction: () => 'compact', // audit C4: the divider a /compact (or auto) leaves
 };
 
 /** Command token (without '/') a card answers — for insert-if-unseen outputs. */
@@ -590,6 +590,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       if (fresh.length === 0) return state; // FR-13: never duplicate a block already held
       return { blocks: [...fresh, ...state.blocks], windowSize: state.windowSize + fresh.length };
     }
+    default: return applyThinking(state, a); // thinkingStart / thinkingDone (thinking-blocks.ts)
   }
 }
 
@@ -721,6 +722,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   },
   'assistant.delta': (dispatch, _setters, e) => dispatch({ t: 'delta', blockId: e.blockId, text: e.text, offset: e.offset }),
   'assistant.done': (dispatch, _setters, e) => dispatch({ t: 'assistantDone', blockId: e.blockId, text: e.text }),
+  ...THINKING_EVENT_HANDLERS, // thinking.start / thinking.done
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model, ...(e.plan !== undefined ? { plan: e.plan } : {}) }),
   'tool.update': (dispatch, _setters, e) => dispatch({ t: 'toolUpdate', blockId: e.blockId, tool: e.tool }),

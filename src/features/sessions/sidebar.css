@@ -534,6 +534,10 @@
 .roster-row__sub--danger {
   color: var(--state-danger);
 }
+/* audit C4: waiting out a provider retry — degraded, not failed. */
+.roster-row__sub--retry {
+  color: var(--warn);
+}
 .roster-row__command {
   display: flex;
   min-width: 0;

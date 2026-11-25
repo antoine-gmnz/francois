@@ -103,6 +103,49 @@ pub struct RuntimeMetrics {
     #[serde(rename = "measuredAt")]
     pub measured_at: u64,
     pub stale: bool,
+    /// audit C2: the runtime's per-model split of the same thread totals
+    /// (Claude's `result.modelUsage`), sorted by model. Omitted when empty, and
+    /// a pre-feature persisted record loads as empty.
+    #[serde(rename = "byModel", default, skip_serializing_if = "Vec::is_empty")]
+    pub by_model: Vec<ModelUsageMetrics>,
+}
+
+/// audit C4: the provider retry a turn is waiting out. Mirrors
+/// contract/common.ts `SessionRetry` (on `SessionMeta.retry`); every optional
+/// key is omitted, never null.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct SessionRetry {
+    pub attempt: u32,
+    #[serde(rename = "maxRetries", skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(rename = "errorStatus", skip_serializing_if = "Option::is_none")]
+    pub error_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// epoch ms the next attempt is due (`since + retry_delay_ms`).
+    #[serde(rename = "retryAt", skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<u64>,
+    /// epoch ms the retry was observed.
+    pub since: u64,
+}
+
+/// audit C2: one model's slice of a thread's usage. Mirrors contract/common.ts
+/// `ModelUsageMetrics` — `None` is UNKNOWN, never zero.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ModelUsageMetrics {
+    pub model: String,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: Option<u64>,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: Option<u64>,
+    #[serde(rename = "cacheReadTokens")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(rename = "cacheWriteTokens")]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(rename = "costUsd")]
+    pub cost_usd: Option<f64>,
+    #[serde(rename = "contextWindow")]
+    pub context_window: Option<u64>,
 }
 
 /// pi-transcript-events FR-7: a user-attached file/image, resolved against the
@@ -375,6 +418,7 @@ mod tests {
             cost_basis: "estimated".into(),
             measured_at: 1_000,
             stale: false,
+            by_model: Vec::new(),
         };
         let metrics_value = serde_json::to_value(RuntimeEventPayload::Metrics {
             metrics: metrics.clone(),
@@ -389,5 +433,44 @@ mod tests {
         let bytes = serde_json::to_vec(&metrics).unwrap();
         let back: RuntimeMetrics = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back, metrics);
+        assert!(metrics_value["metrics"].get("byModel").is_none()); // empty ⇒ omitted
+    }
+
+    /// audit C2: the per-model split round-trips under the contract's names,
+    /// and a record persisted before it existed still loads (as empty).
+    #[test]
+    fn runtime_metrics_by_model_round_trips_and_defaults_empty() {
+        let metrics = RuntimeMetrics {
+            input_tokens: None,
+            output_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            context_tokens: None,
+            context_window: None,
+            context_basis: "unknown".into(),
+            cost_usd: Some(0.12),
+            cost_basis: "estimated".into(),
+            measured_at: 1,
+            stale: false,
+            by_model: vec![ModelUsageMetrics {
+                model: "claude-sonnet-5".into(),
+                input_tokens: Some(14),
+                output_tokens: Some(1005),
+                cache_read_tokens: Some(246_808),
+                cache_write_tokens: Some(6298),
+                cost_usd: Some(0.12),
+                context_window: None,
+            }],
+        };
+        let v = serde_json::to_value(&metrics).unwrap();
+        assert_eq!(v["byModel"][0]["model"], "claude-sonnet-5");
+        assert_eq!(v["byModel"][0]["cacheWriteTokens"], 6298);
+        assert_eq!(v["byModel"][0]["contextWindow"], Value::Null);
+        let back: RuntimeMetrics = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(back, metrics);
+        let mut legacy = v;
+        legacy.as_object_mut().unwrap().remove("byModel");
+        let back: RuntimeMetrics = serde_json::from_value(legacy).unwrap();
+        assert!(back.by_model.is_empty());
     }
 }

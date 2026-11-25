@@ -25,6 +25,7 @@ import type { ExtensionId } from '../../contract/extensions';
 import { CloudChip } from '../features/cloud-sessions/CloudChip';
 import ExtensionsBarMenu from '../features/extensions/ExtensionsBarMenu';
 import { RemoteControlBadge } from '../features/remote/RemoteControlBadge';
+import { activeRetry, retryLabel } from '../features/sessions/retry-status';
 import { worktreeChipLabel } from '../features/sessions/worktree';
 import { agentTabLabel, tabIdFor, type AgentTabRef } from '../lib/agent-tab';
 import { sessionInterrupt } from '../lib/api';
@@ -102,6 +103,7 @@ export default function SessionHeader({
 
   const elapsedMs = busy ? clockNow - active.startedAt : Math.max(0, active.lastActivityAt - active.startedAt);
   const kind = stateKindForStatus(active.status);
+  const retry = activeRetry(active);
   const meta = sessionMetaLine(active, home, active.worktree ? worktreeChipLabel(active.worktree) : null);
 
   return (
@@ -117,11 +119,19 @@ export default function SessionHeader({
           >
             {active.name}
           </button>
-          <span className={`session-header__state session-header__state--${kind}`}>
-            <StateIcon kind={kind} size={11} />
-            {sessionStateLabel(active.status)}
-            {busy && ` · ${formatElapsed(elapsedMs)}`}
-          </span>
+          {retry ? (
+            // audit C4: a turn waiting out a provider retry reads as such, not "Running"
+            <span className="session-header__state session-header__state--retrying" title={`Turn running ${formatElapsed(elapsedMs)}`}>
+              <StateIcon kind={kind} size={11} />
+              {retryLabel(retry, clockNow)}
+            </span>
+          ) : (
+            <span className={`session-header__state session-header__state--${kind}`}>
+              <StateIcon kind={kind} size={11} />
+              {sessionStateLabel(active.status)}
+              {busy && ` · ${formatElapsed(elapsedMs)}`}
+            </span>
+          )}
         </div>
         <div className="session-header__meta" title={meta.title}>
           {meta.branch !== null && <Icon name="branch" size={12} />}

@@ -358,6 +358,14 @@ export const TRANSCRIPT: ConversationBlock[] = [
     summary: 'state|nonce  ·  src/auth',
     meta: '18 matches in 6 files',
   },
+  // thinking-blocks: a settled thought, collapsed under its "Thinking" disclosure.
+  {
+    kind: 'thinking',
+    blockId: `${b(4)}-thinking`,
+    at: at(380),
+    isStreaming: false,
+    text: 'The callback reads `state` off `req.query` and deletes it once validated. `withRetry()` takes a request factory, and the factory closes over `req` — so attempt two rebuilds from a query that no longer has `state`. Capturing the params before the first attempt fixes it without touching validation.',
+  },
   {
     kind: 'assistant',
     blockId: b(5),

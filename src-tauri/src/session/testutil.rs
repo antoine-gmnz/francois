@@ -206,6 +206,7 @@ pub fn test_session() -> Session {
         pi_resume: None,
         metrics: None,
         model_efforts: Vec::new(),
+        retry: None,
     }
 }
 

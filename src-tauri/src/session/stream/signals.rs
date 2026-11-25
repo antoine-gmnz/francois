@@ -4,6 +4,7 @@
 //! know (audit R2).
 
 use crate::session::application::RuntimeEvent;
+use crate::session::events::ModelUsageMetrics;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -55,11 +56,13 @@ const IGNORED_SYSTEM_SUBTYPES: &[&str] = &[
 /// before it reaches a log line.
 pub(crate) const MAX_KIND_LEN: usize = 64;
 
-fn sanitise(raw: &str) -> String {
+/// Also used by the Codex / Grok translators (audit R2) for their own method
+/// and event names, which is why `/` survives (`item/started`).
+pub(crate) fn sanitise(raw: &str) -> String {
     raw.chars()
         .take(MAX_KIND_LEN)
         .map(|c| {
-            if c.is_ascii_alphanumeric() || "_-.".contains(c) {
+            if c.is_ascii_alphanumeric() || "_-./".contains(c) {
                 c
             } else {
                 '?'
@@ -123,21 +126,34 @@ pub(crate) fn thread_cost_total(v: &Value) -> Option<f64> {
 }
 
 /// audit C4: `system` `api_retry` / `compact_boundary` → runtime progress.
-/// Field names follow the Agent SDK reference (`SDKAPIRetryMessage`:
-/// `attempt`, `max_retries`, `retry_delay_ms`, `error`;
-/// `SDKCompactBoundaryMessage`: `compact_metadata.{trigger, pre_tokens}`) —
-/// recalled, not confirmed against a capture, so every field is optional.
+/// Field names read off the CLI 2.1.332 bundle's emitters: `api_retry` carries
+/// `attempt`, `max_retries`, `retry_delay_ms`, `error_status` (HTTP status or
+/// null) and `error` (a category: `rate_limit`, `overloaded`, `server_error`,
+/// …); `compact_boundary` carries `compact_metadata.{trigger: manual|auto,
+/// pre_tokens, post_tokens?}`. No capture holds either line yet, so every
+/// field stays optional.
 pub(crate) fn parse_system_progress(v: &Value) -> Option<RuntimeEvent> {
+    let u32_at = |key: &str| {
+        v.get(key)
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+    };
     match v.get("subtype").and_then(Value::as_str)? {
         "api_retry" => Some(RuntimeEvent::Retry {
             // emitted when a retry is SCHEDULED: the CLI is now waiting out the delay
             state: "waiting".into(),
-            attempt: v
-                .get("attempt")
-                .and_then(Value::as_u64)
-                .and_then(|a| u32::try_from(a).ok())
-                .unwrap_or(1),
+            attempt: u32_at("attempt").unwrap_or(1),
             delay_ms: v.get("retry_delay_ms").and_then(Value::as_u64),
+            max_retries: u32_at("max_retries").filter(|n| *n > 0),
+            error_status: v
+                .get("error_status")
+                .and_then(Value::as_u64)
+                .and_then(|n| u16::try_from(n).ok()),
+            error: v
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|e| !e.is_empty())
+                .map(sanitise),
         }),
         // emitted once the compaction is done (it marks the boundary)
         "compact_boundary" => Some(RuntimeEvent::Compaction {
@@ -147,9 +163,55 @@ pub(crate) fn parse_system_progress(v: &Value) -> Option<RuntimeEvent> {
                 .and_then(Value::as_str)
                 == Some("auto"),
             message: None,
+            pre_tokens: v
+                .pointer("/compact_metadata/pre_tokens")
+                .and_then(Value::as_u64),
+            boundary_id: v
+                .get("uuid")
+                .and_then(Value::as_str)
+                .filter(|u| !u.is_empty())
+                .map(sanitise),
         }),
         _ => None,
     }
+}
+
+/// Past this many models a `modelUsage` map is truncated — the CLI decides how
+/// many keys arrive, and each one becomes a persisted row.
+pub(crate) const MAX_USAGE_MODELS: usize = 16;
+
+/// audit C2: a `result` line's `modelUsage` map → one entry per model, sorted
+/// by name so the persisted vector (and the golden file) is deterministic.
+///
+/// Semantics (the CLI 2.1.332 SDK schema's own description of `modelUsage`):
+/// per-model totals sharing `total_cost_usd`'s lifecycle — cumulative across
+/// turns, a resumed session continues from the totals its transcript saved,
+/// `/clear` resets them, and a crash/startup-error result may carry zeroes. So
+/// the projection replaces each model's entry under the same max guard as the
+/// cost; in the capture the single model's `costUSD` equals `total_cost_usd`.
+/// Absent / not an object / empty ⇒ nothing.
+pub(crate) fn thread_model_usage(v: &Value) -> Option<Vec<ModelUsageMetrics>> {
+    let map = v.get("modelUsage")?.as_object()?;
+    let count = |entry: &Value, key: &str| entry.get(key).and_then(Value::as_u64);
+    let mut models: Vec<ModelUsageMetrics> = map
+        .iter()
+        .filter(|(name, entry)| !name.is_empty() && entry.is_object())
+        .map(|(name, entry)| ModelUsageMetrics {
+            model: sanitise(name),
+            input_tokens: count(entry, "inputTokens"),
+            output_tokens: count(entry, "outputTokens"),
+            cache_read_tokens: count(entry, "cacheReadInputTokens"),
+            cache_write_tokens: count(entry, "cacheCreationInputTokens"),
+            cost_usd: entry
+                .get("costUSD")
+                .and_then(Value::as_f64)
+                .filter(|c| c.is_finite() && *c >= 0.0),
+            context_window: count(entry, "contextWindow").filter(|w| *w > 0),
+        })
+        .collect();
+    models.sort_by(|a, b| a.model.cmp(&b.model));
+    models.truncate(MAX_USAGE_MODELS);
+    (!models.is_empty()).then_some(models)
 }
 
 #[cfg(test)]
@@ -317,7 +379,7 @@ mod tests {
         let events = env.events.lock().unwrap();
         assert!(
             events.iter().any(|e| matches!(e,
-            RuntimeEvent::Retry { state, attempt: 2, delay_ms: Some(1500) } if state == "waiting"))
+            RuntimeEvent::Retry { state, attempt: 2, delay_ms: Some(1500), max_retries: Some(10), .. } if state == "waiting"))
         );
     }
 
@@ -339,7 +401,7 @@ mod tests {
         let auto = parse_system_progress(&json!({ "type": "system", "subtype": "compact_boundary",
             "compact_metadata": { "trigger": "auto", "pre_tokens": 150000 } }));
         assert!(matches!(auto,
-            Some(RuntimeEvent::Compaction { ref state, automatic: true, message: None }) if state == "completed"));
+            Some(RuntimeEvent::Compaction { ref state, automatic: true, message: None, pre_tokens: Some(150000), boundary_id: None }) if state == "completed"));
         let manual =
             parse_system_progress(&json!({ "type": "system", "subtype": "compact_boundary" }));
         assert!(matches!(
@@ -349,5 +411,94 @@ mod tests {
                 ..
             })
         ));
+    }
+    #[test]
+    fn api_retry_carries_the_cli_error_status_and_category() {
+        let event = parse_system_progress(&json!({ "type": "system", "subtype": "api_retry",
+            "attempt": 3, "max_retries": 10, "retry_delay_ms": 4000,
+            "error_status": 429, "error": "rate_limit" }));
+        let Some(RuntimeEvent::Retry {
+            attempt,
+            max_retries,
+            error_status,
+            error,
+            ..
+        }) = event
+        else {
+            panic!("api_retry did not map to a retry");
+        };
+        assert_eq!(
+            (attempt, max_retries, error_status, error.as_deref()),
+            (3, Some(10), Some(429), Some("rate_limit"))
+        );
+        // `error_status: null` (a connection error) is simply absent
+        let event = parse_system_progress(&json!({ "type": "system", "subtype": "api_retry",
+            "attempt": 1, "error_status": null, "error": "unknown" }));
+        assert!(matches!(
+            event,
+            Some(RuntimeEvent::Retry {
+                error_status: None,
+                max_retries: None,
+                ..
+            })
+        ));
+    }
+
+    // ---------- C2: modelUsage ----------
+
+    fn fixture_result_line() -> Value {
+        let text = include_str!("fixtures/turn.ndjson");
+        let line = text
+            .lines()
+            .rev()
+            .find(|l| l.contains("\"type\":\"result\""))
+            .unwrap();
+        serde_json::from_str(line).unwrap()
+    }
+
+    #[test]
+    fn the_captured_result_lines_model_usage_maps_per_model() {
+        let models = thread_model_usage(&fixture_result_line()).unwrap();
+        assert_eq!(
+            models,
+            vec![ModelUsageMetrics {
+                model: "claude-sonnet-5".into(),
+                input_tokens: Some(14),
+                output_tokens: Some(1005),
+                cache_read_tokens: Some(246_808),
+                cache_write_tokens: Some(6298),
+                cost_usd: Some(0.1269474),
+                context_window: Some(1_000_000),
+            }]
+        );
+    }
+
+    #[test]
+    fn model_usage_is_sorted_capped_and_tolerates_bad_entries() {
+        let mut map = serde_json::Map::new();
+        for i in (0..20).rev() {
+            map.insert(
+                format!("m{i:02}"),
+                json!({ "inputTokens": i, "costUSD": -1.0 }),
+            );
+        }
+        map.insert("broken".into(), json!("not an object"));
+        let models = thread_model_usage(&json!({ "type": "result", "modelUsage": map })).unwrap();
+        assert_eq!(models.len(), MAX_USAGE_MODELS);
+        assert_eq!(models[0].model, "m00");
+        assert_eq!(models[0].cost_usd, None); // a negative cost is unknown, not zero
+        assert_eq!(thread_model_usage(&json!({ "type": "result" })), None);
+        assert_eq!(
+            thread_model_usage(&json!({ "type": "result", "modelUsage": {} })),
+            None
+        );
+    }
+
+    #[test]
+    fn a_result_line_publishes_its_model_usage() {
+        let env = replay(&[fixture_result_line()]);
+        let events = env.events.lock().unwrap();
+        assert!(events.iter().any(|e| matches!(e,
+            RuntimeEvent::ModelUsageReported { models } if models.len() == 1)));
     }
 }

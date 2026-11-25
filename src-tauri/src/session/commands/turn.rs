@@ -494,6 +494,7 @@ pub fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) -> Clea
     if let Some(metrics) = s.metrics.as_mut() {
         metrics.cost_usd = None;
         metrics.cost_basis = "unknown".into();
+        metrics.by_model.clear(); // the per-model split is the same thread total
     }
     s.last_activity_at = now_ms();
     ClearOutcome::Cleared {
@@ -596,6 +597,15 @@ mod tests {
             cost_basis: "estimated".into(),
             measured_at: 1,
             stale: false,
+            by_model: vec![crate::session::events::ModelUsageMetrics {
+                model: "m".into(),
+                input_tokens: Some(1),
+                output_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                cost_usd: Some(0.5),
+                context_window: None,
+            }],
         });
         let engine = test_engine_with(s);
         let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
@@ -606,6 +616,7 @@ mod tests {
         let metrics = map.get("s1").unwrap().metrics.clone().unwrap();
         assert_eq!(metrics.cost_usd, None);
         assert_eq!(metrics.cost_basis, "unknown");
+        assert!(metrics.by_model.is_empty());
         assert_eq!(metrics.input_tokens, Some(1)); // the rest of metrics is untouched
     }
 

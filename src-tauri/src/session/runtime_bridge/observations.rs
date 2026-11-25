@@ -35,6 +35,26 @@ pub(super) fn apply(
             text,
             offset,
         }),
+        RuntimeEvent::ThinkingStarted { block_id } => {
+            engine.with_session_mut(id, |s| s.buf_thinking_start(&block_id));
+            env.emit_session(SessionEvent::ThinkingStart {
+                session_id: id.into(),
+                block_id,
+            });
+        }
+        RuntimeEvent::ThinkingFinal { block_id, text } => {
+            let kept = engine
+                .with_session_mut(id, |s| s.finish_thinking(&block_id, text.clone()))
+                .flatten();
+            if let Some(block) = kept {
+                env.append_transcript(id, &block);
+            }
+            env.emit_session(SessionEvent::ThinkingDone {
+                session_id: id.into(),
+                block_id,
+                text,
+            });
+        }
         RuntimeEvent::ToolInputReady {
             block_id,
             tool,

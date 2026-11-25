@@ -38,6 +38,7 @@ import StepDetailPanel from './StepDetailPanel';
 import { Caret, LOADER_DELAY_MS, LoaderCaret } from '../../ui/Loaders';
 import { toolResultChips } from './transcript-turns';
 import { ToolTarget } from './CodeLinks';
+import { ThinkingBody } from './ThinkingBlock';
 import './conversation.css';
 
 // transcript-perf FR-2: every prop these receive is referentially stable
@@ -106,6 +107,11 @@ function BlockImpl({
 
   if (block.kind === 'subagent') {
     return <SubagentBanner b={block} />;
+  }
+
+  // thinking-blocks: the collapsed "Thinking" disclosure (ThinkingBlock.tsx).
+  if (block.kind === 'thinking') {
+    return <ThinkingBody b={block} />;
   }
 
   // design 9a: a lone tool call is a bare row — the same object a session turn

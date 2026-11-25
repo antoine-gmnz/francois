@@ -273,6 +273,12 @@ pub fn close_open_block(
             affects_workspace: false,
             tone: None,
         }),
+        // thinking-blocks: settle whatever thought arrived, so the row never
+        // stays "thinking" after an interrupt.
+        BlockKind::Thinking => env.publish(RuntimeEvent::ThinkingFinal {
+            text: text_accum.get(&block_id).cloned().unwrap_or_default(),
+            block_id,
+        }),
     }
 }
 

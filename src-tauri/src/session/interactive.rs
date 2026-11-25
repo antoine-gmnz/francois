@@ -61,6 +61,14 @@ pub enum CommandCard {
     Notice { text: String },
     /// Generic CLI-local output that fits no richer card.
     Text { command: String, text: String },
+    /// audit C4: the divider a context compaction leaves in the transcript.
+    /// `trigger` is 'auto' | 'manual'; `preTokens` is the context size the
+    /// compaction started from, omitted when the CLI did not report it.
+    Compaction {
+        trigger: String,
+        #[serde(rename = "preTokens", skip_serializing_if = "Option::is_none")]
+        pre_tokens: Option<u64>,
+    },
 }
 
 // ---------- interactive commands (specs/interactive-commands.md) ----------
@@ -874,6 +882,23 @@ mod tests {
         assert_eq!(status["kind"], "status");
         assert_eq!(status["meta"]["permissionMode"], "default");
         assert_eq!(status["meta"]["contextLimitTokens"], 200_000);
+
+        // audit C4: the compaction divider — preTokens omitted when unknown
+        let compaction = serde_json::to_value(CommandCard::Compaction {
+            trigger: "auto".into(),
+            pre_tokens: Some(150_000),
+        })
+        .unwrap();
+        assert_eq!(
+            compaction,
+            json!({ "kind": "compaction", "trigger": "auto", "preTokens": 150_000 })
+        );
+        let bare = serde_json::to_value(CommandCard::Compaction {
+            trigger: "manual".into(),
+            pre_tokens: None,
+        })
+        .unwrap();
+        assert_eq!(bare, json!({ "kind": "compaction", "trigger": "manual" }));
     }
 
     #[test]

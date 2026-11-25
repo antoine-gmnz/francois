@@ -656,6 +656,17 @@ async function stream(blockId: string, text: string) {
   session({ type: 'assistant.done', sessionId: S_API, blockId, text: block.text });
 }
 
+/** thinking-blocks: a thought that runs for a beat, then settles collapsed. */
+async function think(blockId: string, text: string, ms = 1400) {
+  const block: ConversationBlock = { kind: 'thinking', blockId, isStreaming: true, text: '' };
+  liveBlocks.push(block);
+  session({ type: 'thinking.start', sessionId: S_API, blockId });
+  await sleep(ms);
+  block.isStreaming = false;
+  block.text = text;
+  session({ type: 'thinking.done', sessionId: S_API, blockId, text });
+}
+
 /** A tool call that opens, works for a beat, then resolves with its meta. */
 async function toolCall(blockId: string, tool: string, summary: string, meta: string, ms = 900) {
   const block: ConversationBlock = {
@@ -733,6 +744,8 @@ async function runTurns() {
     setStatus('running');
     await sleep(700);
 
+    await think(`${tag}-k0`, `Plan before touching anything: ${turn.open}`);
+    if (stopped) return;
     await stream(`${tag}-a0`, turn.open);
 
     let i = 0;

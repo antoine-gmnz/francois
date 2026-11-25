@@ -50,6 +50,8 @@ pub struct ToolRec {
 pub enum BlockKind {
     Text,
     Tool,
+    /// thinking-blocks: a `thinking` block; its text accumulates in `text_accum`.
+    Thinking,
 }
 
 /// multi-provider-seam FR-5/FR-18: everything `run_reader` needs back from
@@ -216,6 +218,9 @@ fn parse_frames(
                 if let Some(thread_total_usd) = thread_cost_total(&v) {
                     env.publish(RuntimeEvent::CostReported { thread_total_usd });
                 }
+                if let Some(models) = thread_model_usage(&v) {
+                    env.publish(RuntimeEvent::ModelUsageReported { models }); // audit C2
+                }
                 // The result no longer closes the control channel by itself: a
                 // background subagent dispatched by this turn outlives it, and
                 // the CLI throws away every permission ask raised after our
@@ -280,7 +285,11 @@ fn parse_frames(
         result_error,
         result_text,
         saw_synthetic,
-        had_blocks: !blocks.is_empty(),
+        // FR-18 counts assistant/tool blocks only — a thought is not an answer
+        // (thinking-blocks), so a thinking-only turn keeps the fallback card.
+        had_blocks: blocks
+            .values()
+            .any(|(_, kind, _)| *kind != BlockKind::Thinking),
         ctx_usage,
         open_block,
         text_accum,
@@ -849,6 +858,34 @@ pub(crate) mod golden_replay_tests {
             outcome.result_error
         );
         assert_eq!(outcome.ctx_usage.finish(200_000), Some(40_510));
+    }
+
+    #[test]
+    fn a_thinking_only_turn_does_not_count_as_having_blocks() {
+        // thinking-blocks: FR-18's fallback keys on assistant/tool blocks; a
+        // `thinking` block alone must leave `had_blocks` false.
+        let env = TestEnv {
+            engine: crate::session::testutil::test_engine_with(test_session()),
+            ..Default::default()
+        };
+        let lines = [
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"#,
+            r#"{"type":"result","subtype":"success","result":"ok"}"#,
+        ]
+        .join("\n")
+            + "\n";
+        let outcome = parse_stream(
+            &env,
+            "s1",
+            Cursor::new(lines.into_bytes()),
+            &Arc::new(Mutex::new(None)),
+            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(HashMap::new())),
+            None,
+        );
+        assert!(outcome.got_result);
+        assert!(!outcome.had_blocks);
     }
 
     #[test]

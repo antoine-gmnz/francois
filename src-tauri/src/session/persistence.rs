@@ -48,6 +48,8 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
     let kind = match b.kind {
         BlockKind::User => "user",
         BlockKind::Assistant => "assistant",
+        // thinking-blocks: only a settled, non-empty block is ever persisted.
+        BlockKind::Thinking => "thinking",
         BlockKind::Tool => "tool",
         BlockKind::Subagent => "subagent",
         // agent-tab FR-6: an agent-tab AgentNoticeBlock only ever lives in a
@@ -175,6 +177,7 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
     let kind = match v.get("kind").and_then(|k| k.as_str())? {
         "user" => BlockKind::User,
         "assistant" => BlockKind::Assistant,
+        "thinking" => BlockKind::Thinking,
         "tool" => BlockKind::Tool,
         "subagent" => BlockKind::Subagent,
         // pi-transcript-events: a Notice block appended to the SESSION
@@ -1167,6 +1170,36 @@ mod tests {
         assert!(line.contains("\"outcome\":\"interrupted\""));
         let back = parse_persisted_block(&line).expect("parse");
         assert_eq!(back.outcome.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn transcript_thinking_block_roundtrips_its_text_and_clock() {
+        // thinking-blocks: a settled thinking block survives quit/reopen.
+        let b = BufBlock {
+            text: "weighing the two options".into(),
+            at: 1_760_000_000_000,
+            ..BufBlock::new("th1", BlockKind::Thinking)
+        };
+        let line = serde_json::to_string(&persisted_block_json(&b)).unwrap();
+        assert!(line.contains("\"kind\":\"thinking\""));
+        let back = parse_persisted_block(&line).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Thinking));
+        assert!(!back.streaming);
+        let block = classify_block(&back);
+        assert_eq!(block["kind"], "thinking");
+        assert_eq!(block["text"], "weighing the two options");
+        assert_eq!(block["at"], 1_760_000_000_000u64);
+    }
+
+    #[test]
+    fn transcript_without_thinking_lines_still_loads_unchanged() {
+        // thinking-blocks: a pre-feature transcript has no `thinking` kind at
+        // all — its lines parse exactly as before.
+        let legacy =
+            r#"{"blockId":"a1","kind":"assistant","text":"hi","tool":"","summary":"","meta":null}"#;
+        let back = parse_persisted_block(legacy).expect("parse");
+        assert!(matches!(back.kind, BlockKind::Assistant));
+        assert_eq!(back.text, "hi");
     }
 
     #[test]
@@ -2955,6 +2988,8 @@ fn load_session_records(
                 // pi-models-metrics: in-memory only, like effective_capabilities
                 // — re-derived on the next connect/switch, never persisted.
                 model_efforts: Vec::new(),
+                // audit C4: a retry is the live turn's — none survives a restart.
+                retry: None,
             },
         );
     }

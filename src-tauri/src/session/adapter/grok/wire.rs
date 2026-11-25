@@ -179,6 +179,29 @@ pub(super) fn parse_line(line: &str) -> GrokEvent {
     }
 }
 
+/// The `type`s `parse_line` switches on. One that lands on `Unknown` anyway
+/// (a `tool_call` with no id, say) is malformed, not new — so not reported.
+const HANDLED_TYPES: &[&str] = &[
+    "text",
+    "thought",
+    "tool_call",
+    "tool_call_update",
+    "usage",
+    "plan",
+    "available_commands",
+    "end",
+    "error",
+];
+
+/// audit R2: for a line `parse_line` mapped to `Unknown`, the sanitised NAME
+/// of a `type` this version does not switch on — never the payload. Blank,
+/// non-JSON (the CLI's own banner noise) and typeless lines are `None`.
+pub(super) fn unrecognised_type(line: &str) -> Option<String> {
+    let v = serde_json::from_str::<Value>(line.trim()).ok()?;
+    let kind = v.get("type")?.as_str()?;
+    (!HANDLED_TYPES.contains(&kind)).then(|| crate::session::stream::sanitise(kind))
+}
+
 fn str_field(v: &Value, key: &str) -> String {
     v.get(key)
         .and_then(|s| s.as_str())
@@ -209,6 +232,20 @@ mod tests {
             }
             other => panic!("expected an error event, got {other:?}"),
         }
+    }
+
+    // ---------- audit R2: unknown types are reported by name ----------
+
+    #[test]
+    fn only_a_new_type_is_reported_and_never_its_payload() {
+        assert_eq!(
+            unrecognised_type(r#"{"type":"brand_new","secret":"user text"}"#).as_deref(),
+            Some("brand_new")
+        );
+        assert_eq!(unrecognised_type(r#"{"type":"tool_call"}"#), None); // malformed, not new
+        assert_eq!(unrecognised_type("checking for updates..."), None);
+        assert_eq!(unrecognised_type(r#"{"data":"x"}"#), None);
+        assert_eq!(unrecognised_type(""), None);
     }
 
     // ---------- FR-12: leniency ----------

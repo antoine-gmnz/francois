@@ -482,3 +482,45 @@ describe('unseen finished turns', () => {
     expect(useStore.getState().unseenTurns).toEqual({});
   });
 });
+
+describe('upsertSession carries the C4 retry and the C2 per-model usage (audit)', () => {
+  const retry = { attempt: 2, maxRetries: 10, errorStatus: 429, retryAt: 5_000, since: 1_000 };
+
+  it('lands a retry, then clears it when the next meta omits the key', () => {
+    useStore.getState().setSessions([{ ...meta('s1'), status: 'running' }]);
+    useStore.getState().upsertSession({ ...meta('s1'), status: 'running', retry });
+    expect(useStore.getState().sessions[0].retry).toEqual(retry);
+    useStore.getState().upsertSession({ ...meta('s1'), status: 'running' });
+    expect(useStore.getState().sessions[0].retry).toBeUndefined();
+  });
+
+  it('a republished identical retry keeps the sessions array reference', () => {
+    useStore.getState().setSessions([{ ...meta('s1'), status: 'running', retry }]);
+    const before = useStore.getState().sessions;
+    useStore.getState().upsertSession({ ...meta('s1'), status: 'running', retry: { ...retry } });
+    expect(useStore.getState().sessions).toBe(before);
+  });
+
+  it('lands metrics.byModel verbatim', () => {
+    const byModel = [
+      { model: 'claude-sonnet-5', inputTokens: 14, outputTokens: 1005, cacheReadTokens: 246_808, cacheWriteTokens: 6298, costUsd: 0.127, contextWindow: 1_000_000 },
+    ];
+    const metrics = {
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      contextTokens: null,
+      contextWindow: null,
+      contextBasis: 'unknown' as const,
+      costUsd: 0.127,
+      costBasis: 'estimated' as const,
+      measuredAt: 1,
+      stale: false,
+      byModel,
+    };
+    useStore.getState().setSessions([meta('s1')]);
+    useStore.getState().upsertSession({ ...meta('s1'), metrics });
+    expect(useStore.getState().sessions[0].metrics?.byModel).toEqual(byModel);
+  });
+});

@@ -176,6 +176,42 @@ export interface RuntimeMetrics {
   costBasis: 'estimated' | 'unknown';
   measuredAt: number; // epoch ms
   stale: boolean;
+  /**
+   * audit C2: the runtime's per-model split of the same thread totals (Claude's
+   * `result.modelUsage`), sorted by model id. Absent when the runtime reports none.
+   * Each entry is that model's THREAD running total — a report replaces it, never
+   * adds — and /clear empties it with the cost.
+   */
+  byModel?: ModelUsageMetrics[];
+}
+
+/** audit C2: one model's slice of a thread's usage. `null` is UNKNOWN, never zero. */
+export interface ModelUsageMetrics {
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  costUsd: number | null;
+  contextWindow: number | null;
+}
+
+/**
+ * audit C4: the provider retry a running turn is waiting out (Claude's
+ * `system/api_retry`). Live only — never persisted; the core clears it on the
+ * turn's next progress event, and a consumer shows it only while the session is busy.
+ * Optional keys are omitted, never null.
+ */
+export interface SessionRetry {
+  attempt: number; // 1-based
+  maxRetries?: number;
+  /** HTTP status of the failed request (e.g. 429, 529); absent for a connection error. */
+  errorStatus?: number;
+  /** The CLI's category: 'rate_limit' | 'overloaded' | 'server_error' | … */
+  error?: string;
+  /** epoch ms the next attempt is due; absent when the CLI gave no delay. */
+  retryAt?: number;
+  since: number; // epoch ms the retry was observed
 }
 
 /**
@@ -473,6 +509,8 @@ export interface SessionMeta {
    *  (session-settings-sheet FR-1). Read LIVE by the control channel, so a change
    *  applies to the very next permission request. Pre-feature records load `false`. */
   allowGit: boolean;
+  /** audit C4: present ⇔ the current turn is waiting out a provider retry. */
+  retry?: SessionRetry;
 }
 
 /** The id of a Claude Code on the web session — `'session_…'` or `'cse_…'`. */
@@ -752,7 +790,10 @@ export type CommandCard =
   /** Dim one-liner: unknown command, unavailable command, probe failure, model switch ack. */
   | { kind: 'notice'; text: string }
   /** Generic CLI-local output that fits no richer card. */
-  | { kind: 'text'; command: string; text: string };
+  | { kind: 'text'; command: string; text: string }
+  /** audit C4: the transcript divider a context compaction leaves (Claude's
+   *  `system/compact_boundary`). `preTokens` = context size it started from. */
+  | { kind: 'compaction'; trigger: 'auto' | 'manual'; preTokens?: number };
 
 // ---------- session questions ----------
 // Shared vocabulary for session-questions (the SessionEvent union below needs
@@ -899,6 +940,12 @@ export type SessionEvent =
   // `text` is the block's COMPLETE text — authoritative, so a block that lost a
   // chunk in transit is repaired the moment it closes rather than staying truncated.
   | { type: 'assistant.done'; sessionId: SessionId; blockId: BlockId; text: string }
+  // thinking-blocks: a `thinking` content block opened (ThinkingConversationBlock,
+  // streaming) / settled with its COMPLETE text. No per-token delta crosses the
+  // boundary — the block renders collapsed. `text: ''` on done ⇒ the block had
+  // nothing to show and is removed, never persisted.
+  | { type: 'thinking.start'; sessionId: SessionId; blockId: BlockId }
+  | { type: 'thinking.done'; sessionId: SessionId; blockId: BlockId; text: string }
   // e.g. tool 'Read', summary 'src/auth/middleware.ts'. `model` is set only on a
   // subagent dispatch that named one — see SubagentConversationBlock.agentModel.
   // plan: plan-view — the checklist a `TodoWrite` call set; absent on every other tool.

@@ -58,6 +58,14 @@ pub fn classify_block(b: &BufBlock) -> Value {
             }
             with_at(o, b)
         }
+        BlockKind::Thinking => {
+            // thinking-blocks: text only — the signature never reaches the buffer.
+            let o = serde_json::json!({
+                "kind": "thinking", "blockId": b.block_id, "isStreaming": b.streaming,
+                "text": b.text,
+            });
+            with_at(o, b)
+        }
         BlockKind::Tool => {
             let (glyph, gc) = tool_glyph(&b.tool);
             let mut o = serde_json::json!({
@@ -166,6 +174,53 @@ pub fn classify_block(b: &BufBlock) -> Value {
     }
 }
 
+// ---------- thinking-blocks: the buffer side of a `thinking` block ----------
+
+impl Session {
+    /// A `thinking` block opened: buffer it streaming so a view hydrating
+    /// mid-thought sees the in-progress row. Idempotent per block id.
+    pub(crate) fn buf_thinking_start(&mut self, block_id: &str) {
+        if self.block_buffer.iter().any(|b| b.block_id == block_id) {
+            return;
+        }
+        self.block_buffer.push(BufBlock {
+            streaming: true,
+            ..BufBlock::new(block_id, BlockKind::Thinking)
+        });
+        self.trim_block_buffer();
+    }
+
+    /// Settle a `thinking` block with its complete text. Returns the block to
+    /// persist, or `None` when it settled EMPTY — the CLI may stream redacted
+    /// thinking with no text, and a disclosure that opens onto nothing is noise,
+    /// so that block leaves the buffer and is never persisted.
+    pub(crate) fn finish_thinking(&mut self, block_id: &str, text: String) -> Option<BufBlock> {
+        let pos = self
+            .block_buffer
+            .iter()
+            .rposition(|b| b.block_id == block_id && b.kind == BlockKind::Thinking);
+        let out = if text.is_empty() {
+            if let Some(i) = pos {
+                self.block_buffer.remove(i);
+            }
+            None
+        } else if let Some(i) = pos {
+            let b = &mut self.block_buffer[i];
+            b.text = text;
+            b.streaming = false;
+            Some(b.clone())
+        } else {
+            self.block_buffer.push(BufBlock {
+                text,
+                ..BufBlock::new(block_id, BlockKind::Thinking)
+            });
+            self.block_buffer.last().cloned()
+        };
+        self.trim_block_buffer();
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +303,42 @@ mod tests {
         s.buf_assistant_streaming("a1", "Hel", "Hel");
         s.buf_assistant_streaming("a1", "lo", "anything-else-entirely");
         assert_eq!(classify_block(&s.block_buffer[0])["text"], "Hello");
+    }
+
+    #[test]
+    fn thinking_block_streams_then_settles_with_its_text() {
+        let mut s = test_session();
+        s.buf_thinking_start("k1");
+        s.buf_thinking_start("k1");
+        assert_eq!(s.block_buffer.len(), 1, "start is idempotent");
+        let live = classify_block(&s.block_buffer[0]);
+        assert_eq!(live["kind"], "thinking");
+        assert_eq!(live["isStreaming"], true);
+        assert_eq!(live["text"], "");
+        let settled = s.finish_thinking("k1", "weighing it".into()).expect("kept");
+        assert_eq!(settled.text, "weighing it");
+        let block = classify_block(&s.block_buffer[0]);
+        assert_eq!(block["text"], "weighing it");
+        assert_eq!(block["isStreaming"], false);
+        assert!(block.get("signature").is_none());
+    }
+
+    #[test]
+    fn thinking_block_that_settles_empty_leaves_the_buffer() {
+        let mut s = test_session();
+        s.buf_thinking_start("k1");
+        s.buf_assistant("a1", "hi".into());
+        assert!(s.finish_thinking("k1", String::new()).is_none());
+        assert_eq!(s.block_buffer.len(), 1);
+        assert_eq!(classify_block(&s.block_buffer[0])["kind"], "assistant");
+    }
+
+    #[test]
+    fn thinking_done_without_a_start_still_buffers_its_text() {
+        let mut s = test_session();
+        let b = s.finish_thinking("k1", "late".into()).expect("appended");
+        assert_eq!(b.block_id, "k1");
+        assert_eq!(classify_block(&s.block_buffer[0])["isStreaming"], false);
     }
 
     #[test]

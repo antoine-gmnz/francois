@@ -11,6 +11,33 @@ use crate::session::application::RuntimeEvent;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// audit R2: every notification method `Inner::notification` acts on. A method
+/// outside it is still ignored, but no longer silently: its NAME (never the
+/// params) is logged once per process to `stream.log`, like the Claude reader's
+/// unknown line kinds.
+const KNOWN_NOTIFICATIONS: &[&str] = &[
+    "remoteControl/status/changed",
+    "mcpServer/oauthLogin/completed",
+    "mcpServer/startupStatus/updated",
+    "serverRequest/resolved",
+    "turn/started",
+    "turn/completed",
+    "turn/plan/updated",
+    "item/started",
+    "item/completed",
+    "item/agentMessage/delta",
+    "item/commandExecution/outputDelta",
+    "item/mcpToolCall/progress",
+    "thread/tokenUsage/updated",
+    "error",
+];
+
+/// audit R2: the sanitised name to report for a method this dispatcher does
+/// not handle, or `None` for a handled one.
+pub(super) fn unrecognised_notification(method: &str) -> Option<String> {
+    (!KNOWN_NOTIFICATIONS.contains(&method)).then(|| crate::session::stream::sanitise(method))
+}
+
 impl Inner {
     pub(super) fn server_request(self: &Arc<Self>, id: RequestId, method: &str, mut params: Value) {
         let (connection, emission) = {
@@ -79,6 +106,9 @@ impl Inner {
         }
     }
     pub(super) fn notification(self: &Arc<Self>, method: &str, params: &Value) {
+        if let Some(kind) = unrecognised_notification(method) {
+            crate::session::stream::log_unrecognised_once("codex", &kind);
+        }
         if method == "remoteControl/status/changed" {
             self.remote_notification(params);
             return;
@@ -278,6 +308,7 @@ impl Inner {
                                 cost_basis: "unknown".into(),
                                 measured_at: crate::ids::now_ms(),
                                 stale: false,
+                                by_model: Vec::new(),
                             },
                         ));
                     }
@@ -314,6 +345,9 @@ impl Inner {
                         turn.failure =
                             more_informative(turn.failure.take(), failure(&params["error"]));
                     }
+                    // `willRetry: true` — Codex recovers by itself; not a failure.
+                    "error" => {}
+                    // Reported by name at the top of `notification` (audit R2).
                     _ => {}
                 }
             }
@@ -438,5 +472,36 @@ fn more_informative(a: Option<String>, b: Option<String>) -> Option<String> {
     match (a, b) {
         (Some(a), Some(b)) => Some(if b.len() > a.len() { b } else { a }),
         (a, b) => a.or(b),
+    }
+}
+
+#[cfg(test)]
+mod r2_tests {
+    use super::unrecognised_notification;
+
+    /// audit R2: handled methods are not reported; anything else is, by a
+    /// sanitised name only.
+    #[test]
+    fn only_unhandled_notification_methods_are_reported() {
+        for method in [
+            "turn/started",
+            "item/completed",
+            "thread/tokenUsage/updated",
+            "error",
+        ] {
+            assert_eq!(unrecognised_notification(method), None, "{method}");
+        }
+        assert_eq!(
+            unrecognised_notification("account/rateLimits/updated").as_deref(),
+            Some("account/rateLimits/updated")
+        );
+        assert_eq!(
+            unrecognised_notification(
+                "bad method
+"
+            )
+            .as_deref(),
+            Some("bad?method?")
+        );
     }
 }

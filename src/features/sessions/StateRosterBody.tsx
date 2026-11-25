@@ -31,6 +31,7 @@ import { sessionAccountBadge } from '../accounts/accounts';
 import '../accounts/accounts.css';
 import type { RosterGroupTier } from './group-tier';
 import { pullMarkerTitle } from './roster-pulls';
+import { activeRetry, retrySubLine } from './retry-status';
 import { askLine, formatLineCount, rowTitle, workLine } from './roster-row';
 import './sidebar.css';
 import type { RosterStateNode, SessionState } from './state-groups';
@@ -341,6 +342,8 @@ function AskCard({
 function RunningBody({ session, tags, now }: { session: SessionMeta; tags: JSX.Element; now: number }) {
   const since = useStore((s) => s.runningSince.get(session.id));
   const activity = useStore((s) => s.sessionActivity.get(session.id));
+  // audit C4: a turn waiting out a provider retry is not working — say so.
+  const retry = activeRetry(session);
   return (
     <>
       <div className="roster-row__head">
@@ -350,7 +353,11 @@ function RunningBody({ session, tags, now }: { session: SessionMeta; tags: JSX.E
         <span className="app-flex-spacer" />
         <span className="roster-row__age roster-row__age--live">{formatRelativeTime(since ?? session.lastActivityAt, now)}</span>
       </div>
-      {activity && <div className="roster-row__sub truncate">{activity}</div>}
+      {retry ? (
+        <div className="roster-row__sub roster-row__sub--retry truncate">{retrySubLine(retry, now)}</div>
+      ) : (
+        activity && <div className="roster-row__sub truncate">{activity}</div>
+      )}
     </>
   );
 }

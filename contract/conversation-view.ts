@@ -24,7 +24,7 @@ export interface GetTranscriptRequest {
 }
 
 export type ConversationGlyph = '●' | '⧉' | '⌕' | '✎' | '⇉' | '';
-export type ConversationBlockKind = 'user' | 'assistant' | 'tool' | 'subagent' | 'command' | 'question' | 'permission' | 'notice';
+export type ConversationBlockKind = 'user' | 'assistant' | 'thinking' | 'tool' | 'subagent' | 'command' | 'question' | 'permission' | 'notice';
 
 interface ConversationBlockBase {
   blockId: BlockId;
@@ -62,6 +62,19 @@ export interface AssistantConversationBlock extends ConversationBlockBase {
   /** pi-transcript-events FR-9: how the block finalized. Absent ⇒ a normal
    *  completion on runtimes that predate this field. */
   outcome?: 'complete' | 'interrupted' | 'error';
+}
+
+/**
+ * thinking-blocks (IMPROVEMENTS C1): the model's extended-thinking content, read
+ * off the Claude stream's `thinking` content blocks. `text` accumulates the
+ * `thinking_delta`s; the block's `signature` is opaque replay material and never
+ * crosses the boundary. `isStreaming` ⇔ still thinking. A block that settles
+ * with no text (the CLI may stream redacted, empty thinking) is dropped by the
+ * core and never persisted, so a settled block always has something to show.
+ */
+export interface ThinkingConversationBlock extends ConversationBlockBase {
+  kind: 'thinking';
+  text: string;
 }
 
 export interface ToolConversationBlock extends ConversationBlockBase {
@@ -127,6 +140,7 @@ export interface NoticeConversationBlock extends ConversationBlockBase {
 export type ConversationBlock =
   | UserConversationBlock
   | AssistantConversationBlock
+  | ThinkingConversationBlock // thinking-blocks
   | ToolConversationBlock
   | SubagentConversationBlock
   | CommandConversationBlock // interactive-commands (contract/interactive-commands.ts)
