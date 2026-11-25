@@ -212,6 +212,17 @@ impl SessionEnv for CoalescingEnv<'_> {
         self.inner.note_file_diff(session_id, cwd);
     }
 
+    // tool-images: a wrapper MUST forward — the trait default is a no-op, so
+    // falling through to it would silently drop every image.
+    fn store_tool_images(
+        &self,
+        session_id: &str,
+        block_id: &str,
+        images: &[crate::session::tool_images::RawToolImage],
+    ) -> Vec<crate::session::tool_images::ToolImage> {
+        self.inner.store_tool_images(session_id, block_id, images)
+    }
+
     fn discover_commands(&self, cwd: &str) -> Vec<SkillInfo> {
         self.inner.discover_commands(cwd)
     }
