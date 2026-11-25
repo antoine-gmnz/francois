@@ -24,6 +24,7 @@ import type { AssistantConversationBlock } from '../../../contract/conversation-
 import type { RuntimeToolCall, SessionId } from '../../../contract/common';
 import type { StepDetail } from '../../../contract/command-inspect';
 import CommandBlock from '../commands/CommandCard';
+import { ToolImages } from './ToolImages';
 import { toneVar } from '../../lib/tone';
 import { stepDetail as fetchStepDetail } from '../../lib/api';
 import { useElapsedClock } from '../../lib/hooks/useElapsedClock';
@@ -332,6 +333,7 @@ function ToolRowImpl({
           )}
         </span>
       </div>
+      {b.images !== undefined && b.images.length > 0 && <ToolImages images={b.images} />}
       {present && sessionId && b.hasDetail && phase && (
         <div key={phase} className={stepDetailWrapClass(exiting)}>
           <div className="step-detail-wrap__inner">

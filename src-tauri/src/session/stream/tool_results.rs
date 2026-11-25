@@ -43,7 +43,14 @@ pub fn handle_tool_results(
         // A Task/Workflow dispatch settles a subagent banner, which has no
         // tone slot to say "refused" — it keeps the plain `error` meta.
         let dispatch = rec.is_task || rec.is_workflow;
+        let images = crate::session::tool_images::extract_result_images(item.get("content"));
         let (meta, tone) = settle_meta(is_error, dispatch, &rec.tool, &rec.input, &result_text);
+        // tool-images: a result that is only images has no lines to count —
+        // `0 lines` would read as an empty read rather than a picture.
+        let meta = match images.len() {
+            n if n > 0 && !is_error && result_text.trim().is_empty() => image_meta(n),
+            _ => meta,
+        };
         let detail = build_step_detail(
             &rec.block_id,
             &rec.tool,
@@ -85,7 +92,17 @@ pub fn handle_tool_results(
             detail: Some(detail),
             affects_workspace: matches!(rec.tool.as_str(), "Edit" | "Write"),
             tone,
+            images,
         });
+    }
+}
+
+/// The meta of a result that carried only images: `image`, `3 images`.
+fn image_meta(n: usize) -> String {
+    if n == 1 {
+        "image".into()
+    } else {
+        format!("{n} images")
     }
 }
 
@@ -261,6 +278,127 @@ mod tests {
             .with_session("s1", |s| classify_block(&s.block_buffer[0]))
             .unwrap();
         assert_eq!(block["hasDetail"], true);
+    }
+
+    // ---------- tool-images: a Read of a PNG settles with its image ----------
+
+    #[test]
+    fn an_image_result_lands_on_the_event_the_block_and_the_transcript_line() {
+        use crate::session::persistence::{parse_persisted_block, persisted_block_json};
+        use crate::session::testenv::TestEnv;
+        use std::collections::HashMap;
+
+        // The part exactly as `claude -p --output-format stream-json` sent it
+        // for a `Read` of a 1×1 PNG.
+        const DOT_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let root = std::env::temp_dir().join(format!("francois-ti-{}", uuid::Uuid::new_v4()));
+        let mut session = test_session();
+        session.buf_tool("b1", "Read".into(), "dot.png".into(), false, None);
+        let env = TestEnv {
+            engine: crate::session::testutil::test_engine_with(session),
+            tool_images_root: Some(root.clone()),
+            ..Default::default()
+        };
+        let mut tools = HashMap::new();
+        tools.insert(
+            "toolu_1".to_string(),
+            ToolRec {
+                block_id: "b1".into(),
+                tool: "Read".into(),
+                input: json!({ "file_path": "dot.png" }),
+                is_task: false,
+                is_workflow: false,
+                started_at: 1_000,
+            },
+        );
+        let mut open_block = Some(("b1".to_string(), BlockKind::Tool));
+        let v = json!({
+            "type": "user",
+            "message": { "role": "user", "content": [{
+                "tool_use_id": "toolu_1", "type": "tool_result",
+                "content": [{ "type": "image", "source": {
+                    "type": "base64", "data": DOT_PNG, "media_type": "image/png" } }],
+            }] },
+        });
+
+        handle_tool_results(&env, "s1", &v, &mut tools, &mut open_block);
+
+        let expected = root.join("s1").join("b1-0.png");
+        assert!(expected.exists());
+        let events = env.session_events.lock().unwrap();
+        let Some(SessionEvent::ToolDone {
+            images: Some(images),
+            ..
+        }) = events.last()
+        else {
+            panic!(
+                "expected tool.done with images, got {:?}",
+                events.last().map(|_| ())
+            );
+        };
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].path, expected.to_string_lossy());
+        assert_eq!(images[0].mime, "image/png");
+        assert!(
+            matches!(events.last(), Some(SessionEvent::ToolDone { meta, .. }) if meta == "image")
+        );
+        drop(events);
+
+        let (block, line) = env
+            .engine
+            .with_session("s1", |s| {
+                (
+                    classify_block(&s.block_buffer[0]),
+                    persisted_block_json(&s.block_buffer[0]),
+                )
+            })
+            .unwrap();
+        assert_eq!(block["images"][0]["mime"], "image/png");
+        // Round-trips through the transcript file so a reopened session keeps it.
+        let back = parse_persisted_block(&line.to_string()).unwrap();
+        assert_eq!(classify_block(&back)["images"], block["images"]);
+        // The bytes never ride the line.
+        assert!(!line.to_string().contains(DOT_PNG));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_text_result_carries_no_images() {
+        use crate::session::testenv::TestEnv;
+        use std::collections::HashMap;
+
+        let mut session = test_session();
+        session.buf_tool("b1", "Read".into(), "a.rs".into(), false, None);
+        let env = TestEnv {
+            engine: crate::session::testutil::test_engine_with(session),
+            tool_images_root: Some(std::env::temp_dir().join("francois-ti-unused")),
+            ..Default::default()
+        };
+        let mut tools = HashMap::new();
+        tools.insert(
+            "toolu_1".to_string(),
+            ToolRec {
+                block_id: "b1".into(),
+                tool: "Read".into(),
+                input: json!({ "file_path": "a.rs" }),
+                is_task: false,
+                is_workflow: false,
+                started_at: 1_000,
+            },
+        );
+        let mut open_block = None;
+        let v = json!({ "type": "user", "message": { "content": [{
+            "type": "tool_result", "tool_use_id": "toolu_1", "content": "fn main() {}",
+        }] } });
+        handle_tool_results(&env, "s1", &v, &mut tools, &mut open_block);
+        let events = env.session_events.lock().unwrap();
+        let ev = serde_json::to_value(events.last().unwrap()).unwrap();
+        assert!(ev.get("images").is_none(), "{ev}");
+        let block = env
+            .engine
+            .with_session("s1", |s| classify_block(&s.block_buffer[0]))
+            .unwrap();
+        assert!(block.get("images").is_none());
     }
 
     #[test]
@@ -488,6 +626,7 @@ mod tests {
             meta: "3 lines".into(),
             has_detail: None,
             tone: None,
+            images: None,
         };
         let v = serde_json::to_value(&ev).unwrap();
         assert!(v.get("tone").is_none(), "{v}");
@@ -497,6 +636,7 @@ mod tests {
             meta: "x".into(),
             has_detail: None,
             tone: Some(TONE_HOOK_REFUSAL.into()),
+            images: None,
         };
         assert_eq!(serde_json::to_value(&ev).unwrap()["tone"], "hookRefusal");
     }

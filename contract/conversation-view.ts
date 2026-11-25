@@ -6,7 +6,7 @@
 // Physical Tauri binding: `francois:conversation:getTranscript` → command
 // `conversation_get_transcript`.
 
-import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef, ToolResultTone, PlanItem } from './common';
+import type { SessionId, BlockId, Result, RuntimeToolCall, RuntimeAttachmentRef, ToolResultTone, PlanItem, ToolImage } from './common';
 import type { CommandConversationBlock } from './interactive-commands';
 import type { PermissionConversationBlock } from './permission-guardrails';
 import type { QuestionConversationBlock } from './session-questions';
@@ -107,6 +107,8 @@ export interface ToolConversationBlock extends ConversationBlockBase {
    * `TaskUpdate`. Absent on every tool that does not touch the plan.
    */
   plan?: PlanItem[];
+  /** tool-images: the images the tool's result carried, in result order. Absent when it returned none. */
+  images?: ToolImage[];
 }
 
 export interface SubagentConversationBlock extends ConversationBlockBase {

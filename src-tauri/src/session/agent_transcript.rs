@@ -141,6 +141,7 @@ fn buf_block(
         // has no subagent support, non-goals §2) — always absent here.
         execution: None,
         plan: None,
+        images: None,
         attachments: None,
         outcome: None,
         tone: None,

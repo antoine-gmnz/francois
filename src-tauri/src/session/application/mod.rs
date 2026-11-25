@@ -270,6 +270,9 @@ pub(crate) enum RuntimeEvent {
         affects_workspace: bool,
         /// hook-diagnostics: `ToolResultTone` — None for a clean result.
         tone: Option<String>,
+        /// tool-images: base64 image parts of the result, decoded to files by
+        /// the projection. Empty for every runtime that reports none.
+        images: Vec<crate::session::tool_images::RawToolImage>,
     },
     Metrics(super::events::RuntimeMetrics),
     Usage {

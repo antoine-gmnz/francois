@@ -750,8 +750,9 @@ pub fn session_remove(
                 let _ = std::fs::remove_file(path); // durable-sessions FR-11 (best-effort)
             }
             remove_step_detail_sidecar(&app, &session_id); // command-inspect FR-7
-                                                           // pi-turn-controls FR-9: the admissions sidecar shadows the
-                                                           // transcript the same way the step-detail one does — swept with it.
+            crate::session::tool_images::remove_for_session(&app, &session_id); // tool-images
+                                                                                // pi-turn-controls FR-9: the admissions sidecar shadows the
+                                                                                // transcript the same way the step-detail one does — swept with it.
 
             crate::diff::unwatch_session(&session_id, &session.cwd); // FR-15: dispose the watcher
                                                                      // workflow-details FR-6: the run directories of a removed session are

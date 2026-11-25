@@ -19,6 +19,7 @@ import type {
   SessionStatus,
   SlashCommandInfo,
   PlanItem,
+  ToolImage,
   ToolResultTone,
 } from '../../../contract/common';
 import {
@@ -165,7 +166,7 @@ export type TranscriptAction =
   // assistant.complete event only — a plain Claude assistant.done carries none.
   | { t: 'assistantDone'; blockId: string; text: string; outcome?: 'complete' | 'interrupted' | 'error' }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string; plan?: PlanItem[] } // plan: plan-view
-  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // hasDetail: command-inspect FR-10; tone: hook-diagnostics
+  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean; tone?: ToolResultTone; images?: ToolImage[] } // hasDetail: command-inspect FR-10; tone: hook-diagnostics; images: tool-images
   // pi-transcript-events FR-1/FR-3/FR-4: a normalized RuntimeToolCall snapshot —
   // insert-or-settle, keyed on the tool call's stable blockId.
   | { t: 'toolUpdate'; blockId: string; tool: RuntimeToolCall }
@@ -420,7 +421,8 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       // command-inspect FR-10/FR-12: the chevron exists iff core wrote a StepDetail
       // record. `??` keeps an established flag when a later done omits it; a
       // subagent block never carries one (FR-8).
-      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail, ...(a.tone !== undefined ? { tone: a.tone } : {}) });
+      const images = a.images !== undefined && a.images.length > 0 ? { images: a.images } : {}; // tool-images
+      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail, ...(a.tone !== undefined ? { tone: a.tone } : {}), ...images });
     }
     case 'toolUpdate': {
       // FR-3: a tool call must settle exactly once, in place — insert on
@@ -431,7 +433,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       }
       const b = state.blocks[i];
       if (b.kind !== 'tool') return state;
-      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail, ...(b.plan !== undefined ? { plan: b.plan } : {}) });
+      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail, ...(b.plan !== undefined ? { plan: b.plan } : {}), ...(b.images !== undefined ? { images: b.images } : {}) });
     }
     case 'notice': {
       // FR-5: keyed idempotent upsert, like every other rule in this reducer —
@@ -726,7 +728,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model, ...(e.plan !== undefined ? { plan: e.plan } : {}) }),
   'tool.update': (dispatch, _setters, e) => dispatch({ t: 'toolUpdate', blockId: e.blockId, tool: e.tool }),
-  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail, tone: e.tone }),
+  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail, tone: e.tone, ...(e.images !== undefined ? { images: e.images } : {}) }),
   // interactive-commands FR-20: pending command block (loading card)
   'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),
   // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
@@ -883,8 +885,8 @@ export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] 
 function breaksToolRun(b: ToolConversationBlock): boolean {
   // plan-view: each TodoWrite is a distinct snapshot of the plan — flipping a
   // step to in-progress keeps the same `N steps · M done` summary, and merging
-  // would drop the newer checklist (and the latest-plan card with it).
-  if (b.plan !== undefined) return true;
+  // would drop the newer checklist (and the latest-plan card with it). Same for a row's images (tool-images).
+  if (b.plan !== undefined || (b.images?.length ?? 0) > 0) return true;
   if (b.execution !== undefined) {
     const { status } = b.execution;
     return status === 'failed' || status === 'cancelled' || status === 'unknown';

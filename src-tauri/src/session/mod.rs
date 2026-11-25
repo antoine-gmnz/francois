@@ -79,6 +79,7 @@ mod stdio;
 mod step_detail;
 mod stream;
 mod teardown;
+mod tool_images;
 mod tools;
 /// transcript-scale FR-1/FR-2: the `block_buffer` eviction concern — split out
 /// here per §Code layout once its logic + tests pushed this file past the
@@ -241,6 +242,7 @@ pub use project_health::{
 pub use teardown::{
     dispose_session_resources, register_teardown, SessionAccountObserver, SessionTeardown,
 };
+pub use tool_images::grant_scope as grant_tool_images_scope;
 // core-architecture-wave3 FR-3: `pub` and no longer `#[cfg(test)]` — the
 // boot-read bench is a separate crate, and this parse is the path FR-8 measured
 // (FR-8's tail read bounds its INPUT; the parse bounds nothing on its own).
@@ -705,6 +707,9 @@ pub struct BufBlock {
     /// plan-view: `ToolConversationBlock.plan`, serialized `PlanItem[]` JSON.
     /// Only ever set on a `Tool` block for a `TodoWrite` call.
     plan: Option<Value>,
+    /// tool-images: `ToolConversationBlock.images`, serialized `ToolImage[]`
+    /// JSON (refs to decoded files, never the bytes). Only ever set on a `Tool` block.
+    images: Option<Value>,
     /// pi-transcript-events FR-7: `UserConversationBlock.attachments`,
     /// serialized `RuntimeAttachmentRef[]` JSON. Only ever set on a `User` block.
     attachments: Option<Value>,
@@ -750,6 +755,7 @@ impl BufBlock {
             at: now_ms(),
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1516,6 +1522,7 @@ impl Session {
         meta: String,
         has_detail: bool,
         tone: Option<String>,
+        images: Option<Value>,
     ) -> Option<BufBlock> {
         let out = self
             .block_buffer
@@ -1524,6 +1531,9 @@ impl Session {
             .map(|b| {
                 b.meta = Some(meta);
                 b.has_detail = has_detail;
+                if images.is_some() {
+                    b.images = images;
+                }
                 // hook-diagnostics: only a Tool block ever settles with a tone
                 // here (`classify_block`/persistence gate it by kind).
                 b.tone = tone;
@@ -2003,7 +2013,7 @@ mod tests {
         assert!(s.block_buffer.len() > TRANSCRIPT_BUFFER_CAP);
         assert_eq!(s.block_buffer[0].block_id, "tool-1");
 
-        let done = s.buf_tool_done("tool-1", "3 lines".into(), false, None);
+        let done = s.buf_tool_done("tool-1", "3 lines".into(), false, None, None);
         assert_eq!(done.as_ref().map(|b| b.block_id.as_str()), Some("tool-1"));
         assert_eq!(done.unwrap().meta.as_deref(), Some("3 lines"));
         // Settling it unpins eviction, which catches back up to the cap in the
