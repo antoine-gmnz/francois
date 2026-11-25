@@ -27,6 +27,7 @@ import { appSetWindowTheme, onRemoteEvent } from '../lib/api';
 import { useWindowWidth } from '../lib/hooks/useWindowWidth';
 import { focusedSessionId, layoutRegime, paneCount, paneSlotAt } from '../lib/layoutStore';
 import { basename } from '../lib/path';
+import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { clampRosterWidth } from '../lib/rosterWidth';
 import { useStore } from '../lib/store';
 import './app.css';
@@ -57,7 +58,7 @@ const PANELS = {
   workflows: WorkflowsPanel,
 } as const;
 
-export default function App() {
+function AppShell() {
   const activeSessionId = useStore((s) => s.activeSessionId);
   // loaders: gates the SESSION empty state between "boot, still hydrating"
   // and "loaded, no session picked" (MainPaneBody).
@@ -346,7 +347,9 @@ export default function App() {
         )}
         {/* Hidden, never unmounted: the roster owns the session-cache subscriptions. */}
         <div className="app-col-left" style={{ display: showLeftPane ? undefined : 'none' }}>
-          <Sidebar home={home} />
+          <ErrorBoundary label="Sessions list">
+            <Sidebar home={home} />
+          </ErrorBoundary>
         </div>
 
         {/* resizable-sidebar FR-11: no handle in the grid regime — split-by-4
@@ -366,6 +369,7 @@ export default function App() {
 
         <div className="app-workspace">
           <div className="app-main-cell">
+            <ErrorBoundary label="Session" resetKey={paneSessionId}>
             {/* Figma 17 · Subagent drill-in: a single pane reading a subagent
                 trades the session header for AgentView's own (back · breadcrumb
                 · name · state · stop). Split panes keep it — there it names the
@@ -481,8 +485,13 @@ export default function App() {
                 )}
               </div>
             </div>
+            </ErrorBoundary>
           </div>
-          {sessionView && showSessionPanel && <SessionPanel session={active} />}
+          {sessionView && showSessionPanel && (
+            <ErrorBoundary label="Session panel" resetKey={paneSessionId}>
+              <SessionPanel session={active} />
+            </ErrorBoundary>
+          )}
         </div>
       </div>
 
@@ -565,7 +574,19 @@ export default function App() {
           guard and its prompts — app-wide, because dirty buffers outlive the tab. */}
       <CodeBackground />
 
-      <PaletteRoot />
+      <ErrorBoundary label="Command palette">
+        <PaletteRoot />
+      </ErrorBoundary>
     </div>
+  );
+}
+
+// Last resort: a throw outside every pane-level boundary above (the app bar,
+// the modals) still shows a message instead of a blank webview.
+export default function App() {
+  return (
+    <ErrorBoundary label="Francois">
+      <AppShell />
+    </ErrorBoundary>
   );
 }

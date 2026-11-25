@@ -24,7 +24,7 @@ pub(crate) fn session_needs_awake(state: &str, live_turn: bool, background_agent
 }
 
 fn engine_needs_awake(engine: &Engine) -> bool {
-    engine.sessions.lock().unwrap().values().any(|s| {
+    engine.sessions_guard().values().any(|s| {
         let agents = s
             .agents
             .values()

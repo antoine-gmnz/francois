@@ -331,8 +331,8 @@ export function NewTaskDialog({
   const home = useHomeDir();
 
   return (
-    <Modal onClose={onClose} width={640} closeOnEscape={false} closeOnBackdropClick={true} className="new-task-backdrop">
-      <div className="new-task" role="dialog" aria-label="New task">
+    <Modal ariaLabel="New task" onClose={onClose} width={640} closeOnEscape={false} closeOnBackdropClick={true} className="new-task-backdrop">
+      <div className="new-task">
         <div className="new-task__head">
           <h2 className="new-task__title">New task</h2>
           <IconButton title="Close" onClick={onClose}>

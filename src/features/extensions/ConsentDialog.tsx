@@ -71,7 +71,7 @@ export default function ConsentDialog({ extension, root, onClose, onApplied }: C
   const stale = staleUnderDialog || current.consent.state === 'stale';
 
   return (
-    <Modal width={440} align="center" closeOnEscape closeOnBackdropClick onClose={onClose}>
+    <Modal ariaLabel="Extension consent" width={440} align="center" closeOnEscape closeOnBackdropClick onClose={onClose}>
       <ModalHeader>{`${current.id} wants to run these commands`}</ModalHeader>
       <ModalBody>
         {stale && <div className="ext-consent__stale">{STALE_DIALOG_NOTICE}</div>}

@@ -207,6 +207,13 @@ fn apply_projected(
                     s.context_used_tokens = used;
                 }
                 s.last_activity_at = now_ms();
+                // audit C2: a costless refresh (the turn-end context figure)
+                // keeps the cost accumulated so far rather than wiping it.
+                let (cost_usd, cost_basis) = match (cost, s.metrics.as_ref()) {
+                    (Some(cost), _) => (Some(cost), "estimated".into()),
+                    (None, Some(prev)) => (prev.cost_usd, prev.cost_basis.clone()),
+                    (None, None) => (None, "unknown".into()),
+                };
                 s.metrics = Some(events::RuntimeMetrics {
                     input_tokens,
                     output_tokens,
@@ -220,13 +227,8 @@ fn apply_projected(
                         "unknown"
                     }
                     .into(),
-                    cost_usd: cost,
-                    cost_basis: if cost.is_some() {
-                        "estimated"
-                    } else {
-                        "unknown"
-                    }
-                    .into(),
+                    cost_usd,
+                    cost_basis,
                     measured_at: now_ms(),
                     stale: false,
                 });
@@ -239,6 +241,44 @@ fn apply_projected(
                 });
             }
         }
+        RuntimeEvent::CostReported { thread_total_usd } => {
+            // audit C2: the thread's running total REPLACES the persisted
+            // figure, so held-open turns, `--resume` turns and an app restart
+            // all land on the same number and nothing is double counted. The
+            // max guard keeps a late/out-of-order line on the same thread from
+            // shrinking it; a new thread (/clear, `apply_clear`) resets the cost
+            // first. Basis 'estimated': the CLI derives it from its own pricing
+            // table (contract/common.ts RuntimeMetrics doc).
+            engine.with_session_mut(id, |s| {
+                let now = now_ms();
+                let metrics = s.metrics.get_or_insert_with(|| events::RuntimeMetrics {
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    context_tokens: None,
+                    context_window: None,
+                    context_basis: "unknown".into(),
+                    cost_usd: None,
+                    cost_basis: "unknown".into(),
+                    measured_at: now,
+                    stale: false,
+                });
+                metrics.cost_usd = Some(
+                    metrics
+                        .cost_usd
+                        .map_or(thread_total_usd, |stored| stored.max(thread_total_usd)),
+                );
+                metrics.cost_basis = "estimated".into();
+                metrics.measured_at = now;
+            });
+            env.publish_meta(id);
+        }
+        // audit C4: accepted, deliberately not projected yet — the only wire
+        // shape for them is `SessionEvent::RuntimeEvent`, whose envelope
+        // (`generation`, ordered `sequence`) no Claude-path code produces, and
+        // the frontend's `applyRuntimeEvent` ignores both kinds today.
+        RuntimeEvent::Retry { .. } | RuntimeEvent::Compaction { .. } => {}
         RuntimeEvent::PermissionAsked { block_id, ask } => {
             let block = engine
                 .with_session_mut(id, |s| {

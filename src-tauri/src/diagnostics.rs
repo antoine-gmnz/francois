@@ -8,8 +8,13 @@
 // best-effort, never panics, never blocks the caller on a failure.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tauri::{AppHandle, Manager};
+
+/// The app-data dir, recorded once at startup by `install_panic_log` so code
+/// that holds no `AppHandle` (a stream parser thread) can still leave a trace.
+static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Past this the file is restarted rather than grown without bound — these logs
 /// are read right after a failure, so the recent end is the only useful end.
@@ -20,8 +25,18 @@ const MAX_LOG_BYTES: u64 = 1_000_000;
 /// when there is no app-data dir or the write failed — a diagnostic that cannot
 /// be written must never turn into a second failure.
 pub fn append_log(app: &AppHandle, file: &str, block: &str) -> Option<String> {
-    let dir = app.path().app_data_dir().ok()?;
-    std::fs::create_dir_all(&dir).ok()?;
+    append_log_in(&app.path().app_data_dir().ok()?, file, block)
+}
+
+/// `append_log` for callers without an `AppHandle`: writes under the app-data
+/// dir recorded at startup, `None` before that (or in tests, which never
+/// install the panic hook).
+pub fn append_app_log(file: &str, block: &str) -> Option<String> {
+    append_log_in(LOG_DIR.get()?, file, block)
+}
+
+fn append_log_in(dir: &Path, file: &str, block: &str) -> Option<String> {
+    std::fs::create_dir_all(dir).ok()?;
     let path: PathBuf = dir.join(file);
     if matches!(std::fs::metadata(&path), Ok(m) if m.len() > MAX_LOG_BYTES) {
         std::fs::remove_file(&path).ok();
@@ -48,6 +63,7 @@ pub fn install_panic_log(app: &AppHandle) {
         return;
     };
     let _ = std::fs::create_dir_all(&dir);
+    let _ = LOG_DIR.set(dir.clone());
     let path = dir.join("panic.log");
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

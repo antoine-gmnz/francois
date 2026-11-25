@@ -70,7 +70,7 @@ export default function ExtensionsModal({ root, projectName }: { root: string | 
   const consentTarget = consentDialogId ? (extensions.find((e) => e.id === consentDialogId) ?? null) : null;
 
   return (
-    <Modal width={520} align="center" closeOnEscape closeOnBackdropClick onClose={() => setOpen(false)}>
+    <Modal ariaLabel="Extensions" width={520} align="center" closeOnEscape closeOnBackdropClick onClose={() => setOpen(false)}>
       <ModalHeader>EXTENSIONS</ModalHeader>
       <ModalBody>
         {error && <div className="ext-modal__error">{sanitizeForDisplay(error.message)}</div>}

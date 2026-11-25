@@ -40,7 +40,7 @@ export function RerunModal({ cwd, targets, onClose, onRerun }: RerunModalProps):
   }
 
   return (
-    <Modal onClose={onClose} width={420} align="center" closeOnEscape={!busy} closeOnBackdropClick={!busy}>
+    <Modal ariaLabel="Re-run failed jobs" onClose={onClose} width={420} align="center" closeOnEscape={!busy} closeOnBackdropClick={!busy}>
       <ModalHeader>{labels.provider === 'gitlab' ? 'Retry failed pipeline jobs?' : 'Re-run failed jobs?'}</ModalHeader>
       <ModalBody>
         <p className="merge-modal__title">{names.join(', ')}</p>

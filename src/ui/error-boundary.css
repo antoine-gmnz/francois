@@ -1,0 +1,16 @@
+.error-boundary {
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.error-boundary__title {
+  color: var(--text-secondary);
+}
+
+.error-boundary__detail {
+  color: var(--text-muted);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

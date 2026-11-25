@@ -22,7 +22,7 @@ export function CloseTabPrompt({ rootKey, path, onDone }: { rootKey: string; pat
     close();
   };
   return (
-    <Modal onClose={onDone} width={400} align="center" closeOnEscape>
+    <Modal ariaLabel="Unsaved changes" onClose={onDone} width={400} align="center" closeOnEscape>
       <ModalHeader>
         <span className="code-prompt__title">Save changes to {name}?</span>
       </ModalHeader>

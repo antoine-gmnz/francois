@@ -488,6 +488,13 @@ pub fn apply_clear(map: &mut HashMap<String, Session>, session_id: &str) -> Clea
     // to the thread the next turn will start — the directive is re-sent there.
     s.response_mode_sent = None;
     s.context_used_tokens = 0;
+    // audit C2: the cost is the THREAD's running total, and the thread is gone
+    // — reset it with the anchor so the new thread's figure is not pinned
+    // under the old one by the projection's max guard.
+    if let Some(metrics) = s.metrics.as_mut() {
+        metrics.cost_usd = None;
+        metrics.cost_basis = "unknown".into();
+    }
     s.last_activity_at = now_ms();
     ClearOutcome::Cleared {
         limit: s.context_limit_tokens,
@@ -567,6 +574,39 @@ mod tests {
         assert!(s.block_buffer.is_empty());
         assert_eq!(s.claude_session_id, None);
         assert_eq!(s.context_used_tokens, 0);
+    }
+
+    /// audit C2: the reported cost is the THREAD's total, and /clear starts a
+    /// new thread — so the cost resets with the anchor and the context counter
+    /// (a stale figure would otherwise pin the max guard above the new thread).
+    #[test]
+    fn clear_resets_the_thread_cost_with_the_anchor() {
+        let mut s = test_session();
+        s.status = "idle".into();
+        s.claude_session_id = Some("abc-resume".into());
+        s.metrics = Some(crate::session::events::RuntimeMetrics {
+            input_tokens: Some(1),
+            output_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            context_tokens: None,
+            context_window: None,
+            context_basis: "unknown".into(),
+            cost_usd: Some(0.5),
+            cost_basis: "estimated".into(),
+            measured_at: 1,
+            stale: false,
+        });
+        let engine = test_engine_with(s);
+        let mut map = engine.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        assert!(matches!(
+            apply_clear(&mut map, "s1"),
+            ClearOutcome::Cleared { .. }
+        ));
+        let metrics = map.get("s1").unwrap().metrics.clone().unwrap();
+        assert_eq!(metrics.cost_usd, None);
+        assert_eq!(metrics.cost_basis, "unknown");
+        assert_eq!(metrics.input_tokens, Some(1)); // the rest of metrics is untouched
     }
 
     #[test]

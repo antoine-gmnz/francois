@@ -552,6 +552,44 @@
     "text": "README.md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the build directory was created, and you picked **staging** as the target environment."
   },
   {
+    "type": "session.meta",
+    "meta": {
+      "id": "s1",
+      "name": "n",
+      "cwd": "/x",
+      "model": {
+        "id": "sonnet",
+        "label": "Sonnet"
+      },
+      "status": "running",
+      "contextUsedTokens": 0,
+      "contextLimitTokens": 200000,
+      "startedAt": 0,
+      "lastActivityAt": 0,
+      "permissionMode": "default",
+      "permissionModeSince": 0,
+      "runtime": "native",
+      "accountId": "default",
+      "agentRuntime": "claude-code",
+      "protocol": "anthropic",
+      "responseMode": "default",
+      "allowGit": false,
+      "metrics": {
+        "inputTokens": null,
+        "outputTokens": null,
+        "cacheReadTokens": null,
+        "cacheWriteTokens": null,
+        "contextTokens": null,
+        "contextWindow": null,
+        "contextBasis": "unknown",
+        "costUsd": 0.1269474,
+        "costBasis": "estimated",
+        "measuredAt": 0,
+        "stale": false
+      }
+    }
+  },
+  {
     "type": "question.resolved",
     "sessionId": "s1",
     "blockId": "id-8",

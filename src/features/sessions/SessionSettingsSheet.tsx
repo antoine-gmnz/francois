@@ -222,7 +222,7 @@ function EditSheet({
   };
 
   return (
-    <Modal onClose={attemptClose} width={480} closeOnEscape={true} closeOnBackdropClick={true}>
+    <Modal ariaLabel="Session settings" onClose={attemptClose} width={480} closeOnEscape={true} closeOnBackdropClick={true}>
       <ModalHeader>
         <div className="session-settings-sheet__header">
           <StatusDot color={statusColor} size={7} pulsing={statusPulses(session.status)} />
