@@ -1,7 +1,7 @@
 ---
 id: transcript-scale
 title: Transcript scale — bounded buffers, paged scrollback, one event router
-status: in-review
+status: shipped
 branch: feat/transcript-scale
 created: 2026-08-20
 depends_on: [transcript-perf, conversation-view, session-engine, durable-sessions, notifications, audio-cues]

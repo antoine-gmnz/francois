@@ -1,7 +1,8 @@
 ---
 id: pi-runtime-distribution
 title: Pi installation and version compatibility
-status: shipped
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-runtime-distribution
 created: 2026-09-18
 depends_on: [pi-runtime-boundary]

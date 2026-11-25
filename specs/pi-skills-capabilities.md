@@ -1,7 +1,8 @@
 ---
 id: pi-skills-capabilities
 title: Pi skills, capability-driven UI and extension policy
-status: frozen
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-skills-capabilities
 created: 2026-09-18
 depends_on: [pi-provider-auth, pi-models-metrics, pi-turn-controls]

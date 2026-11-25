@@ -1,7 +1,7 @@
 ---
 id: app-shell
 title: App Shell
-status: frozen
+status: shipped
 created: 2026-07-18
 depends_on: [session-engine]
 ---

@@ -1,7 +1,8 @@
 ---
 id: pi-transcript-events
 title: Pi transcript and event normalization
-status: in-review
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-transcript-events
 created: 2026-09-18
 depends_on: [pi-runtime-boundary, pi-rpc-sessions]

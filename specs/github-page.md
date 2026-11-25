@@ -1,6 +1,6 @@
 ---
 id: github-page
-status: frozen
+status: shipped
 depends_on: [app-shell, overview, session-worktree, attach-to-worktree, diff-view, projects, wsl-filesystem]
 contract: contract/github-page.ts
 design: Figma YEY4c6AiWq1bKYuaju9qdV — 29 `160:15836` (PRs), 30 `161:15989` (Commits), 31 `162:16108` (Branches & worktrees); light twins L29 `162:26199`, L30 `162:26607`, L31 `162:26965`

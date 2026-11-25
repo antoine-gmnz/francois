@@ -1,7 +1,8 @@
 ---
 id: pi-provider-auth
 title: Pi provider authentication and credential profiles
-status: in-review
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-provider-auth
 created: 2026-09-18
 depends_on: [pi-runtime-boundary, pi-runtime-distribution, pi-rpc-sessions]

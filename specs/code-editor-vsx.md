@@ -2,7 +2,7 @@
 id: code-editor-vsx
 feature_id: code-editor-vsx
 title: Code editor, extensions — declarative VS Code extensions from Open VSX
-status: frozen
+status: shipped
 branch: feat/code-editor-improvement
 created: 2026-10-09
 depends_on: [code-editor, code-editor-workspace, code-editor-lsp, webview-hardening]

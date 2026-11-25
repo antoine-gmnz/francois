@@ -2,7 +2,7 @@
 id: github-ci-logs
 feature_id: github-ci-logs
 title: GitHub CI logs — live job steps and in-app step logs
-status: frozen
+status: shipped
 branch: feat/github-ci-logs
 created: 2026-09-24
 depends_on: [github-page, webview-hardening]

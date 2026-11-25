@@ -1,7 +1,8 @@
 ---
 id: pi-session-durability
 title: Pi persistence, resume and recovery
-status: in-review
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-session-durability
 created: 2026-09-18
 depends_on: [pi-rpc-sessions, pi-transcript-events]

@@ -92,3 +92,23 @@ One Windows-side config directory serves both runtimes: the account's `CLAUDE_CO
 passed into the distro through `WSLENV`, which translates the Windows path on the way in. A WSL
 session therefore uses the same account directory as a native one — you log in once per account,
 not once per distro.
+
+## Other providers
+
+Accounts aren't only Anthropic ones. Each account has a **kind**, and the kind decides which
+runtime its sessions use; they all appear in the same Accounts modal and the New Session picker.
+
+- **Codex (ChatGPT plan).** A Codex account is authenticated by `codex login` inside its own
+  `CODEX_HOME`, exactly as a Claude account owns a `CLAUDE_CONFIG_DIR` — so you can keep several
+  ChatGPT accounts side by side, with no API key. Francois's permission mode is mapped onto
+  Codex's sandbox policy, since Codex has no per-call approval channel to park a card on. You need
+  the `codex` CLI installed.
+- **Grok.** A Grok account is authenticated by `grok login` inside its own `GROK_HOME` and drives xAI's `grok` CLI, with permission mode mapped onto its sandbox the same way.
+- **OpenAI-compatible endpoint.** Register a label, a base URL, an API key (kept in a key file,
+  not in the registry) and an optional model-list override, then **Test** it from the modal. Its
+  sessions run Francois's own agent loop over `POST /chat/completions`, with the same six tools
+  and every call going through the permission gate.
+
+The rules above that are about identity — a session's account is fixed at creation, removing an
+account repoints its sessions to `default` — apply to every kind. The mirroring of your global
+`~/.claude` is specific to Claude accounts.

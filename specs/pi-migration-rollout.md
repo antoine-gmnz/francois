@@ -1,7 +1,8 @@
 ---
 id: pi-migration-rollout
 title: Pi profiles, migration and release acceptance
-status: frozen
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-migration-rollout
 created: 2026-09-18
 depends_on: [pi-session-durability, pi-provider-auth, pi-models-metrics, pi-turn-controls, pi-skills-capabilities]

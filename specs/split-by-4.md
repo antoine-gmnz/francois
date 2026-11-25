@@ -1,7 +1,7 @@
 ---
 id: split-by-4
 title: Split by 4
-status: frozen
+status: shipped
 branch: feat/split-by-4
 created: 2026-08-05
 depends_on: [split-session, app-shell, sessions-sidebar, conversation-view, diff-view, shell-terminal, collapse-right-column, agent-tab, workflow-details, fleet-board]

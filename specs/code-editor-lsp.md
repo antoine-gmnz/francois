@@ -2,7 +2,7 @@
 id: code-editor-lsp
 feature_id: code-editor-lsp
 title: Code editor, language servers — real LSP behind the Monaco editor
-status: frozen
+status: shipped
 branch: feat/code-editor-improvement
 created: 2026-10-09
 depends_on: [code-editor, code-editor-workspace, wsl-filesystem, extension-install]

@@ -1,7 +1,8 @@
 ---
 id: pi-models-metrics
 title: Pi model selection, context and cost
-status: frozen
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-models-metrics
 created: 2026-09-18
 depends_on: [pi-provider-auth, pi-transcript-events]

@@ -2,7 +2,7 @@
 id: token-viewer
 feature_id: token-viewer
 title: Token viewer — the session's context window, broken down by what fills it
-status: frozen
+status: shipped
 branch: feat/token-viewer
 created: 2026-11-25
 depends_on: [session-engine, interactive-commands, app-shell, mcp-panel]

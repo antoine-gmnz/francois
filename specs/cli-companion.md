@@ -1,7 +1,7 @@
 ---
 id: cli-companion
 title: CLI companion (the `francois` CLI)
-status: frozen
+status: shipped
 created: 2026-07-18
 depends_on: [session-engine]
 ---

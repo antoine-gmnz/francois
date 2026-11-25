@@ -2,7 +2,7 @@
 id: code-editor-agents
 feature_id: code-editor-agents
 title: Code editor, agent-aware — send, see, review, and stay out of an agent's way
-status: frozen
+status: shipped
 branch: feat/code-editor-agents
 created: 2026-10-08
 depends_on: [code-editor, session-engine, conversation-view, multi-provider-codex, open-in-vscode, wsl-filesystem, audio-cues]

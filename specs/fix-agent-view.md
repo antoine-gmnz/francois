@@ -1,7 +1,7 @@
 ---
 id: fix-agent-view
 title: Agent tabs in every pane — per-session dynamic tabs
-status: frozen
+status: shipped
 branch: feat/fix-agent-view
 created: 2026-08-12
 depends_on: [agent-tab, workflow-details, split-by-4, design-refresh, async-agents, agents-panel, workflow-panel, app-shell]

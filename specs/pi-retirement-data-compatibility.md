@@ -2,7 +2,7 @@
 id: pi-retirement-data-compatibility
 feature_id: pi-retirement-data-compatibility
 title: "02 · Preserve stored data when Pi becomes unavailable"
-status: frozen
+status: shipped
 branch: feat-rollback-pi-changes
 created: 2026-09-21
 depends_on: [pi-rollback-inventory]
