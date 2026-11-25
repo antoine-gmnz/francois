@@ -39,7 +39,7 @@ export function PruneModal({ cwd, branches, onClose, onPruned }: PruneModalProps
   }
 
   return (
-    <Modal onClose={onClose} width={460} align="center" closeOnEscape closeOnBackdropClick>
+    <Modal ariaLabel="Review prune" onClose={onClose} width={460} align="center" closeOnEscape closeOnBackdropClick>
       <ModalHeader>Review prune</ModalHeader>
       <ModalBody>
         {branches.length === 0 && <p className="prune-modal__empty">No merged branches are ready to prune.</p>}

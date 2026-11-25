@@ -1550,6 +1550,14 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Lock the session registry, recovering from poison. The map holds plain
+    /// data: a panic mid-mutation leaves at worst one stale session entry,
+    /// whereas refusing the lock would panic every later call and — via
+    /// `kill_all` at exit — skip child-process cleanup, leaking `claude` processes.
+    pub(crate) fn sessions_guard(&self) -> std::sync::MutexGuard<'_, HashMap<String, Session>> {
+        self.sessions.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// §8 dedup: the mechanical shape behind ~78 call sites —
     /// `app.state::<Engine>(); engine.sessions.lock().unwrap(); map.get_mut(id)`
     /// — collapsed into one helper. Locks, hands `f` the session, unlocks, returns
@@ -1566,7 +1574,7 @@ impl Engine {
         session_id: &str,
         f: impl FnOnce(&mut Session) -> T,
     ) -> Option<T> {
-        let mut map = self.sessions.lock().unwrap();
+        let mut map = self.sessions_guard();
         map.get_mut(session_id).map(f)
     }
 
@@ -1577,7 +1585,7 @@ impl Engine {
         session_id: &str,
         f: impl FnOnce(&Session) -> T,
     ) -> Option<T> {
-        let map = self.sessions.lock().unwrap();
+        let map = self.sessions_guard();
         map.get(session_id).map(f)
     }
 
@@ -1600,7 +1608,7 @@ impl Engine {
         accounts: &dyn crate::account::AccountKinds,
         project_id: &str,
     ) -> Vec<SessionMeta> {
-        let mut map = self.sessions.lock().unwrap();
+        let mut map = self.sessions_guard();
         map.values_mut()
             .filter(|s| {
                 s.agent_runtime != AgentRuntime::Pi && s.project_id.as_deref() == Some(project_id)
@@ -1666,7 +1674,7 @@ impl Engine {
         accounts: &dyn crate::account::AccountKinds,
         account_id: &str,
     ) -> Vec<SessionMeta> {
-        let mut map = self.sessions.lock().unwrap();
+        let mut map = self.sessions_guard();
         map.values_mut()
             .filter(|s| s.agent_runtime != AgentRuntime::Pi && s.account_id == account_id)
             .map(|s| {
@@ -1684,9 +1692,7 @@ impl Engine {
     /// `update::app_apply_update` BEFORE it touches the update state, so the two
     /// locks are never held together (see the LOCK ORDER note in update/mod.rs).
     pub fn running_count(&self) -> usize {
-        self.sessions
-            .lock()
-            .unwrap()
+        self.sessions_guard()
             .values()
             // Parked sessions count: an update that restarts the app under a turn
             // waiting on an approval loses that turn just as surely as one that
@@ -1699,7 +1705,7 @@ impl Engine {
     /// background usage tick probes exactly these, plus the isDefault account,
     /// and never an account with no sessions at all.
     pub fn live_account_ids(&self) -> Vec<String> {
-        let map = self.sessions.lock().unwrap();
+        let map = self.sessions_guard();
         let mut out: Vec<String> = Vec::new();
         for s in map.values() {
             if !out.contains(&s.account_id) {
@@ -1717,9 +1723,7 @@ pub fn kill_all(app: &AppHandle) {
     };
 
     let sessions: Vec<_> = engine
-        .sessions
-        .lock()
-        .unwrap()
+        .sessions_guard()
         .values()
         .map(|s| {
             (
@@ -1812,6 +1816,31 @@ fn basename(path: &str) -> String {
 mod tests {
     use super::*;
     use crate::session::testutil::{test_engine_with, test_session};
+
+    #[test]
+    fn a_poisoned_session_registry_still_serves_readers_and_exit_cleanup() {
+        let engine = test_engine_with(test_session());
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _guard = engine.sessions.lock().unwrap();
+                    panic!("poison the registry");
+                })
+                .join();
+        });
+        assert!(engine.sessions.is_poisoned());
+        assert_eq!(
+            engine.with_session("s1", |s| s.id.clone()).as_deref(),
+            Some("s1")
+        );
+        assert_eq!(
+            engine.with_session_mut("s1", |s| s.id.clone()).as_deref(),
+            Some("s1")
+        );
+        assert_eq!(engine.running_count(), 0);
+        assert_eq!(engine.live_account_ids().len(), 1);
+        assert!(engine.sessions_guard().contains_key("s1")); // what kill_all locks through
+    }
 
     // ---------- session-rename FR-1: the shared name validator ----------
 

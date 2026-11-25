@@ -3,6 +3,7 @@ mod blocks;
 mod coalesce;
 mod environment;
 mod lines;
+mod signals;
 mod tool_results;
 
 pub(crate) use blocks::*;
@@ -10,6 +11,7 @@ pub(crate) use blocks::*;
 pub(crate) use coalesce::*;
 pub(crate) use environment::*;
 pub(crate) use lines::*;
+pub(crate) use signals::*;
 pub(crate) use tool_results::*;
 
 use crate::session::{
@@ -162,8 +164,14 @@ fn parse_frames(
         if resumes_settled_turn(&v) && settled.swap(false, Ordering::SeqCst) {
             env.publish(RuntimeEvent::TurnResumed);
         }
+        if let Some(kind) = unrecognised_kind(&v) {
+            env.unrecognised(&kind); // audit R2: still ignored, but no longer silently
+        }
         match line_type {
             "system" => {
+                if let Some(event) = parse_system_progress(&v) {
+                    env.publish(event); // audit C4
+                }
                 if let Some(running) = parse_background_tasks(&v) {
                     bg_tasks.store(running, Ordering::Relaxed);
                 }
@@ -205,6 +213,9 @@ fn parse_frames(
             "result" => {
                 got_result = true;
                 handle_result_line(&v, &mut ctx_usage, &mut result_error, &mut result_text);
+                if let Some(thread_total_usd) = thread_cost_total(&v) {
+                    env.publish(RuntimeEvent::CostReported { thread_total_usd });
+                }
                 // The result no longer closes the control channel by itself: a
                 // background subagent dispatched by this turn outlives it, and
                 // the CLI throws away every permission ask raised after our
@@ -253,7 +264,7 @@ fn parse_frames(
                     pending_permissions,
                 );
             }
-            _ => {} // keep_alive & any unrecognized top-level type stay ignored (FR-4)
+            _ => {} // keep_alive & unrecognized types stay ignored (FR-4); reported above
         }
     }
 
@@ -535,7 +546,7 @@ pub(crate) mod golden_replay_tests {
                             }
                         }
                     }
-                    "startedAt" | "endedAt" | "at" if val.is_number() => {
+                    "startedAt" | "endedAt" | "at" | "measuredAt" if val.is_number() => {
                         *val = serde_json::json!(0);
                     }
                     _ => {}

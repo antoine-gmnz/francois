@@ -26,6 +26,10 @@ pub(crate) trait StreamEnvironment: Sync {
         None
     }
     fn flush(&self) {}
+    /// audit R2: a line kind the parser does not know (a top-level `type`, or
+    /// `system/<subtype>`) — the NAME only, never the payload. Called on every
+    /// sighting; the production side dedupes, so test doubles see each one.
+    fn unrecognised(&self, _kind: &str) {}
 }
 
 struct Delta {
@@ -135,6 +139,9 @@ impl StreamEnvironment for NativeStream {
     }
     fn failure(&self) -> Option<AppError> {
         self.error.lock().unwrap().clone()
+    }
+    fn unrecognised(&self, kind: &str) {
+        super::log_unrecognised_once("claude-code", kind);
     }
     fn flush(&self) {
         if let Some(delta) = self.delta.lock().unwrap().take() {

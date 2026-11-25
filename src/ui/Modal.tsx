@@ -8,7 +8,8 @@
 // opt in via props: several call sites layer their own keydown listener
 // (Escape closes, Enter submits) and would otherwise double-handle Escape.
 
-import { useEffect, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { focusableIn, nextFocusIndex } from './focus-trap';
 
 export type ModalAlign = 'top' | 'center';
 
@@ -28,6 +29,9 @@ export interface ModalProps {
    * SkillsPanel's dialogs raise to 50 so they stack above the panel popovers
    * (30â€“40) the way they did before adopting this component. */
   className?: string;
+  /** Accessible name of the dialog: the modal's visible title text. */
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
   children: ReactNode;
 }
 
@@ -42,6 +46,8 @@ export function Modal({
   closeOnBackdropClick = false,
   closeOnEscape = false,
   className,
+  ariaLabel,
+  ariaLabelledBy,
   children,
 }: ModalProps): JSX.Element {
   useEffect(() => {
@@ -56,6 +62,42 @@ export function Modal({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [closeOnEscape, onClose]);
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Captured during the first render, not in the effect: React applies a
+  // child's `autoFocus` while committing, before effects run, so by then
+  // `document.activeElement` is already the input INSIDE this modal — a node
+  // that is detached at unmount, which would leave focus on <body>.
+  const restoreRef = useRef<Element | null | undefined>(undefined);
+  if (restoreRef.current === undefined) restoreRef.current = document.activeElement;
+
+  // Focus management: move focus in on mount (unless a child, e.g. an
+  // `autoFocus` input, already took it) and give it back on unmount.
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const previous = restoreRef.current instanceof HTMLElement ? restoreRef.current : null;
+    if (!panel.contains(document.activeElement)) (focusableIn(panel)[0] ?? panel).focus();
+    return () => {
+      if (previous && previous.isConnected) previous.focus();
+    };
+  }, []);
+
+  // Tab trap. Handles ONLY a bare Tab / Shift+Tab; every other key (call sites
+  // own Escape/Enter) and every modified Tab (Ctrl+Tab, Alt+Tab) passes untouched.
+  // Modal is not portaled, so a modal rendered inside another (ConsentDialog in
+  // ExtensionsModal) bubbles its keydown to the outer panel: the inner trap
+  // stops the Tab there, or the outer one would move focus a second time.
+  const onPanelKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab' || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const items = focusableIn(panel);
+    const next = nextFocusIndex(items.length, items.indexOf(document.activeElement as HTMLElement), e.shiftKey);
+    e.preventDefault();
+    e.stopPropagation();
+    (next < 0 ? panel : items[next]).focus();
+  };
+
   const onBackdropClick = (e: MouseEvent<HTMLDivElement>) => {
     if (closeOnBackdropClick && e.target === e.currentTarget) onClose();
   };
@@ -66,7 +108,18 @@ export function Modal({
       onClick={onBackdropClick}
       style={alignStyle(align)}
     >
-      <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width }}>
+      <div
+        ref={panelRef}
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledBy}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={onPanelKeyDown}
+        style={{ width }}
+      >
         {children}
       </div>
     </div>

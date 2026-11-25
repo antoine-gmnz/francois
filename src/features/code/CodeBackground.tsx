@@ -53,7 +53,7 @@ function ClosePrompt(): JSX.Element | null {
     proceedWithClose();
   };
   return (
-    <Modal onClose={cancel} width={440} align="center" closeOnEscape>
+    <Modal ariaLabel="Unsaved changes" onClose={cancel} width={440} align="center" closeOnEscape>
       <ModalHeader>
         <span className="code-prompt__title">Unsaved changes</span>
       </ModalHeader>
@@ -117,7 +117,7 @@ function RemovedRootPrompt({ rootKey, onDone }: { rootKey: string; onDone: () =>
     finish();
   };
   return (
-    <Modal onClose={finish} width={440} align="center">
+    <Modal ariaLabel="Files with unsaved changes" onClose={finish} width={440} align="center">
       <ModalHeader>
         <span className="code-prompt__title">{rootKey.startsWith('session:') ? 'Session closed' : 'Project removed'}</span>
       </ModalHeader>

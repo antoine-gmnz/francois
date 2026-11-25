@@ -261,3 +261,103 @@ fn execution_snapshot_binds_each_account_to_its_own_home_and_never_ambient() {
         ErrorCode::AccountNotFound
     );
 }
+
+/// audit C2: a Claude `result`'s `total_cost_usd` is the THREAD's running
+/// total, so each report REPLACES the session figure — never summed.
+fn cost_after(reports: &[f64]) -> Option<f64> {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    for &thread_total_usd in reports {
+        projection::apply_to_session(
+            &env,
+            "/fixture",
+            &owner.scope,
+            RuntimeEvent::CostReported { thread_total_usd },
+            |_| None,
+        )
+        .unwrap();
+    }
+    env.engine
+        .with_session("s1", |s| {
+            let metrics = s.metrics.as_ref().unwrap();
+            assert_eq!(metrics.cost_basis, "estimated");
+            metrics.cost_usd
+        })
+        .flatten()
+}
+
+#[test]
+fn two_results_in_one_process_leave_the_later_thread_total() {
+    assert_eq!(cost_after(&[0.0079, 0.0120]), Some(0.0120));
+}
+
+#[test]
+fn a_resumed_process_on_the_same_thread_replaces_rather_than_adds() {
+    assert_eq!(cost_after(&[0.0045, 0.0049]), Some(0.0049));
+}
+
+#[test]
+fn a_lower_late_figure_on_the_same_thread_never_shrinks_the_cost() {
+    assert_eq!(cost_after(&[0.0049, 0.0045]), Some(0.0049));
+}
+
+/// audit C2: a cost-less `Usage` (the turn-end context refresh) keeps the
+/// reported cost rather than wiping it.
+#[test]
+fn a_costless_usage_refresh_keeps_the_reported_cost() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let apply =
+        |event| projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None);
+    apply(RuntimeEvent::CostReported {
+        thread_total_usd: 0.25,
+    })
+    .unwrap();
+    apply(RuntimeEvent::Usage {
+        context_used_tokens: Some(40),
+        input_tokens: None,
+        output_tokens: None,
+        cost: None,
+    })
+    .unwrap();
+    env.engine.with_session("s1", |s| {
+        let metrics = s.metrics.as_ref().unwrap();
+        assert_eq!(metrics.cost_usd, Some(0.25));
+        assert_eq!(metrics.cost_basis, "estimated");
+        assert_eq!(metrics.context_tokens, Some(40));
+    });
+}
+
+/// audit C4: retry and compaction are mid-turn progress the projection
+/// accepts — never the `Unsupported normalized runtime effect` protocol error.
+#[test]
+fn retry_and_compaction_progress_is_accepted_by_the_projection() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let apply =
+        |event| projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None);
+    assert!(apply(RuntimeEvent::Retry {
+        state: "waiting".into(),
+        attempt: 1,
+        delay_ms: Some(500),
+    })
+    .is_ok());
+    assert!(apply(RuntimeEvent::Compaction {
+        state: "completed".into(),
+        automatic: true,
+        message: None,
+    })
+    .is_ok());
+}

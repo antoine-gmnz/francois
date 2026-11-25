@@ -260,7 +260,7 @@ export default function AdoptCloudSessionModal({ onClose }: { onClose: () => voi
   }, [enabled, inFlight, cursor, list.sessions, submit, close, pick]);
 
   return (
-    <Modal onClose={close} width={480} closeOnEscape={false} closeOnBackdropClick={true}>
+    <Modal ariaLabel="Adopt cloud session" onClose={close} width={480} closeOnEscape={false} closeOnBackdropClick={true}>
       <ModalHeader>
         <span className="cloud-modal__title">
           <span className="cloud-modal__title-mark">›</span> adopt cloud session

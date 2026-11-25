@@ -268,6 +268,27 @@ pub(crate) enum RuntimeEvent {
         output_tokens: Option<u64>,
         cost: Option<f64>,
     },
+    /// audit C2: the USD the runtime reports as its THREAD's running total
+    /// (Claude's `total_cost_usd`) — it REPLACES the session figure, never adds.
+    CostReported {
+        thread_total_usd: f64,
+    },
+    /// audit C4: a provider retry observed mid-turn — progress, never a turn
+    /// completion. Mirrors contract/common.ts's `retry` runtime payload.
+    Retry {
+        /// 'waiting' | 'running' | 'finished'
+        state: String,
+        attempt: u32,
+        delay_ms: Option<u64>,
+    },
+    /// audit C4: a context compaction observed mid-turn. Mirrors
+    /// contract/common.ts's `compaction` runtime payload.
+    Compaction {
+        /// 'started' | 'completed' | 'failed'
+        state: String,
+        automatic: bool,
+        message: Option<String>,
+    },
     PermissionAsked {
         block_id: String,
         ask: PermissionAsk,

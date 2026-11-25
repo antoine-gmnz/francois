@@ -379,7 +379,7 @@ function ExpandedJob({
                   </div>
                 </div>
               ) : (
-                <Modal onClose={() => onToggleStep(s.number)} width={Math.min(960, window.innerWidth * 0.9)} align="center" closeOnEscape closeOnBackdropClick>
+                <Modal ariaLabel={`${job.name} - ${s.name}`} onClose={() => onToggleStep(s.number)} width={Math.min(960, window.innerWidth * 0.9)} align="center" closeOnEscape closeOnBackdropClick>
                   <ModalHeader>
                     {job.name} › {s.name}
                   </ModalHeader>

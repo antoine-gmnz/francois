@@ -65,7 +65,7 @@ export default function UpdateModal({ onClose }: { onClose: () => void }): JSX.E
   const primary = view.kind === 'available' ? view.primary : null;
 
   return (
-    <Modal onClose={onClose} width={560} align="center" closeOnEscape closeOnBackdropClick className="upd-backdrop">
+    <Modal ariaLabel="Update" onClose={onClose} width={560} align="center" closeOnEscape closeOnBackdropClick className="upd-backdrop">
       <ModalHeader>
         <div className="upd-header">
           <span className="upd-header__title">Update</span>

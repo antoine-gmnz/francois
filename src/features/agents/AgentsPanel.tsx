@@ -234,7 +234,7 @@ function NewAgentModal({ sessionId, onClose }: { sessionId: string; onClose: () 
     // dispatches), so closeOnEscape stays off here to avoid double-handling —
     // see REFACTOR-CONVENTIONS.md's Modal note. closeOnBackdropClick mirrors
     // the previous unconditional `onClick={onClose}` on the backdrop.
-    <Modal onClose={onClose} width={420} align="top" closeOnBackdropClick closeOnEscape={false}>
+    <Modal ariaLabel="New subagent" onClose={onClose} width={420} align="top" closeOnBackdropClick closeOnEscape={false}>
       <ModalHeader>
         <div className="agent-modal-title-row">
           <span className="agent-modal-arrow">›</span>

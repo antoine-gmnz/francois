@@ -176,6 +176,7 @@ function RunModal({
 
   return (
     <Modal
+      ariaLabel="Run skill"
       onClose={onClose}
       width={380}
       align="center"
@@ -287,6 +288,7 @@ function InstallModal({
 
   return (
     <Modal
+      ariaLabel="Enable skill"
       onClose={onClose}
       width={380}
       align="center"

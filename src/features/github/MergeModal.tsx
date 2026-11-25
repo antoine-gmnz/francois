@@ -48,7 +48,7 @@ export function MergeModal({ cwd, pull, onClose, onMerged }: MergeModalProps): J
   const note = outcome ? mergeOutcomeNote(outcome, pull.head, deleteBranch, labels.name) : null;
 
   return (
-    <Modal onClose={onClose} width={460} align="center" closeOnEscape={!busy} closeOnBackdropClick={!busy}>
+    <Modal ariaLabel="Merge" onClose={onClose} width={460} align="center" closeOnEscape={!busy} closeOnBackdropClick={!busy}>
       <ModalHeader>Merge {labels.request.toLowerCase()}</ModalHeader>
       <ModalBody>
         <p className="merge-modal__target">
