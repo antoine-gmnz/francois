@@ -732,6 +732,9 @@ pub fn session_remove(
             if let Some(p) = &session.pending_probe {
                 p.kill(); // interactive-commands: the probe dies with the session (§7)
             }
+            if let Some(f) = session.context.flight() {
+                f.kill(); // token-viewer §7: so does a context-breakdown probe
+            }
             // session-attachments FR-16: delete every file THIS session created
             // under its attachments dir, then the dir if that emptied it. Only
             // its own records are touched — a copied: false origin (and another

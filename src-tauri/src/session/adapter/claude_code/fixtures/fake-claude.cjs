@@ -28,10 +28,34 @@ let answered = 0;
 let lines = 0;
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   log({ stdin: JSON.parse(line) });
+  const msg = JSON.parse(line);
+  if (msg.type === 'control_request' && msg.request && msg.request.subtype === 'get_context_usage') return contextUsage(msg.request_id);
   if (++lines === 1) return start();
   if (scenario === 'background' && JSON.parse(line).type === 'user') return reply();
   if (JSON.parse(line).type === 'control_response' && ++answered === expected) result();
 }).on('close', () => process.exit(0)); // stdin EOF is what ends a stream-json CLI
+
+// token-viewer FR-11: the `get_context_usage` side-probe, answered with no turn.
+// Scenarios: `context:<fixture path>` answers with that capture's response (the
+// resumed fixture), echoing the caller's request_id; `context-slow:<path>` the
+// same after 400ms; `context-error` refuses it like an older CLI; `context-exit`
+// dies first; `context-hang` never answers. A hook line and a reply to someone
+// else's request always come first — the probe must skip both.
+function contextUsage(request_id) {
+  const reply = (response) => process.stdout.write(JSON.stringify({ type: 'control_response', response }) + '\n');
+  process.stdout.write(JSON.stringify({ type: 'system', subtype: 'hook_response', hook_name: 'SessionStart:startup', stdout: '' }) + '\n');
+  reply({ subtype: 'success', request_id: 'someone-else', response: {} });
+  if (scenario === 'context-exit') return exitFlushed(2);
+  if (scenario === 'context-hang') return;
+  if (scenario === 'context-error') return reply({ subtype: 'error', request_id, error: 'Unsupported control request subtype: get_context_usage' });
+  const [kind, ...rest] = scenario.split(':');
+  const answer = () => {
+    const captured = JSON.parse(fs.readFileSync(rest.join(':'), 'utf8').split('\n')[0]);
+    reply({ ...captured.response, request_id });
+  };
+  if (kind === 'context-slow') return setTimeout(answer, 400);
+  if (kind === 'context') return answer();
+}
 
 // The user's reply lands in the live process: answer it, stop the stack, done.
 function reply() {

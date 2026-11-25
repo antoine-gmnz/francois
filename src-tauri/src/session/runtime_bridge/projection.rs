@@ -60,7 +60,11 @@ fn apply_projected(
                     s.effective_capabilities = None;
                     s.runtime_generation = None;
                     s.session_runtime = None;
-                    s.current = None;
+                    // token-viewer FR-4: a settled child exiting may have
+                    // folded its background tasks into the thread.
+                    if s.current.take().is_some() {
+                        s.context.note_turn_ended();
+                    }
                     s.status == "running"
                         || s.status == "awaiting_approval"
                         || s.status == "awaiting_input"

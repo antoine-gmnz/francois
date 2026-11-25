@@ -2,6 +2,8 @@
 // "18 · Panel / Context — MCP down" (134:4077, light 142:15063): what the
 // focused session is running WITH.
 //
+//   CONTEXT       token-viewer: the window broken down by category
+//                 (src/features/context/); hides the footer meter once shown.
 //   banner        one per MCP server that is down: its reason, then Retry
 //                 (reconnect) and Detach — the two answers the MCP tab offers.
 //   MCP SERVERS   every server with a state glyph and its tool count, then
@@ -25,6 +27,9 @@ import { Icon } from '../../ui/Icon';
 import { MeterRow, SidePanelBody, SidePanelEmpty, SidePanelFooter, SidePanelLabel } from '../../ui/SidePanel';
 import { StateIcon } from '../../ui/StateIcon';
 import { accountDisplayLabel, findAccount } from '../accounts/accounts';
+import { ContextBreakdown } from '../context/ContextBreakdown';
+import { breakdownView } from '../context/context-breakdown';
+import { useContextBreakdown } from '../context/useContextBreakdown';
 import { runChipParts } from '../sessions/run-chip';
 import { skillInvocationLabel, skillRowKey } from '../skills/skills-loaded';
 import { useSkillsFeed } from '../skills/useSkillsFeed';
@@ -50,6 +55,10 @@ export default function ContextSection({ session, context }: SessionPanelSection
   const setMainTab = useStore((s) => s.setMainTab);
   const setFocusedPane = useStore((s) => s.setFocusedPane);
   const setMcpAttachOpen = useStore((s) => s.setMcpAttachOpen);
+  // token-viewer: the breakdown sits above the MCP servers and, once shown,
+  // replaces the footer's single Context meter (FR-15/FR-17).
+  const breakdown = useContextBreakdown(session);
+  const view = breakdownView(breakdown);
 
   const openTab = (tab: 'mcp' | 'skills') => {
     setFocusedPane('main');
@@ -59,6 +68,8 @@ export default function ContextSection({ session, context }: SessionPanelSection
   return (
     <>
       <SidePanelBody className="context-section">
+        {/* Keyed by session so list expansion resets on a focus change (story 4). */}
+        <ContextBreakdown key={session.id} view={view} status={session.status} loading={breakdown.loading} onRefresh={breakdown.refresh} />
         <McpBlock
           session={session}
           onAttach={() => {
@@ -71,7 +82,7 @@ export default function ContextSection({ session, context }: SessionPanelSection
       </SidePanelBody>
       <SidePanelFooter>
         <RunFacts session={session} />
-        {context && <MeterRow label="Context" fraction={context.fraction} figure={context.figure} />}
+        {context && view.kind !== 'shown' && <MeterRow label="Context" fraction={context.fraction} figure={context.figure} />}
       </SidePanelFooter>
     </>
   );

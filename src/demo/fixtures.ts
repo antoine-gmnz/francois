@@ -21,6 +21,7 @@ import type { ConversationBlock } from '../../contract/conversation-view';
 import type { DiffSummary, FileDiff } from '../../contract/diff-view';
 import type { Account } from '../../contract/multi-account';
 import type { ProjectMeta } from '../../contract/projects';
+import type { ContextBreakdown } from '../../contract/token-viewer';
 import type { UsageSnapshot } from '../../contract/usage-bar';
 
 /**
@@ -483,6 +484,51 @@ export const MCP: McpServerInfo[] = [
   { name: 'sentry', status: 'connecting', scope: 'project' },
   { name: 'puppeteer', status: 'error', errorMessage: 'handshake timeout', scope: 'local' },
 ];
+
+// ---------- context breakdown (token-viewer) ----------
+
+// The Context tab's breakdown — in-window + buffer + free sum to the 1M window,
+// and totalTokens is the in-window rows alone (191 500).
+export const CONTEXT_BREAKDOWN: ContextBreakdown = {
+  model: OPUS_ID,
+  totalTokens: 191_500,
+  maxTokens: 1_000_000,
+  percentage: 19,
+  categories: [
+    { id: 'system_prompt', name: 'System prompt', tokens: 4_100, kind: 'used' },
+    { id: 'system_tools', name: 'System tools', tokens: 23_100, kind: 'used' },
+    { id: 'mcp_tools', name: 'MCP tools', tokens: 6_900, kind: 'used' },
+    { id: 'mcp_instructions', name: 'MCP server instructions', tokens: 2_300, kind: 'used' },
+    { id: 'custom_agents', name: 'Custom agents', tokens: 4_300, kind: 'used' },
+    { id: 'memory_files', name: 'Memory files', tokens: 17_100, kind: 'used' },
+    { id: 'skills', name: 'Skills', tokens: 9_900, kind: 'used' },
+    { id: 'messages', name: 'Messages', tokens: 123_800, kind: 'used' },
+    { id: 'mcp_tools_deferred', name: 'MCP tools (deferred)', tokens: 117_400, kind: 'deferred' },
+    { id: 'system_tools_deferred', name: 'System tools (deferred)', tokens: 15_300, kind: 'deferred' },
+    { id: 'autocompact_buffer', name: 'Autocompact buffer', tokens: 33_000, kind: 'buffer' },
+    { id: 'free_space', name: 'Free space', tokens: 775_500, kind: 'free' },
+  ],
+  mcpTools: [
+    { name: 'mcp__serena__find_symbol', serverName: 'serena', tokens: 2_400, isLoaded: true },
+    { name: 'mcp__serena__get_symbols_overview', serverName: 'serena', tokens: 1_900, isLoaded: true },
+    { name: 'mcp__serena__replace_symbol_body', serverName: 'serena', tokens: 1_300, isLoaded: false },
+    { name: 'mcp__cartograph__query', serverName: 'cartograph', tokens: 820, isLoaded: true },
+    { name: 'mcp__cartograph__neighbors', serverName: 'cartograph', tokens: 480, isLoaded: true },
+    { name: 'mcp__postgres__query', serverName: 'postgres', tokens: 640, isLoaded: false },
+  ],
+  memoryFiles: [
+    { path: '/francois/CLAUDE.md', type: 'Project', tokens: 9_800 },
+    { path: '/home/dev/.claude/CLAUDE.md', type: 'User', tokens: 6_700 },
+    { path: '/home/dev/.claude/projects/francois/memory/MEMORY.md', type: 'AutoMem', tokens: 600 },
+  ],
+  agents: [
+    { agentType: 'code-reviewer', source: 'userSettings', tokens: 1_800 },
+    { agentType: 'frontend', source: 'projectSettings', tokens: 1_500 },
+    { agentType: 'core', source: 'projectSettings', tokens: 1_000 },
+  ],
+  skills: [],
+  autoCompactThreshold: 967_000,
+};
 
 // ---------- skills ----------
 

@@ -431,6 +431,7 @@ pub fn session_compact(
             if let Some(u) = used {
                 s.context_used_tokens = u;
             }
+            s.context.note_turn_ended(); // token-viewer FR-4: /compact rewrote the thread
             s.status = status::IDLE.into();
         }
     }
