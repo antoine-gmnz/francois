@@ -213,6 +213,7 @@ fn main() {
             session::mcp_decide,
             // claude-project-health: folder trust + Cohorte guard diagnostics.
             session::session_project_health,
+            session::session_context_breakdown,
             session::session_trust_folder,
             session::skills_list,
             session::skills_install,

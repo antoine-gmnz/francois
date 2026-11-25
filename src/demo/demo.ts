@@ -22,6 +22,7 @@ import {
   AGENTS,
   AGENT_STEPS,
   COMMANDS,
+  CONTEXT_BREAKDOWN,
   DIFF,
   MCP,
   MODELS,
@@ -312,6 +313,9 @@ function route(cmd: string, a: Args): unknown {
         trust: { trusted: true, key: '', allowRuleCount: 0 },
         guard: { registered: false, interpreterMissing: null },
       });
+    // ---- token-viewer: measured a couple of minutes ago ----
+    case 'session_context_breakdown':
+      return ok({ breakdown: CONTEXT_BREAKDOWN, measuredAt: T0 - 2 * 60_000, stale: false });
     case 'mcp_detail':
       return ok({ ...(MCP.find((m) => m.name === a?.name) ?? MCP[0]), transport: 'stdio', command: 'npx -y @orbit/mcp' });
 

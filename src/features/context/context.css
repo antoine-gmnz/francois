@@ -1,0 +1,199 @@
+/* token-viewer — the Context tab's breakdown (ContextBreakdown.tsx), spec §8.
+   Colour here is CATEGORICAL, not state, so it is built from the --hue-* and
+   neutral tokens — never --state-*. Same horizontal rhythm as the Context
+   section's rows (context-section.css): 14px in from the rail edge. */
+
+.context-breakdown {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--space-8);
+}
+
+/* ── header: CONTEXT · 19% used · 191.5K / 1M — rides SidePanelLabel's count
+   slot, so undo the label's uppercase tracking for it ── */
+.context-breakdown__summary,
+.context-breakdown__placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+}
+.context-breakdown__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.context-breakdown__used {
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+.context-breakdown__figure {
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-3);
+  background: none;
+  font: var(--type-mono);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.context-breakdown__figure:hover {
+  background: var(--bg-raised);
+}
+.context-breakdown__placeholder {
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+
+/* ── the segmented bar: free space is the track ── */
+.context-breakdown__bar {
+  display: flex;
+  gap: 1px;
+  height: 4px;
+  margin: var(--space-4) var(--space-14) var(--space-8);
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  background: var(--bg-selected);
+}
+.context-breakdown__seg {
+  flex-shrink: 0;
+  height: 100%;
+}
+
+/* ── category rows ── */
+.context-breakdown__rows--spaced {
+  margin-top: var(--space-8);
+}
+.context-breakdown__row,
+.context-breakdown__toggle,
+.context-breakdown__entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-14);
+}
+.context-breakdown__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-xs);
+}
+.context-breakdown__name,
+.context-breakdown__entry-name {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-ui);
+  color: var(--text-secondary);
+}
+.context-breakdown__tokens {
+  flex-shrink: 0;
+  font: var(--type-mono);
+  color: var(--text-muted);
+  text-align: right;
+}
+.context-breakdown__share {
+  flex-shrink: 0;
+  min-width: 6ch;
+  font: var(--type-mono);
+  color: var(--text-primary);
+  text-align: right;
+}
+.context-breakdown__row--deferred .context-breakdown__name,
+.context-breakdown__row--deferred .context-breakdown__tokens,
+.context-breakdown__row--deferred .context-breakdown__share {
+  color: var(--text-faint);
+}
+
+/* ── categorical swatches (dot + bar segment) ── */
+.context-breakdown__swatch--messages {
+  background: var(--hue-blue);
+}
+.context-breakdown__swatch--system-tools {
+  background: var(--hue-purple);
+}
+.context-breakdown__swatch--mcp-tools {
+  background: var(--hue-teal);
+}
+.context-breakdown__swatch--system-prompt {
+  background: var(--hue-slate);
+}
+.context-breakdown__swatch--quiet {
+  background: var(--text-faint);
+}
+.context-breakdown__swatch--neutral {
+  background: var(--text-muted);
+}
+.context-breakdown__swatch--buffer,
+.context-breakdown__swatch--deferred {
+  background: var(--bg-strong);
+}
+.context-breakdown__swatch--free {
+  background: var(--bg-selected);
+}
+
+/* ── expandable lists: ▸ MCP tools  239 ── */
+.context-breakdown__lists {
+  margin-top: var(--space-8);
+}
+.context-breakdown__toggle {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.context-breakdown__toggle:hover {
+  background: var(--bg-raised);
+}
+.context-breakdown__caret {
+  flex-shrink: 0;
+  width: 8px;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.context-breakdown__count {
+  flex-shrink: 0;
+  font: var(--type-mono);
+  color: var(--text-faint);
+}
+.context-breakdown__entries {
+  padding-bottom: var(--space-4);
+}
+.context-breakdown__entry {
+  height: 22px;
+  padding-left: calc(var(--space-14) + var(--space-16));
+}
+.context-breakdown__entry .context-breakdown__entry-name {
+  font: var(--type-mono);
+}
+.context-breakdown__entry--strong .context-breakdown__entry-name {
+  color: var(--text-primary);
+}
+.context-breakdown__entry--indent {
+  padding-left: calc(var(--space-14) + var(--space-28));
+}
+.context-breakdown__entry--faint .context-breakdown__entry-name,
+.context-breakdown__entry--faint .context-breakdown__tokens {
+  color: var(--text-faint);
+}
+.context-breakdown__note {
+  flex-shrink: 0;
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+
+/* ── footer: Updated just now · refreshes when this turn ends ── */
+.context-breakdown__footer {
+  margin: var(--space-8) 0 0;
+  padding: 0 var(--space-14);
+  font: var(--type-small);
+  color: var(--text-faint);
+}
+.context-breakdown__retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  cursor: pointer;
+}

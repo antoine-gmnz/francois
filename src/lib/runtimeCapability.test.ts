@@ -19,6 +19,7 @@ import {
   accountSupportsClaudeTools,
   accountUsesCodex,
   sessionUsesNativeMcpAuth,
+  sessionSupportsContextBreakdown,
 } from './runtimeCapability';
 const PI_BASELINE_UNAVAILABLE = Object.keys(runtimeCapabilities('pi')) as (keyof RuntimeCapabilities)[];
 
@@ -256,5 +257,15 @@ describe('runtime-name mapping predicates (process-frontend-boundaries)', () => 
       expect(requestNeedsLiveGeneration(meta({ agentRuntime }))).toBe(false);
     }
     expect(requestNeedsLiveGeneration(null)).toBe(false);
+  });
+});
+
+describe('sessionSupportsContextBreakdown (token-viewer FR-17)', () => {
+  it('is Claude Code only — the breakdown is its get_context_usage control request', () => {
+    expect(sessionSupportsContextBreakdown(meta({ agentRuntime: 'claude-code' }))).toBe(true);
+    for (const agentRuntime of ['francois', 'codex', 'grok', 'pi'] as const) {
+      expect(sessionSupportsContextBreakdown(meta({ agentRuntime })), agentRuntime).toBe(false);
+    }
+    expect(sessionSupportsContextBreakdown(null)).toBe(false);
   });
 });

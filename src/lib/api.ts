@@ -1,5 +1,6 @@
 import type { OpenTargetRequest, OpenTargetResponse } from '../../contract/open-target';
 import type { SessionProjectHealthResponse, SessionTrustFolderResponse } from '../../contract/claude-project-health';
+import type { ContextBreakdownResponse } from '../../contract/token-viewer';
 import { invalidateRequestReplies } from './request-replies';
 import type { SessionModelsInput, SessionModelsResponse } from '../../contract/session-engine';
 // Typed wrappers over the Tauri session commands + the session event stream.
@@ -523,6 +524,11 @@ export const sessionProjectHealth = (sessionId: SessionId) =>
   ipc<SessionProjectHealthResponse>('session_project_health', { sessionId });
 export const sessionTrustFolder = (sessionId: SessionId) =>
   ipc<SessionTrustFolderResponse>('session_trust_folder', { sessionId });
+
+// token-viewer FR-12: the context window broken down by category, measured by a
+// short-lived `claude -p` probe. `refresh: false` reuses a fresh core cache.
+export const sessionContextBreakdown = (sessionId: SessionId, refresh = false) =>
+  ipc<Result<ContextBreakdownResponse>>('session_context_breakdown', { sessionId, refresh });
 
 export const mcpApprovals = (sessionId: SessionId) => ipc<Result<McpApprovalState>>('mcp_approvals', { sessionId });
 export const mcpDecide = (sessionId: SessionId, decision: McpDecision) =>

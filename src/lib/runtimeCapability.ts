@@ -91,6 +91,11 @@ export function sessionUsesNativeMcpAuth(meta: Pick<SessionMeta, 'agentRuntime'>
   return meta?.agentRuntime === 'codex';
 }
 
+/** token-viewer FR-17: the context breakdown is Claude Code's `get_context_usage` control request. */
+export function sessionSupportsContextBreakdown(meta: Pick<SessionMeta, 'agentRuntime'> | null | undefined): boolean {
+  return meta?.agentRuntime === 'claude-code';
+}
+
 export function sessionCapability(meta: SessionMeta | null | undefined, capability: RuntimeCapability): CapabilityState {
   if (!meta) return { available: true };
   if (sessionIsRetired(meta)) return { available: false, reason: PI_UNAVAILABLE };

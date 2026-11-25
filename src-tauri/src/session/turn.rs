@@ -209,6 +209,7 @@ pub fn settle_turn(env: &dyn SessionEnv, session_id: &str, _background_tasks: us
             }
             s.status = status::IDLE.into();
             s.last_activity_at = now_ms();
+            s.context.note_turn_ended(); // token-viewer FR-4: a settled turn ended too
             true
         })
         .unwrap_or(false);
@@ -414,6 +415,7 @@ fn finish_turn_with_error(
         Vec<WorkflowRun>,
     )> = engine.with_session_mut(session_id, |s| {
         s.current = None;
+        s.context.note_turn_ended(); // token-viewer FR-4: the breakdown predates this
         let at = now_ms();
         let agent_ems = if s.agent_runtime == AgentRuntime::Codex {
             Vec::new()
@@ -525,6 +527,7 @@ pub fn apply_fail_session(
     s.status = "error".into();
     s.error_message = Some(msg.to_string());
     s.current = None;
+    s.context.note_turn_ended(); // token-viewer FR-4
     s.queue.clear();
     (
         finalize_agents(s, true, at),

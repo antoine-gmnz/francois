@@ -2907,6 +2907,7 @@ fn load_session_records(
                 settings_revision: 0,
                 running_context: None,
                 pending_probe: None,
+                context: Default::default(),
                 agents: HashMap::new(),
                 agent_order: Vec::new(),
                 agent_by_tool: HashMap::new(),

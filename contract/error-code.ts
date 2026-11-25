@@ -73,6 +73,7 @@ export type ErrorCode =
   | 'SHELL_NOT_FOUND' // multiple-shells: no entry for that ShellId (unknown, disposed, or another session's)
   | 'SHELL_LIMIT_REACHED' // multiple-shells: shell_create at the 6-shell-per-session cap (FR-2)
   | 'STEP_DETAIL_NOT_FOUND' // command-inspect FR-11: no record for that blockId (never captured, or swept)
+  | 'CONTEXT_BREAKDOWN_UNAVAILABLE' // token-viewer: probe failed, timed out, CLI refused get_context_usage, or non-Claude runtime
   // session-engine: the turn died on the plan's usage limit (or an API rate
   // limit). Carried by `session.error` and NOT terminal — the core sends the
   // session back to `idle` because the window resets on its own clock and emits

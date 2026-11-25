@@ -32,6 +32,9 @@ mod runtime_bridge;
 /// read its ancestor's private fields, so nothing here needs widened visibility.
 mod cloud;
 mod commands;
+/// token-viewer: the per-category context-window breakdown, read off a
+/// short-lived `get_context_usage` side-probe.
+mod context_breakdown;
 mod control;
 mod env;
 mod events;
@@ -198,6 +201,10 @@ pub use env::SessionEnv;
 // core-architecture-wave3 FR-9: the teardown seam. `register_teardown` is
 // called once by the crate root; `dispose_session_resources` is what
 // `session_remove` calls instead of naming another domain.
+pub use context_breakdown::{
+    __cmd__session_context_breakdown, __tauri_command_name_session_context_breakdown,
+    session_context_breakdown,
+};
 pub(crate) use events::emit;
 pub use events::SessionEvent;
 pub(crate) use file_touch::{host_path, FileTouchKind};
@@ -909,6 +916,9 @@ pub struct Session {
     settings_revision: u64,
     running_context: Option<TurnContext>,
     pending_probe: Option<ProbeHandle>, // interactive-commands FR-11: single in-flight side-spawn
+    /// token-viewer FR-4/FR-7: the in-memory context-breakdown cache, its
+    /// turn-end epoch and the single in-flight probe. Never persisted.
+    context: context_breakdown::ContextState,
     agents: HashMap<String, AgentInfo>,
     agent_order: Vec<String>, // first-seen order for agents_list (FR-7)
     // ---- async-agents §6 (none of this is serialized; cleared with the session) ----
@@ -1086,6 +1096,7 @@ impl Session {
             settings_revision: 0,
             running_context: None,
             pending_probe: None,
+            context: Default::default(),
             agents: HashMap::new(),
             agent_order: Vec::new(),
             agent_by_tool: HashMap::new(),
@@ -1716,10 +1727,11 @@ pub fn kill_all(app: &AppHandle) {
                 s.runtime_owner.is_some() || s.session_runtime.is_some(),
                 s.current.clone(),
                 s.pending_probe.clone(),
+                s.context.flight(),
             )
         })
         .collect();
-    for (id, owned, turn, probe) in sessions {
+    for (id, owned, turn, probe, context_probe) in sessions {
         if owned {
             let _ = runtime_bridge::close_session(app, &engine, &id);
         } else if let Some(turn) = turn {
@@ -1735,6 +1747,9 @@ pub fn kill_all(app: &AppHandle) {
         }
         if let Some(probe) = probe {
             probe.kill();
+        }
+        if let Some(flight) = context_probe {
+            flight.kill();
         }
     }
     // workflow-details FR-6: no watch outlives the app. Dropped AFTER the drains

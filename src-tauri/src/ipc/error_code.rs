@@ -147,6 +147,8 @@ pub enum ErrorCode {
     ShellLimitReached,
     /// command-inspect FR-11: no record for that blockId (never captured, or swept)
     StepDetailNotFound,
+    /// token-viewer: probe failed, timed out, CLI refused get_context_usage, or non-Claude runtime
+    ContextBreakdownUnavailable,
     /// session-engine: the turn died on the plan's usage limit (or an API rate
     /// limit). Carried by `session.error` and NOT terminal — the core sends the
     /// session back to `idle` because the window resets on its own clock and emits
@@ -335,6 +337,7 @@ impl ErrorCode {
         ErrorCode::ShellNotFound,
         ErrorCode::ShellLimitReached,
         ErrorCode::StepDetailNotFound,
+        ErrorCode::ContextBreakdownUnavailable,
         ErrorCode::UsageLimit,
         ErrorCode::CloudAuthRequired,
         ErrorCode::CloudAuthExpired,
@@ -465,6 +468,7 @@ impl ErrorCode {
             ErrorCode::ShellNotFound => "SHELL_NOT_FOUND",
             ErrorCode::ShellLimitReached => "SHELL_LIMIT_REACHED",
             ErrorCode::StepDetailNotFound => "STEP_DETAIL_NOT_FOUND",
+            ErrorCode::ContextBreakdownUnavailable => "CONTEXT_BREAKDOWN_UNAVAILABLE",
             ErrorCode::UsageLimit => "USAGE_LIMIT",
             ErrorCode::CloudAuthRequired => "CLOUD_AUTH_REQUIRED",
             ErrorCode::CloudAuthExpired => "CLOUD_AUTH_EXPIRED",
