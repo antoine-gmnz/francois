@@ -131,7 +131,7 @@ function Body({ breakdown }: { breakdown: Breakdown }) {
     <>
       <div className="context-breakdown__bar" role="img" aria-label={headerParts(breakdown).used}>
         {barSegments(breakdown).map((seg) => (
-          // Width is runtime-computed — the one place inline style is allowed.
+          // eslint-disable-next-line no-restricted-syntax -- segment width is runtime-computed from the breakdown
           <span key={seg.key} className={`context-breakdown__seg context-breakdown__swatch--${seg.tone}`} style={{ width: `${seg.percent}%` }} />
         ))}
       </div>
