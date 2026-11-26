@@ -1,7 +1,8 @@
 ---
 id: pi-turn-controls
 title: Pi steering, follow-ups, cancellation and compaction
-status: frozen
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-turn-controls
 created: 2026-09-18
 depends_on: [pi-rpc-sessions, pi-transcript-events, pi-session-durability]

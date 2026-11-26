@@ -31,9 +31,9 @@ pub fn handle_stream_event(
     ctx_usage.observe_stream_event(ev);
     let event_type = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
     match event_type {
-        "content_block_start" => {
-            handle_content_block_start(env, session_id, ev, blocks, tools, text_accum, text_utf16)
-        }
+        "content_block_start" => handle_content_block_start(
+            env, session_id, ev, blocks, tools, text_accum, text_utf16, open_block,
+        ),
         "content_block_delta" => handle_content_block_delta(
             env, session_id, ev, blocks, tools, text_accum, text_utf16, open_block,
         ),
@@ -44,8 +44,8 @@ pub fn handle_stream_event(
     }
 }
 
-/// `content_block_start`: opens the bookkeeping slot for a new text or
-/// tool_use block. Other block types (e.g. `thinking`) are ignored.
+/// `content_block_start`: opens the bookkeeping slot for a new text,
+/// tool_use or thinking block. Other block types are ignored.
 #[allow(clippy::too_many_arguments)]
 fn handle_content_block_start(
     env: &dyn StreamEnvironment,
@@ -55,6 +55,7 @@ fn handle_content_block_start(
     tools: &mut HashMap<String, ToolRec>,
     text_accum: &mut HashMap<String, String>,
     text_utf16: &mut HashMap<String, usize>,
+    open_block: &mut Option<(String, BlockKind)>,
 ) {
     let idx = ev.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
     let content_block = ev.get("content_block").cloned().unwrap_or(Value::Null);
@@ -65,8 +66,53 @@ fn handle_content_block_start(
     match block_type {
         "text" => start_text_block(idx, blocks, text_accum, text_utf16),
         "tool_use" => start_tool_use_block(env, session_id, idx, &content_block, blocks, tools),
-        _ => {} // thinking etc. — ignored
+        "thinking" => {
+            start_thinking_block(env, idx, &content_block, blocks, text_accum, open_block)
+        }
+        _ => {} // redacted_thinking, server tool blocks, ... — ignored
     }
+}
+
+/// thinking-blocks: mint the slot for a `thinking` block, seed its text from
+/// the start payload (normally empty), and announce it. The block's
+/// `signature` is never read — it is opaque replay material, not content.
+fn start_thinking_block(
+    env: &dyn StreamEnvironment,
+    idx: u64,
+    content_block: &Value,
+    blocks: &mut HashMap<u64, (String, BlockKind, String)>,
+    text_accum: &mut HashMap<String, String>,
+    open_block: &mut Option<(String, BlockKind)>,
+) {
+    let block_id = uuid();
+    let seed = content_block
+        .get("thinking")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    blocks.insert(idx, (block_id.clone(), BlockKind::Thinking, String::new()));
+    text_accum.insert(block_id.clone(), seed);
+    *open_block = Some((block_id.clone(), BlockKind::Thinking));
+    env.publish(RuntimeEvent::ThinkingStarted { block_id });
+}
+
+/// thinking-blocks: `thinking_delta` appends onto the block's accumulated
+/// text. Nothing is published per delta — the block renders collapsed, and
+/// `ThinkingFinal` carries the whole text at stop.
+fn handle_thinking_delta(
+    idx: u64,
+    delta: &Value,
+    blocks: &HashMap<u64, (String, BlockKind, String)>,
+    text_accum: &mut HashMap<String, String>,
+) {
+    let Some((block_id, BlockKind::Thinking, _)) = blocks.get(&idx) else {
+        return;
+    };
+    let chunk = delta.get("thinking").and_then(Value::as_str).unwrap_or("");
+    text_accum
+        .entry(block_id.clone())
+        .or_default()
+        .push_str(chunk);
 }
 
 /// Mint the bookkeeping slot for a new text block. Pure: no engine access.
@@ -207,7 +253,8 @@ fn handle_content_block_delta(
             env, session_id, idx, &delta, blocks, text_accum, text_utf16, open_block,
         ),
         "input_json_delta" => handle_input_json_delta(idx, &delta, blocks, tools),
-        _ => {} // thinking_delta / signature_delta — ignored
+        "thinking_delta" => handle_thinking_delta(idx, &delta, blocks, text_accum),
+        _ => {} // signature_delta (never surfaced), ... — ignored
     }
 }
 
@@ -293,6 +340,13 @@ fn handle_content_block_stop(
         BlockKind::Text => finish_text_block(env, session_id, &block_id, text_accum, open_block),
         BlockKind::Tool => {
             finish_tool_block(env, session_id, cwd, &block_id, &slot, tools, open_block)
+        }
+        BlockKind::Thinking => {
+            env.publish(RuntimeEvent::ThinkingFinal {
+                text: text_accum.get(&block_id).cloned().unwrap_or_default(),
+                block_id,
+            });
+            *open_block = None;
         }
     }
 }
@@ -509,6 +563,143 @@ mod tests {
             vec!["edit"]
         );
         assert!(kind("Read", r#"{"file_path":"/x/b.ts"}"#).is_empty());
+    }
+
+    // ---------- thinking-blocks ----------
+
+    fn thinking_env() -> crate::session::testenv::TestEnv {
+        crate::session::testenv::TestEnv {
+            engine: crate::session::testutil::test_engine_with(
+                crate::session::testutil::test_session(),
+            ),
+            ..Default::default()
+        }
+    }
+
+    /// Feed raw stream events through the real handlers; return the open block
+    /// and accumulated text so an interrupt can be simulated afterwards.
+    fn feed_events(
+        env: &crate::session::testenv::TestEnv,
+        events: &[Value],
+    ) -> (Option<(String, BlockKind)>, HashMap<String, String>) {
+        let mut blocks = HashMap::new();
+        let mut tools = HashMap::new();
+        let mut text_accum = HashMap::new();
+        let mut text_utf16 = HashMap::new();
+        let mut open_block = None;
+        let mut ctx = ContextTracker::default();
+        for ev in events {
+            handle_stream_event(
+                env,
+                "s1",
+                "/x",
+                ev,
+                &mut blocks,
+                &mut tools,
+                &mut text_accum,
+                &mut text_utf16,
+                &mut open_block,
+                &mut ctx,
+            );
+        }
+        (open_block, text_accum)
+    }
+
+    fn thinking_turn(chunks: &[&str]) -> Vec<Value> {
+        let mut evs = vec![json!({ "type": "content_block_start", "index": 0,
+            "content_block": { "type": "thinking", "thinking": "", "signature": "" } })];
+        for c in chunks {
+            evs.push(json!({ "type": "content_block_delta", "index": 0,
+                "delta": { "type": "thinking_delta", "thinking": c } }));
+        }
+        evs.push(json!({ "type": "content_block_delta", "index": 0,
+            "delta": { "type": "signature_delta", "signature": "SIG-SECRET" } }));
+        evs.push(json!({ "type": "content_block_stop", "index": 0 }));
+        evs
+    }
+
+    fn session_values(env: &crate::session::testenv::TestEnv) -> Vec<Value> {
+        env.session_events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| serde_json::to_value(e).unwrap())
+            .collect()
+    }
+
+    fn buffered(env: &crate::session::testenv::TestEnv) -> Vec<Value> {
+        env.engine
+            .with_session("s1", |s| {
+                s.block_buffer
+                    .iter()
+                    .map(crate::session::classify_block)
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn thinking_deltas_accumulate_into_one_settled_block() {
+        let env = thinking_env();
+        feed_events(&env, &thinking_turn(&["Weighing ", "the options."]));
+        let events = session_values(&env);
+        let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+        assert_eq!(types, vec!["thinking.start", "thinking.done"]);
+        assert_eq!(events[0]["blockId"], events[1]["blockId"]);
+        assert_eq!(events[1]["text"], "Weighing the options.");
+        let transcript = buffered(&env);
+        assert_eq!(transcript.len(), 1);
+        assert_eq!(transcript[0]["kind"], "thinking");
+        assert_eq!(transcript[0]["isStreaming"], false);
+        assert_eq!(transcript[0]["text"], "Weighing the options.");
+    }
+
+    #[test]
+    fn a_thinking_block_is_buffered_streaming_before_it_stops() {
+        let env = thinking_env();
+        let evs = thinking_turn(&["mid-thought"]);
+        feed_events(&env, &evs[..2]);
+        let transcript = buffered(&env);
+        assert_eq!(transcript.len(), 1);
+        assert_eq!(transcript[0]["kind"], "thinking");
+        assert_eq!(transcript[0]["isStreaming"], true);
+    }
+
+    #[test]
+    fn the_signature_never_reaches_an_event_or_the_transcript() {
+        let env = thinking_env();
+        feed_events(&env, &thinking_turn(&["x"]));
+        let all = serde_json::to_string(&session_values(&env)).unwrap();
+        assert!(!all.contains("SIG-SECRET"), "{all}");
+        let buf = serde_json::to_string(&buffered(&env)).unwrap();
+        assert!(!buf.contains("SIG-SECRET"), "{buf}");
+        assert!(!buf.contains("signature"), "{buf}");
+    }
+
+    #[test]
+    fn an_empty_thinking_block_is_dropped_from_the_transcript() {
+        // The live CLI streams redacted thinking: every delta's text is "".
+        let env = thinking_env();
+        feed_events(&env, &thinking_turn(&["", ""]));
+        let events = session_values(&env);
+        assert_eq!(events.last().unwrap()["type"], "thinking.done");
+        assert_eq!(events.last().unwrap()["text"], "");
+        assert!(buffered(&env).is_empty());
+    }
+
+    #[test]
+    fn a_thinking_block_open_at_interrupt_settles_through_close_open_block() {
+        let env = thinking_env();
+        let evs = thinking_turn(&["half a thought"]);
+        let (open_block, text_accum) = feed_events(&env, &evs[..2]);
+        assert!(matches!(open_block, Some((_, BlockKind::Thinking))));
+        super::super::close_open_block(&env, "s1", open_block, &text_accum);
+        let events = session_values(&env);
+        assert_eq!(events.last().unwrap()["type"], "thinking.done");
+        assert_eq!(events.last().unwrap()["text"], "half a thought");
+        let transcript = buffered(&env);
+        assert_eq!(transcript[0]["isStreaming"], false);
+        assert_eq!(transcript[0]["text"], "half a thought");
     }
 
     // ---------- start_text_block (content_block_start / text) ----------

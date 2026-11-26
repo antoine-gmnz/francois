@@ -98,6 +98,8 @@ impl SessionStatePort for EngineState<'_> {
                 // process-native-capabilities FR-4: a replaced generation's
                 // snapshot never carries over; the new child negotiates its own.
                 s.effective_capabilities = None;
+                // audit C4: nor does a retry the last turn never got to clear.
+                s.retry = None;
                 s.running_context = Some(context.clone());
                 Ok((context, owner))
             })

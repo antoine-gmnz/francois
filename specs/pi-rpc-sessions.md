@@ -1,7 +1,8 @@
 ---
 id: pi-rpc-sessions
 title: Pi RPC process and session lifecycle
-status: shipped
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-rpc-sessions
 created: 2026-09-18
 depends_on: [pi-runtime-boundary, pi-runtime-distribution]

@@ -98,6 +98,12 @@ impl Details {
         ctx: &TurnContext,
     ) -> Vec<RuntimeEvent> {
         let Some((tool, summary, input, result)) = view(item) else {
+            // audit R2: an item type no arm renders is still dropped, but its
+            // NAME is traced once per process (never the item itself).
+            if let Some(kind) = item["type"].as_str().filter(|t| !t.is_empty()) {
+                let kind = crate::session::stream::sanitise(&format!("item/{kind}"));
+                crate::session::stream::log_unrecognised_once("codex", &kind);
+            }
             return vec![];
         };
         let Some(id) = item["id"].as_str() else {

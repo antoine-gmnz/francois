@@ -312,6 +312,11 @@ fn run_reader<R: BufRead>(
         }
         let Ok(line) = line else { break };
         let event = wire::parse_line(&line);
+        if matches!(event, GrokEvent::Unknown) {
+            if let Some(kind) = wire::unrecognised_type(&line) {
+                crate::session::stream::log_unrecognised_once("grok", &kind); // audit R2
+            }
+        }
         if matches!(event, GrokEvent::End { .. }) {
             completed = true;
         }

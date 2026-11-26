@@ -348,16 +348,266 @@ fn retry_and_compaction_progress_is_accepted_by_the_projection() {
     let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
     let apply =
         |event| projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None);
-    assert!(apply(RuntimeEvent::Retry {
-        state: "waiting".into(),
-        attempt: 1,
-        delay_ms: Some(500),
-    })
-    .is_ok());
+    assert!(apply(retry(1, Some(500))).is_ok());
     assert!(apply(RuntimeEvent::Compaction {
         state: "completed".into(),
         automatic: true,
         message: None,
+        pre_tokens: None,
+        boundary_id: None,
     })
     .is_ok());
+}
+
+fn retry(attempt: u32, delay_ms: Option<u64>) -> RuntimeEvent {
+    RuntimeEvent::Retry {
+        state: "waiting".into(),
+        attempt,
+        delay_ms,
+        max_retries: Some(10),
+        error_status: Some(429),
+        error: Some("rate_limit".into()),
+    }
+}
+
+fn last_meta(env: &TestEnv) -> serde_json::Value {
+    let events = env.session_events.lock().unwrap();
+    let meta = events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            SessionEvent::Meta { meta } => Some(meta.clone()),
+            _ => None,
+        })
+        .expect("no session.meta published");
+    serde_json::to_value(meta).unwrap()
+}
+
+/// audit C4: a retry reaches the frontend on `SessionMeta.retry` — attempt,
+/// budget, status, and the absolute time the next attempt is due.
+#[test]
+fn a_retry_is_published_on_the_session_meta() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let before = crate::ids::now_ms();
+    projection::apply_to_session(&env, "/fixture", &owner.scope, retry(2, Some(4000)), |_| {
+        None
+    })
+    .unwrap();
+    let meta = last_meta(&env);
+    let r = &meta["retry"];
+    assert_eq!(r["attempt"], 2);
+    assert_eq!(r["maxRetries"], 10);
+    assert_eq!(r["errorStatus"], 429);
+    assert_eq!(r["error"], "rate_limit");
+    let since = r["since"].as_u64().unwrap();
+    assert!(since >= before);
+    assert_eq!(r["retryAt"].as_u64(), Some(since + 4000));
+}
+
+/// audit C4: the turn's next progress ends the retry — the meta republishes
+/// without it, and an event that changes nothing republishes nothing.
+#[test]
+fn the_next_progress_event_clears_the_retry() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let apply =
+        |event| projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None);
+    apply(retry(1, None)).unwrap();
+    assert!(last_meta(&env).get("retry").is_some());
+    apply(RuntimeEvent::AssistantDelta {
+        block_id: "a1".into(),
+        text: "hi".into(),
+    })
+    .unwrap();
+    assert!(last_meta(&env).get("retry").is_none());
+    let metas = |env: &TestEnv| {
+        env.session_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, SessionEvent::Meta { .. }))
+            .count()
+    };
+    let published = metas(&env);
+    apply(RuntimeEvent::AssistantDelta {
+        block_id: "a1".into(),
+        text: " there".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        metas(&env),
+        published,
+        "a delta with no retry to clear republished meta"
+    );
+}
+
+/// audit C4: a turn that ends (here: fails) while waiting out a retry
+/// publishes no retry afterwards — the terminal event clears it too.
+#[test]
+fn a_turn_ending_mid_retry_clears_the_retry() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let apply = |event| {
+        projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None).unwrap()
+    };
+    apply(retry(3, Some(1000)));
+    apply(RuntimeEvent::TurnFailed(AppError::new(
+        ErrorCode::Internal,
+        "overloaded",
+    )));
+    assert!(env
+        .engine
+        .with_session("s1", |s| s.retry.is_none())
+        .unwrap());
+    assert!(last_meta(&env).get("retry").is_none());
+}
+
+/// audit C4: a retry a stopped turn never cleared does not leak into the next
+/// turn — claiming a new runtime start drops it.
+#[test]
+fn a_new_turn_starts_without_the_previous_turns_retry() {
+    let mut session = test_session();
+    session.retry = Some(crate::session::events::SessionRetry {
+        attempt: 4,
+        max_retries: None,
+        error_status: None,
+        error: None,
+        retry_at: None,
+        since: 1,
+    });
+    let engine = test_engine_with(session);
+    let state = EngineState(&engine);
+    state.claim_start(context(&engine)).unwrap();
+    assert!(engine.with_session("s1", |s| s.retry.is_none()).unwrap());
+}
+
+/// audit C4: a completed compaction leaves a `compaction` command card in the
+/// transcript (buffered + emitted live); a started one leaves nothing.
+#[test]
+fn a_completed_compaction_leaves_a_transcript_divider() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let apply =
+        |event| projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None);
+    apply(RuntimeEvent::Compaction {
+        state: "started".into(),
+        automatic: true,
+        message: None,
+        pre_tokens: None,
+        boundary_id: None,
+    })
+    .unwrap();
+    apply(RuntimeEvent::Compaction {
+        state: "completed".into(),
+        automatic: true,
+        message: None,
+        pre_tokens: Some(150_000),
+        boundary_id: Some("b-1".into()),
+    })
+    .unwrap();
+    let cards: Vec<serde_json::Value> = env
+        .session_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::CommandOutput { card, .. } => Some(card.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cards,
+        vec![serde_json::json!({ "kind": "compaction", "trigger": "auto", "preTokens": 150_000 })]
+    );
+    // the same boundary again (a replay) upserts the divider — no second block
+    apply(RuntimeEvent::Compaction {
+        state: "completed".into(),
+        automatic: true,
+        message: None,
+        pre_tokens: Some(150_000),
+        boundary_id: Some("b-1".into()),
+    })
+    .unwrap();
+    let buffered = env
+        .engine
+        .with_session("s1", |s| {
+            s.block_buffer
+                .iter()
+                .filter(|b| matches!(b.kind, BlockKind::Command))
+                .count()
+        })
+        .unwrap();
+    assert_eq!(buffered, 1);
+}
+
+fn usage(model: &str, cost: f64, input: u64) -> crate::session::events::ModelUsageMetrics {
+    crate::session::events::ModelUsageMetrics {
+        model: model.into(),
+        input_tokens: Some(input),
+        output_tokens: None,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        cost_usd: Some(cost),
+        context_window: None,
+    }
+}
+
+/// audit C2: per-model usage replaces each model's entry (thread totals, like
+/// the cost), keeps models a later report omits, never shrinks on a late
+/// lower line, and survives the cost-less turn-end `Usage` refresh.
+#[test]
+fn model_usage_replaces_per_model_and_survives_a_usage_refresh() {
+    let env = TestEnv {
+        engine: test_engine_with(test_session()),
+        ..Default::default()
+    };
+    let state = EngineState(&env.engine);
+    let (_, owner) = state.claim_start(context(&env.engine)).unwrap();
+    let apply =
+        |event| projection::apply_to_session(&env, "/fixture", &owner.scope, event, |_| None);
+    apply(RuntimeEvent::ModelUsageReported {
+        models: vec![usage("sonnet", 0.10, 10), usage("haiku", 0.01, 5)],
+    })
+    .unwrap();
+    apply(RuntimeEvent::ModelUsageReported {
+        models: vec![usage("sonnet", 0.20, 20)],
+    })
+    .unwrap();
+    apply(RuntimeEvent::ModelUsageReported {
+        models: vec![usage("sonnet", 0.15, 15)], // late, lower: ignored
+    })
+    .unwrap();
+    apply(RuntimeEvent::Usage {
+        context_used_tokens: Some(40),
+        input_tokens: None,
+        output_tokens: None,
+        cost: None,
+    })
+    .unwrap();
+    let by_model = env
+        .engine
+        .with_session("s1", |s| s.metrics.as_ref().unwrap().by_model.clone())
+        .unwrap();
+    assert_eq!(
+        by_model,
+        vec![usage("haiku", 0.01, 5), usage("sonnet", 0.20, 20)]
+    );
+    assert_eq!(last_meta(&env)["metrics"]["byModel"][1]["inputTokens"], 20);
 }

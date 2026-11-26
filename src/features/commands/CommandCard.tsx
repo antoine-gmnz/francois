@@ -16,6 +16,7 @@ import { sessionSwitchModel } from '../../lib/api';
 import { CARD_KIND_COMMAND, cardHeaderLabel, liveCurrentModelId, meterFillColor, switchModelFromCard } from '../conversation/conversation-blocks';
 import { useStore } from '../../lib/store';
 import { LoaderCaret } from '../../ui/Loaders';
+import { compactionLabel } from './compaction';
 import './commands.css';
 
 // The token mirror of contract/fleet-board.ts's STATUS_COLOR — same assignments,
@@ -32,9 +33,9 @@ const STATUS_COLOR: Record<SessionStatus, string> = {
 
 // Card-kind body dispatch, keyed against CARD_KIND_COMMAND's own keys
 // (conversation-blocks.ts) so the two tables enumerating CommandCard['kind']
-// can't drift apart (interactive-commands §8). 'notice' is excluded — it
-// isn't rendered as a card at all (see the early return below).
-type CardKind = Exclude<keyof typeof CARD_KIND_COMMAND, 'notice'>;
+// can't drift apart (interactive-commands §8). 'notice' and 'compaction' are
+// excluded — neither is rendered as a card at all (see the early returns below).
+type CardKind = Exclude<keyof typeof CARD_KIND_COMMAND, 'notice' | 'compaction'>;
 type CardOfKind<K extends CardKind> = Extract<CommandCard, { kind: K }>;
 
 const CARD_BODY: { [K in CardKind]: (card: CardOfKind<K>, sessionId: string) => JSX.Element } = {
@@ -55,6 +56,18 @@ export default function CommandBlock({ b: block, sessionId }: { b: CommandConver
       <div className="cmdcard-notice">
         <span className="cmdcard-notice-glyph">▦</span>
         <div className="cmdcard-notice-text">{card.text}</div>
+      </div>
+    );
+  }
+
+  // audit C4: a compaction is a divider across the transcript, not a card —
+  // everything above it is what the model no longer holds verbatim.
+  if (card?.kind === 'compaction') {
+    return (
+      <div className="cmdcard-divider" role="separator" aria-label={compactionLabel(card)}>
+        <span className="cmdcard-divider__rule" />
+        <span className="cmdcard-divider__text">{compactionLabel(card)}</span>
+        <span className="cmdcard-divider__rule" />
       </div>
     );
   }

@@ -812,15 +812,18 @@ fn golden_capture_projects_equivalently_through_the_product_path() {
     // audit C2: the result's cost publishes the meta of the PRODUCT session —
     // its real cwd, parked status, live clock and generation. Only the metrics
     // it carries come from the decoder, so only those are compared.
-    let meta = expected
-        .iter()
-        .position(|e| e["type"] == "session.meta")
-        .unwrap();
-    assert_eq!(
-        actual[meta]["meta"]["metrics"],
-        expected[meta]["meta"]["metrics"]
-    );
-    expected[meta]["meta"] = actual[meta]["meta"].clone();
+    // The per-model usage (also audit C2) publishes a second one the same way.
+    let metas: Vec<usize> = (0..expected.len())
+        .filter(|&i| expected[i]["type"] == "session.meta")
+        .collect();
+    assert_eq!(metas.len(), 2, "cost + per-model usage metas");
+    for meta in metas {
+        assert_eq!(
+            actual[meta]["meta"]["metrics"],
+            expected[meta]["meta"]["metrics"]
+        );
+        expected[meta]["meta"] = actual[meta]["meta"].clone();
+    }
     for (i, (actual, want)) in actual.iter().zip(&expected).enumerate() {
         assert_eq!(
             actual, want,

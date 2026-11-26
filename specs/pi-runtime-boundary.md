@@ -1,7 +1,8 @@
 ---
 id: pi-runtime-boundary
 title: Pi runtime boundary and shared contracts
-status: shipped
+status: superseded
+superseded_by: process-runtime-decisions
 branch: feat/pi-runtime-boundary
 created: 2026-09-18
 depends_on: []

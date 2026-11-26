@@ -93,6 +93,11 @@
   background: var(--tint-danger);
   color: var(--state-danger-text);
 }
+/* audit C4: waiting out a provider retry — degraded, not failed, not blocked on you. */
+.session-header__state--retrying {
+  background: var(--bg-raised);
+  color: var(--warn);
+}
 .session-header__state--idle,
 .session-header__state--pending {
   background: var(--bg-raised);

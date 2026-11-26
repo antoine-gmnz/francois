@@ -12,6 +12,7 @@
 import { memo, useState } from 'react';
 import { AssistantBody, SubagentBanner, ToolRail, UserBody } from './Block';
 import { PlanCard } from './PlanCard';
+import { ThinkingBody } from './ThinkingBlock';
 import {
   formatClock,
   isFreshPrompt,
@@ -121,6 +122,7 @@ function renderBody(
     flush();
     if (b.kind === 'user') out.push(<UserBody key={b.blockId} b={b} />);
     else if (b.kind === 'assistant') out.push(<AssistantBody key={b.blockId} b={b} />);
+    else if (b.kind === 'thinking') out.push(<ThinkingBody key={b.blockId} b={b} />);
     else out.push(<SubagentBanner key={b.blockId} b={b} />);
   }
   flush();

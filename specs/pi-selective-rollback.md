@@ -2,7 +2,7 @@
 id: pi-selective-rollback
 feature_id: pi-selective-rollback
 title: "03 · Remove the active Pi integration selectively"
-status: frozen
+status: shipped
 branch: feat-rollback-pi-changes
 created: 2026-09-21
 depends_on: [pi-rollback-inventory, pi-retirement-data-compatibility]

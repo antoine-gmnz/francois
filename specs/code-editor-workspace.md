@@ -2,7 +2,7 @@
 id: code-editor-workspace
 feature_id: code-editor-workspace
 title: Code editor, workspace — split, problems, IntelliSense polish, find, quick open, search in files
-status: frozen
+status: shipped
 branch: feat/code-editor-improvement
 created: 2026-10-09
 depends_on: [code-editor, code-editor-agents]

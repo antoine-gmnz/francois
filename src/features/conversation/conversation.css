@@ -1853,3 +1853,52 @@
   text-underline-offset: 2px;
   color: var(--text-primary);
 }
+
+/* ── thinking-blocks (IMPROVEMENTS C1) ─────────────────────────────────────
+   The model's extended thinking, collapsed inside the reply it precedes.
+   Muted on purpose: a thought is context for the answer, so it must never
+   read as louder than the prose under it. */
+.thinking {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  color: var(--text-faint);
+  font-size: var(--font-size-12);
+}
+.thinking--live {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-6);
+}
+.thinking__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.thinking__toggle:hover,
+.thinking--open .thinking__toggle {
+  color: var(--text-muted);
+}
+.thinking__toggle:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.thinking__caret {
+  width: 1ch;
+}
+.thinking__body {
+  padding-left: var(--space-12);
+  border-left: 1px solid var(--line-subtle);
+  color: var(--text-muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}

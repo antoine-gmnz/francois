@@ -11,7 +11,7 @@ reviewed_digest:
 
 # Core architecture remediation
 
-> Source: `ARCHITECTURE-REVIEW-CORE.md` (static review of `src-tauri/`, commit `a3bb11c`).
+> Source: `ARCHITECTURE-REVIEW-CORE.md` (static review of `src-tauri/`, commit `a3bb11c`), since removed from the tree; the findings still open live in CONVENTIONS.md §Code quality gates, and the file survives in history (`git log --all -- ARCHITECTURE-REVIEW-CORE.md`).
 > All twelve findings re-verified against this branch before freeze; line numbers below are
 > **this branch's**, not the review's.
 > Core-only. No UI, no design brief, no new IPC.

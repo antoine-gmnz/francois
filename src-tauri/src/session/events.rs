@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 /// carry — see that module's own doc for why it is a sibling rather than a
 /// child. Re-exported here (not glob-exported) because every other file in
 /// this crate already reaches these names through `events::*`.
-pub use runtime_events::{RuntimeEventPayload, RuntimeMetrics};
+pub use runtime_events::{ModelUsageMetrics, RuntimeEventPayload, RuntimeMetrics, SessionRetry};
 
 /// pi-session-durability: whether a runtime-owned session can continue its
 /// native conversation. Mirrors contract/common.ts `RuntimeRecovery` exactly —
@@ -102,6 +102,25 @@ pub enum SessionEvent {
         block_id: String,
         /// The block's COMPLETE text — authoritative, so a listener that missed
         /// a delta is repaired here instead of rendering a truncated answer.
+        text: String,
+    },
+    /// thinking-blocks: a `thinking` content block opened — the transcript
+    /// shows an in-progress "Thinking" row until `thinking.done` settles it.
+    #[serde(rename = "thinking.start")]
+    ThinkingStart {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
+    },
+    /// thinking-blocks: the block's COMPLETE thinking text (never the
+    /// signature). Empty ⇒ the block had nothing to show and was dropped.
+    #[serde(rename = "thinking.done")]
+    ThinkingDone {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(rename = "blockId")]
+        block_id: String,
         text: String,
     },
     #[serde(rename = "tool.start")]
@@ -317,6 +336,29 @@ mod tests {
                 "type": "file.touched", "sessionId": "s1", "blockId": "b1",
                 "path": "C:/repo/src/a.ts", "kind": "write", "at": 42
             })
+        );
+    }
+
+    #[test]
+    fn thinking_events_serialize_to_contract_shape() {
+        let start = serde_json::to_value(SessionEvent::ThinkingStart {
+            session_id: "s1".into(),
+            block_id: "b1".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            start,
+            json!({ "type": "thinking.start", "sessionId": "s1", "blockId": "b1" })
+        );
+        let done = serde_json::to_value(SessionEvent::ThinkingDone {
+            session_id: "s1".into(),
+            block_id: "b1".into(),
+            text: "weighing it".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            done,
+            json!({ "type": "thinking.done", "sessionId": "s1", "blockId": "b1", "text": "weighing it" })
         );
     }
 

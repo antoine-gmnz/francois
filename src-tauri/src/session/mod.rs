@@ -489,6 +489,10 @@ pub struct SessionMeta {
     /// launch policy. Never converts into an allow/deny tool rule.
     #[serde(rename = "resourcePolicy", skip_serializing_if = "Option::is_none")]
     resource_policy: Option<retired_pi::RuntimeResourcePolicy>,
+    /// audit C4: present ⇔ the current turn is waiting out a provider retry.
+    /// Live only — never persisted; cleared by the turn's next progress.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry: Option<events::SessionRetry>,
 }
 
 #[derive(Serialize, Clone)]
@@ -657,6 +661,8 @@ pub struct PendingPermission {
 pub enum BlockKind {
     User,
     Assistant,
+    /// thinking-blocks: the model's extended thinking (`ThinkingConversationBlock`).
+    Thinking,
     Tool,
     Subagent,
     Command,    // interactive-commands: a slash-command response card
@@ -1006,6 +1012,10 @@ pub struct Session {
     /// connect/switch, empty otherwise. Never Claude's/Codex's effort
     /// vocabulary.
     model_efforts: Vec<String>,
+    /// audit C4: the provider retry the current turn is waiting out
+    /// (`SessionMeta.retry`). In-memory only — set by the projection's
+    /// `Retry` arm, cleared by the turn's next progress event.
+    retry: Option<events::SessionRetry>,
 }
 
 impl Session {
@@ -1125,6 +1135,7 @@ impl Session {
             pi_resume: None,
             metrics: None,
             model_efforts: Vec::new(),
+            retry: None,
         }
     }
 
@@ -1220,6 +1231,7 @@ impl Session {
                 .then(events::RuntimeRecovery::disconnected),
             metrics: self.metrics.clone(),
             resource_policy: self.resource_policy,
+            retry: self.retry.clone(),
         }
     }
 

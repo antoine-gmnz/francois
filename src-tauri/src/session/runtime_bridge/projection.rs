@@ -45,6 +45,7 @@ fn apply_projected(
     let id = &scope.session_id;
     let engine = env.engine();
     let mut next = None;
+    end_retry(env, id, &event);
     match event {
         RuntimeEvent::Capabilities(capabilities) => {
             adapter::validate_capabilities(&capabilities)?;
@@ -214,6 +215,12 @@ fn apply_projected(
                     (None, Some(prev)) => (prev.cost_usd, prev.cost_basis.clone()),
                     (None, None) => (None, "unknown".into()),
                 };
+                // audit C2: the per-model split rides with the cost it sums to.
+                let by_model = s
+                    .metrics
+                    .as_mut()
+                    .map(|prev| std::mem::take(&mut prev.by_model))
+                    .unwrap_or_default();
                 s.metrics = Some(events::RuntimeMetrics {
                     input_tokens,
                     output_tokens,
@@ -231,6 +238,7 @@ fn apply_projected(
                     cost_basis,
                     measured_at: now_ms(),
                     stale: false,
+                    by_model,
                 });
             });
             if let Some(used_tokens) = used {
@@ -251,19 +259,7 @@ fn apply_projected(
             // table (contract/common.ts RuntimeMetrics doc).
             engine.with_session_mut(id, |s| {
                 let now = now_ms();
-                let metrics = s.metrics.get_or_insert_with(|| events::RuntimeMetrics {
-                    input_tokens: None,
-                    output_tokens: None,
-                    cache_read_tokens: None,
-                    cache_write_tokens: None,
-                    context_tokens: None,
-                    context_window: None,
-                    context_basis: "unknown".into(),
-                    cost_usd: None,
-                    cost_basis: "unknown".into(),
-                    measured_at: now,
-                    stale: false,
-                });
+                let metrics = s.metrics.get_or_insert_with(|| unmeasured(now));
                 metrics.cost_usd = Some(
                     metrics
                         .cost_usd
@@ -274,11 +270,81 @@ fn apply_projected(
             });
             env.publish_meta(id);
         }
-        // audit C4: accepted, deliberately not projected yet — the only wire
-        // shape for them is `SessionEvent::RuntimeEvent`, whose envelope
-        // (`generation`, ordered `sequence`) no Claude-path code produces, and
-        // the frontend's `applyRuntimeEvent` ignores both kinds today.
-        RuntimeEvent::Retry { .. } | RuntimeEvent::Compaction { .. } => {}
+        RuntimeEvent::ModelUsageReported { models } => {
+            // audit C2: each model's entry is that model's THREAD total, so a
+            // report REPLACES it (same semantics as `CostReported`). A model
+            // the report omits keeps its last entry; the cost max guard
+            // carries over per model so a late line cannot shrink one.
+            engine.with_session_mut(id, |s| {
+                let now = now_ms();
+                let metrics = s.metrics.get_or_insert_with(|| unmeasured(now));
+                for model in models {
+                    match metrics.by_model.iter_mut().find(|m| m.model == model.model) {
+                        Some(stored) if stored.cost_usd > model.cost_usd => {}
+                        Some(stored) => *stored = model,
+                        None => metrics.by_model.push(model),
+                    }
+                }
+                metrics.by_model.sort_by(|a, b| a.model.cmp(&b.model));
+                metrics
+                    .by_model
+                    .truncate(crate::session::stream::MAX_USAGE_MODELS);
+                metrics.measured_at = now;
+            });
+            env.publish_meta(id);
+        }
+        // audit C4: both reach the user over channels the Claude path already
+        // has — `SessionEvent::RuntimeEvent` needs an envelope (`generation`,
+        // ordered `sequence`) no Claude-path code produces. A retry rides on
+        // `SessionMeta.retry` (cleared by `end_retry` on the next progress);
+        // a completed compaction leaves a `compaction` command card — the
+        // transcript divider — via the same path `/usage` cards take.
+        RuntimeEvent::Retry {
+            state,
+            attempt,
+            delay_ms,
+            max_retries,
+            error_status,
+            error,
+        } => {
+            let now = now_ms();
+            engine.with_session_mut(id, |s| {
+                s.retry = (state != "finished").then(|| events::SessionRetry {
+                    attempt,
+                    max_retries,
+                    error_status,
+                    error,
+                    retry_at: delay_ms.map(|d| now.saturating_add(d)),
+                    since: now,
+                });
+            });
+            env.publish_meta(id);
+        }
+        RuntimeEvent::Compaction {
+            state,
+            automatic,
+            pre_tokens,
+            boundary_id,
+            ..
+        } => {
+            if state == "completed" {
+                // Keyed on the boundary's own id where it has one: a re-emitted
+                // boundary upserts its divider instead of drawing a second one.
+                let block_id = boundary_id
+                    .map(|b| format!("compact-{b}"))
+                    .unwrap_or_else(crate::ids::uuid);
+                crate::session::interactive::finalize_command_block(
+                    env,
+                    id,
+                    &block_id,
+                    "compact",
+                    &crate::session::interactive::CommandCard::Compaction {
+                        trigger: if automatic { "auto" } else { "manual" }.into(),
+                        pre_tokens,
+                    },
+                );
+            }
+        }
         RuntimeEvent::PermissionAsked { block_id, ask } => {
             let block = engine
                 .with_session_mut(id, |s| {
@@ -365,6 +431,40 @@ fn apply_projected(
         other => super::observations::apply(env, id, cwd, other)?,
     }
     Ok(next)
+}
+
+/// audit C4: any event but another retry is the turn moving again (or ending),
+/// so a pending retry is over — clear it and republish only if one was set.
+fn end_retry(env: &dyn SessionEnv, id: &str, event: &RuntimeEvent) {
+    if matches!(event, RuntimeEvent::Retry { .. }) {
+        return;
+    }
+    let cleared = env
+        .engine()
+        .with_session_mut(id, |s| s.retry.take().is_some())
+        .unwrap_or(false);
+    if cleared {
+        env.publish_meta(id);
+    }
+}
+
+/// A metrics record with nothing measured yet — what a cost or per-model
+/// report lands in when the session has reported no usage before it.
+fn unmeasured(now: u64) -> events::RuntimeMetrics {
+    events::RuntimeMetrics {
+        input_tokens: None,
+        output_tokens: None,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        context_tokens: None,
+        context_window: None,
+        context_basis: "unknown".into(),
+        cost_usd: None,
+        cost_basis: "unknown".into(),
+        measured_at: now,
+        stale: false,
+        by_model: Vec::new(),
+    }
 }
 
 #[cfg(any(test, feature = "harness"))]

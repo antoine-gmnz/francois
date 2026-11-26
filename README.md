@@ -54,6 +54,10 @@ It's a **native desktop app** (Tauri 2: Rust core, system webview — no Electro
 
 **⇄ Remote control** — hand a session to Claude Code's native Remote Control and keep the same thread going from your phone or claude.ai.
 
+**⎇ GitHub and GitLab** — a repositories page for pull/merge requests, commits, branches and worktrees, with live CI check runs and in-app step logs. It reuses the `gh` / `glab` CLI's existing authentication, so there is nothing to sign in to twice.
+
+**⌬ More than Claude** — Codex (ChatGPT subscription, via `codex login`), Grok and OpenAI-compatible endpoints run through the same roster, transcript and approvals as Claude Code. See [Accounts](docs/guide/accounts.md).
+
 **⟳ Durable sessions** — quit, reopen, and your fleet is still there: transcripts, status, model, context usage. Sessions are resumable, not disposable. Optionally run one in its own `git worktree`.
 
 **♪ Notifications you'll actually notice** — a desktop banner when a session is blocked on an approval or a question, or its turn lands — plus a short synthesized **tone** for the same two moments, so the cue reaches you when your eyes are on an editor and not on the corner of the screen. One toggle (`⌘K` → sound), throttled, silent under OS Do Not Disturb.
@@ -117,41 +121,6 @@ Every push to `main` cuts a new version, so installing is always the newest buil
 - [Node 18+](https://nodejs.org) — you already have it if Claude Code runs
 - [Claude Code](https://claude.com/claude-code) installed and authenticated — `claude` must be on your `PATH` (Francois spawns it per session)
 - `git` on your `PATH` (powers the DIFF tab)
-
-### Pi runtime (gated)
-
-Francois's session engine is model-agnostic — it already dispatches Claude Code, Codex and
-Grok through the same orchestration, and Pi is the newest addition. Pi support is **not
-generally available yet**: session creation stays closed to ordinary users until every
-dependent Pi spec passes acceptance and a real Pi installation is certified on each
-supported OS ([`specs/pi-migration-rollout.md`](specs/pi-migration-rollout.md) FR-8).
-
-If you're testing it ahead of that gate:
-
-- **Install and authenticate Pi yourself** — Francois neither installs nor updates it. The
-  certified package is `@earendil-works/pi-coding-agent`; Pi requires **Node >=22.19.0** of
-  its own (separate from the Node 18+ above, which is only for `npm i -g francois`).
-- **Accounts → add a Pi account**, pointing at an existing, already-authenticated Pi
-  configuration directory (`~/.pi/agent` by default) — Francois reads that directory, it
-  doesn't create, mirror or manage it.
-- Compatibility today is a package-version match against a certified manifest, not a live
-  protocol capture — a matching install reports as unverified, never certified, until that
-  capture exists.
-- Your existing Claude Code, Codex, Grok and endpoint accounts/sessions are untouched: they
-  stay visible and resumable on their original runtime, and nothing converts their history
-  into a Pi conversation.
-
-**Limitations while Pi is gated:**
-
-- No native approval enforcement. Pi tools run with your user permissions; Francois shows
-  *"Pi tools run with your user permissions; François does not approve each tool call."*
-  rather than offering a permission-mode picker (plan/accept-edits/bypass), a filesystem
-  sandbox, project confinement, or network restriction.
-- Arbitrary Pi extensions stay disabled, and project resources (AGENTS.md, instructions,
-  skills) are ignored unless you explicitly allow them for that session.
-- Deferred: native approval interception, arbitrary Pi extension/package management,
-  MCP/subagent/workflow parity, branch-tree editing, Remote Control parity, a managed or
-  bundled Pi distribution, and exact subscription plan meters.
 
 ### Build from source
 

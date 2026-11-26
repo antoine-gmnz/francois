@@ -151,6 +151,16 @@ pub(crate) enum RuntimeEvent {
         text: String,
         offset: usize,
     },
+    /// thinking-blocks: a `thinking` content block opened.
+    ThinkingStarted {
+        block_id: String,
+    },
+    /// thinking-blocks: the block's complete thinking text at
+    /// `content_block_stop` (or interrupt). Empty ⇒ dropped, never persisted.
+    ThinkingFinal {
+        block_id: String,
+        text: String,
+    },
     ToolInputReady {
         block_id: String,
         tool: String,
@@ -273,21 +283,36 @@ pub(crate) enum RuntimeEvent {
     CostReported {
         thread_total_usd: f64,
     },
+    /// audit C2: the runtime's per-model split of the THREAD's running totals
+    /// (Claude's `result.modelUsage`) — REPLACES each model's entry, never adds.
+    ModelUsageReported {
+        models: Vec<crate::session::events::ModelUsageMetrics>,
+    },
     /// audit C4: a provider retry observed mid-turn — progress, never a turn
-    /// completion. Mirrors contract/common.ts's `retry` runtime payload.
+    /// completion. Mirrors contract/common.ts's `retry` runtime payload, plus
+    /// the CLI's `max_retries` / `error_status` / `error` (SessionMeta.retry).
     Retry {
         /// 'waiting' | 'running' | 'finished'
         state: String,
         attempt: u32,
         delay_ms: Option<u64>,
+        max_retries: Option<u32>,
+        error_status: Option<u16>,
+        /// The CLI's error category ('rate_limit', 'overloaded', …).
+        error: Option<String>,
     },
     /// audit C4: a context compaction observed mid-turn. Mirrors
-    /// contract/common.ts's `compaction` runtime payload.
+    /// contract/common.ts's `compaction` runtime payload, plus the
+    /// `compact_metadata.pre_tokens` the transcript divider states.
     Compaction {
         /// 'started' | 'completed' | 'failed'
         state: String,
         automatic: bool,
         message: Option<String>,
+        pre_tokens: Option<u64>,
+        /// The boundary line's own `uuid` — keys the divider block, so a
+        /// boundary the CLI emits twice lands once.
+        boundary_id: Option<String>,
     },
     PermissionAsked {
         block_id: String,

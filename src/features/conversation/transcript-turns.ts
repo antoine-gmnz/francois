@@ -12,7 +12,7 @@ import type { ToolResultTone } from '../../../contract/common';
 import type { ConversationBlock } from '../../../contract/conversation-view';
 
 /** The four block kinds that belong INSIDE a turn — everything else is a card. */
-export type TurnBlock = Extract<ConversationBlock, { kind: 'user' | 'assistant' | 'tool' | 'subagent' }>;
+export type TurnBlock = Extract<ConversationBlock, { kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'subagent' }>;
 
 export type TurnRole = 'user' | 'assistant';
 
@@ -38,7 +38,8 @@ export interface TranscriptCard {
 export type TranscriptItem = TranscriptTurn | TranscriptCard;
 
 function isTurnBlock(b: ConversationBlock): b is TurnBlock {
-  return b.kind === 'user' || b.kind === 'assistant' || b.kind === 'tool' || b.kind === 'subagent';
+  // thinking-blocks: a thought is part of the reply it precedes, never a card.
+  return b.kind === 'user' || b.kind === 'assistant' || b.kind === 'thinking' || b.kind === 'tool' || b.kind === 'subagent';
 }
 
 /**

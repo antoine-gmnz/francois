@@ -4,6 +4,7 @@
 //
 //   CONTEXT       token-viewer: the window broken down by category
 //                 (src/features/context/); hides the footer meter once shown.
+//   MODELS        audit C2: per-model tokens + cost (metrics.byModel).
 //   banner        one per MCP server that is down: its reason, then Retry
 //                 (reconnect) and Detach — the two answers the MCP tab offers.
 //   MCP SERVERS   every server with a state glyph and its tool count, then
@@ -29,6 +30,7 @@ import { StateIcon } from '../../ui/StateIcon';
 import { accountDisplayLabel, findAccount } from '../accounts/accounts';
 import { ContextBreakdown } from '../context/ContextBreakdown';
 import { breakdownView } from '../context/context-breakdown';
+import { ModelUsage } from '../context/ModelUsage';
 import { useContextBreakdown } from '../context/useContextBreakdown';
 import { runChipParts } from '../sessions/run-chip';
 import { skillInvocationLabel, skillRowKey } from '../skills/skills-loaded';
@@ -70,6 +72,8 @@ export default function ContextSection({ session, context }: SessionPanelSection
       <SidePanelBody className="context-section">
         {/* Keyed by session so list expansion resets on a focus change (story 4). */}
         <ContextBreakdown key={session.id} view={view} status={session.status} loading={breakdown.loading} onRefresh={breakdown.refresh} />
+        {/* audit C2: what each model the thread ran on used and cost */}
+        <ModelUsage metrics={session.metrics} />
         <McpBlock
           session={session}
           onAttach={() => {

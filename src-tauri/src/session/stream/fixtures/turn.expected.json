@@ -342,36 +342,58 @@
     "status": "running"
   },
   {
-    "type": "assistant.delta",
+    "type": "thinking.start",
+    "sessionId": "s1",
+    "blockId": "id-1"
+  },
+  {
+    "type": "thinking.done",
     "sessionId": "s1",
     "blockId": "id-1",
+    "text": ""
+  },
+  {
+    "type": "assistant.delta",
+    "sessionId": "s1",
+    "blockId": "id-2",
     "text": "I'll read the README, then run a subagent to list directory contents, create a build folder, and ask which environment to target.",
     "offset": 0
   },
   {
     "type": "assistant.done",
     "sessionId": "s1",
-    "blockId": "id-1",
+    "blockId": "id-2",
     "text": "I'll read the README, then run a subagent to list directory contents, create a build folder, and ask which environment to target."
   },
   {
     "type": "tool.start",
     "sessionId": "s1",
-    "blockId": "id-2",
+    "blockId": "id-3",
     "tool": "Read",
     "summary": "C:\\work\\widget-demo\\proj\\README.md"
   },
   {
     "type": "tool.done",
     "sessionId": "s1",
-    "blockId": "id-2",
+    "blockId": "id-3",
     "meta": "7 lines",
     "hasDetail": true
   },
   {
+    "type": "thinking.start",
+    "sessionId": "s1",
+    "blockId": "id-4"
+  },
+  {
+    "type": "thinking.done",
+    "sessionId": "s1",
+    "blockId": "id-4",
+    "text": ""
+  },
+  {
     "type": "agent.update",
     "agent": {
-      "id": "id-3",
+      "id": "id-5",
       "sessionId": "s1",
       "name": "subagent",
       "task": "subagent",
@@ -384,7 +406,7 @@
   {
     "type": "agent.update",
     "agent": {
-      "id": "id-3",
+      "id": "id-5",
       "sessionId": "s1",
       "name": "general-purpose",
       "task": "List files in directory",
@@ -397,14 +419,14 @@
   {
     "type": "tool.start",
     "sessionId": "s1",
-    "blockId": "id-4",
+    "blockId": "id-6",
     "tool": "Agent",
     "summary": "general-purpose"
   },
   {
     "type": "agent.step",
     "sessionId": "s1",
-    "agentId": "id-3",
+    "agentId": "id-5",
     "step": {
       "seq": 1,
       "kind": "tool",
@@ -416,7 +438,7 @@
   {
     "type": "agent.update",
     "agent": {
-      "id": "id-3",
+      "id": "id-5",
       "sessionId": "s1",
       "name": "general-purpose",
       "task": "List files in directory",
@@ -430,7 +452,7 @@
   {
     "type": "agent.step",
     "sessionId": "s1",
-    "agentId": "id-3",
+    "agentId": "id-5",
     "step": {
       "seq": 1,
       "kind": "tool",
@@ -443,7 +465,7 @@
   {
     "type": "agent.update",
     "agent": {
-      "id": "id-3",
+      "id": "id-5",
       "sessionId": "s1",
       "name": "general-purpose",
       "task": "The current directory contains README.md, notes.txt, and a .cartograph folder ho",
@@ -458,34 +480,34 @@
   {
     "type": "tool.done",
     "sessionId": "s1",
-    "blockId": "id-4",
+    "blockId": "id-6",
     "meta": "The current directory contains README.md, notes.txt, and a .cartograph folder ho",
     "hasDetail": true
   },
   {
     "type": "assistant.delta",
     "sessionId": "s1",
-    "blockId": "id-5",
+    "blockId": "id-7",
     "text": "The subagent finished. Now creating the build directory.",
     "offset": 0
   },
   {
     "type": "assistant.done",
     "sessionId": "s1",
-    "blockId": "id-5",
+    "blockId": "id-7",
     "text": "The subagent finished. Now creating the build directory."
   },
   {
     "type": "tool.start",
     "sessionId": "s1",
-    "blockId": "id-6",
+    "blockId": "id-8",
     "tool": "Bash",
     "summary": "mkdir build"
   },
   {
     "type": "permission.asked",
     "sessionId": "s1",
-    "blockId": "id-7",
+    "blockId": "id-9",
     "ask": {
       "toolName": "Bash",
       "summary": "mkdir build",
@@ -498,14 +520,14 @@
   {
     "type": "tool.done",
     "sessionId": "s1",
-    "blockId": "id-6",
+    "blockId": "id-8",
     "meta": "1 lines",
     "hasDetail": true
   },
   {
     "type": "question.asked",
     "sessionId": "s1",
-    "blockId": "id-8",
+    "blockId": "id-10",
     "questions": [
       {
         "question": "Which environment do you want me to target?",
@@ -527,28 +549,28 @@
   {
     "type": "tool.start",
     "sessionId": "s1",
-    "blockId": "id-9",
+    "blockId": "id-11",
     "tool": "AskUserQuestion",
     "summary": "{\"questions\":[{\"question\":\"Which environment do you want me "
   },
   {
     "type": "tool.done",
     "sessionId": "s1",
-    "blockId": "id-9",
+    "blockId": "id-11",
     "meta": "done",
     "hasDetail": true
   },
   {
     "type": "assistant.delta",
     "sessionId": "s1",
-    "blockId": "id-10",
+    "blockId": "id-12",
     "text": "README.md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the build directory was created, and you picked **staging** as the target environment.",
     "offset": 0
   },
   {
     "type": "assistant.done",
     "sessionId": "s1",
-    "blockId": "id-10",
+    "blockId": "id-12",
     "text": "README.md describes a scratch project with README.md and notes.txt (confirmed by the subagent, which also found a .cartograph folder), the build directory was created, and you picked **staging** as the target environment."
   },
   {
@@ -590,15 +612,64 @@
     }
   },
   {
+    "type": "session.meta",
+    "meta": {
+      "id": "s1",
+      "name": "n",
+      "cwd": "/x",
+      "model": {
+        "id": "sonnet",
+        "label": "Sonnet"
+      },
+      "status": "running",
+      "contextUsedTokens": 0,
+      "contextLimitTokens": 200000,
+      "startedAt": 0,
+      "lastActivityAt": 0,
+      "permissionMode": "default",
+      "permissionModeSince": 0,
+      "runtime": "native",
+      "accountId": "default",
+      "agentRuntime": "claude-code",
+      "protocol": "anthropic",
+      "responseMode": "default",
+      "allowGit": false,
+      "metrics": {
+        "inputTokens": null,
+        "outputTokens": null,
+        "cacheReadTokens": null,
+        "cacheWriteTokens": null,
+        "contextTokens": null,
+        "contextWindow": null,
+        "contextBasis": "unknown",
+        "costUsd": 0.1269474,
+        "costBasis": "estimated",
+        "measuredAt": 0,
+        "stale": false,
+        "byModel": [
+          {
+            "model": "claude-sonnet-5",
+            "inputTokens": 14,
+            "outputTokens": 1005,
+            "cacheReadTokens": 246808,
+            "cacheWriteTokens": 6298,
+            "costUsd": 0.1269474,
+            "contextWindow": 1000000
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "question.resolved",
     "sessionId": "s1",
-    "blockId": "id-8",
+    "blockId": "id-10",
     "state": "cancelled"
   },
   {
     "type": "permission.resolved",
     "sessionId": "s1",
-    "blockId": "id-7",
+    "blockId": "id-9",
     "state": "cancelled"
   }
 ]

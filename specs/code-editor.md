@@ -2,7 +2,7 @@
 id: code-editor
 feature_id: code-editor
 title: Code tab — a minimal Monaco editor with a file explorer
-status: frozen
+status: shipped
 branch: feat/code-editor
 created: 2026-10-08
 depends_on: [app-shell, projects, session-engine, session-worktree, open-in-vscode, wsl-filesystem, webview-hardening, command-palette]

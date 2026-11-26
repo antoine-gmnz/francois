@@ -2,7 +2,7 @@
 id: pi-rollback-inventory
 feature_id: pi-rollback-inventory
 title: "01 · Inventory Pi changes and protect unrelated work"
-status: in-review
+status: shipped
 branch: feat-rollback-pi-changes
 created: 2026-09-21
 depends_on: []

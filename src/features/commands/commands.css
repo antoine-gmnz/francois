@@ -24,6 +24,26 @@
   white-space: pre-wrap;
 }
 
+/* audit C4: the compaction divider — a faint rule either side of one line. */
+.cmdcard-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  margin: var(--space-6) 0;
+}
+.cmdcard-divider__rule {
+  flex: 1;
+  min-width: var(--space-10);
+  height: 1px;
+  background: var(--line-subtle);
+}
+.cmdcard-divider__text {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  color: var(--text-faint);
+}
+
 .cmdcard {
   background: var(--bg-deep);
   border: 1px solid var(--border);
