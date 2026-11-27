@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatImageBytes, imageCaption, imageFileName, stepImage } from './tool-images';
-import { transcriptReducer, compactBlocks } from './conversation-blocks';
+import { transcriptReducer } from './conversation-blocks';
+import { compactBlocks } from './tool-runs';
 import type { ToolImage } from '../../../contract/common';
 import type { ToolConversationBlock } from '../../../contract/conversation-view';
 

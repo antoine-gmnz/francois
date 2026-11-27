@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { classifyToolStart, type ToolConversationBlock } from '../../../contract/conversation-view';
 import type { PlanItem } from '../../../contract/common';
 import { latestPlanBlockId, planStepLabel } from './plan-view';
-import { compactBlocks, transcriptReducer } from './conversation-blocks';
+import { transcriptReducer } from './conversation-blocks';
+import { compactBlocks } from './tool-runs';
 
 const plan = (status: PlanItem['status']): PlanItem[] => [{ content: 'Run tests', status, activeForm: 'Running tests' }];
 const planBlock = (blockId: string, items: PlanItem[]): ToolConversationBlock => ({
