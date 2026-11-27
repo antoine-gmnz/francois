@@ -165,6 +165,9 @@ pub enum SessionEvent {
         /// Omitted when the result was not an error, or the runtime never sets it.
         #[serde(skip_serializing_if = "Option::is_none")]
         tone: Option<String>,
+        /// tool-images: `ToolImage[]` — omitted when the result carried none.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<crate::session::tool_images::ToolImage>>,
     },
     #[serde(rename = "command.started")]
     CommandStarted {

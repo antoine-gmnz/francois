@@ -124,6 +124,10 @@ pub(crate) fn persisted_block_json(b: &BufBlock) -> Value {
         if let Some(plan) = &b.plan {
             o["plan"] = plan.clone();
         }
+        // tool-images: written only when the result carried images.
+        if let Some(images) = &b.images {
+            o["images"] = images.clone();
+        }
     }
     if kind == "user" {
         if let Some(attachments) = &b.attachments {
@@ -168,6 +172,8 @@ pub fn clear_transcript(app: &AppHandle, session_id: &str) {
         let _ = std::fs::remove_file(&path);
     }
     remove_step_detail_sidecar(app, session_id);
+    // tool-images: the decoded files belong to the blocks this wipes.
+    super::tool_images::remove_for_session(app, session_id);
 }
 
 /// Parse one PersistedBlock line back into a BufBlock. Returns None for a malformed
@@ -294,6 +300,7 @@ pub fn parse_persisted_block(line: &str) -> Option<BufBlock> {
         // reads back as `None`, byte-identical to a pre-feature line.
         execution: v.get("execution").filter(|e| !e.is_null()).cloned(),
         plan: v.get("plan").filter(|p| p.is_array()).cloned(),
+        images: v.get("images").filter(|i| i.is_array()).cloned(),
         attachments: v.get("attachments").filter(|a| !a.is_null()).cloned(),
         outcome: v.get("outcome").and_then(|o| o.as_str()).map(String::from),
         tone: v.get("tone").and_then(|t| t.as_str()).map(String::from),
@@ -989,6 +996,7 @@ mod tests {
             tool: "TodoWrite".into(),
             summary: "1 step".into(),
             plan: Some(plan.clone()),
+            images: None,
             ..BufBlock::new("b1", BlockKind::Tool)
         };
         let line = persisted_block_json(&b);
@@ -1017,6 +1025,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1055,6 +1064,7 @@ mod tests {
             at: 1_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1102,6 +1112,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: Some(execution.clone()),
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1133,6 +1144,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: Some(attachments.clone()),
             outcome: None,
             tone: None,
@@ -1161,6 +1173,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: Some("interrupted".into()),
             tone: None,
@@ -1218,6 +1231,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: Some("warning".into()),
@@ -1286,6 +1300,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: None,
@@ -1322,6 +1337,7 @@ mod tests {
             at: 1_760_000_000_000,
             execution: None,
             plan: None,
+            images: None,
             attachments: None,
             outcome: None,
             tone: None,

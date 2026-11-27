@@ -272,6 +272,7 @@ pub fn close_open_block(
             detail: None,
             affects_workspace: false,
             tone: None,
+            images: Vec::new(),
         }),
         // thinking-blocks: settle whatever thought arrived, so the row never
         // stays "thinking" after an interrupt.

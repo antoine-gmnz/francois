@@ -151,6 +151,7 @@ impl Details {
                 detail: Some(detail),
                 affects_workspace: false,
                 tone: None,
+                images: Vec::new(),
             });
         }
         events
@@ -178,6 +179,7 @@ impl Details {
                     detail: Some(detail),
                     affects_workspace: false,
                     tone: None,
+                    images: Vec::new(),
                 }
             })
             .collect()

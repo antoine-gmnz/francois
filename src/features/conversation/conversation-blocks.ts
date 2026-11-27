@@ -19,6 +19,7 @@ import type {
   SessionStatus,
   SlashCommandInfo,
   PlanItem,
+  ToolImage,
   ToolResultTone,
 } from '../../../contract/common';
 import {
@@ -26,7 +27,6 @@ import {
   classifyToolStart,
   type ConversationBlock,
   type NoticeConversationBlock,
-  type ToolConversationBlock,
   type UserConversationBlock,
 } from '../../../contract/conversation-view';
 import type { CommandConversationBlock } from '../../../contract/interactive-commands';
@@ -165,7 +165,7 @@ export type TranscriptAction =
   // assistant.complete event only — a plain Claude assistant.done carries none.
   | { t: 'assistantDone'; blockId: string; text: string; outcome?: 'complete' | 'interrupted' | 'error' }
   | { t: 'toolStart'; blockId: string; tool: string; summary: string; model?: string; plan?: PlanItem[] } // plan: plan-view
-  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // hasDetail: command-inspect FR-10; tone: hook-diagnostics
+  | { t: 'toolDone'; blockId: string; meta: string; hasDetail?: boolean; tone?: ToolResultTone; images?: ToolImage[] } // hasDetail: command-inspect FR-10; tone: hook-diagnostics; images: tool-images
   // pi-transcript-events FR-1/FR-3/FR-4: a normalized RuntimeToolCall snapshot —
   // insert-or-settle, keyed on the tool call's stable blockId.
   | { t: 'toolUpdate'; blockId: string; tool: RuntimeToolCall }
@@ -420,7 +420,8 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       // command-inspect FR-10/FR-12: the chevron exists iff core wrote a StepDetail
       // record. `??` keeps an established flag when a later done omits it; a
       // subagent block never carries one (FR-8).
-      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail, ...(a.tone !== undefined ? { tone: a.tone } : {}) });
+      const images = a.images !== undefined && a.images.length > 0 ? { images: a.images } : {}; // tool-images
+      return replace(i, { ...b, meta: a.meta, isStreaming: false, hasDetail: a.hasDetail ?? b.hasDetail, ...(a.tone !== undefined ? { tone: a.tone } : {}), ...images });
     }
     case 'toolUpdate': {
       // FR-3: a tool call must settle exactly once, in place — insert on
@@ -431,7 +432,7 @@ export function transcriptReducer(state: TranscriptState, a: TranscriptAction): 
       }
       const b = state.blocks[i];
       if (b.kind !== 'tool') return state;
-      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail, ...(b.plan !== undefined ? { plan: b.plan } : {}) });
+      return replace(i, { ...runtimeToolBlock(a.blockId, a.tool), hasDetail: b.hasDetail, ...(b.plan !== undefined ? { plan: b.plan } : {}), ...(b.images !== undefined ? { images: b.images } : {}) });
     }
     case 'notice': {
       // FR-5: keyed idempotent upsert, like every other rule in this reducer —
@@ -726,7 +727,7 @@ const SESSION_EVENT_HANDLERS: { [T in SessionEvent['type']]: SessionEventHandler
   'tool.start': (dispatch, _setters, e) =>
     dispatch({ t: 'toolStart', blockId: e.blockId, tool: e.tool, summary: e.summary, model: e.model, ...(e.plan !== undefined ? { plan: e.plan } : {}) }),
   'tool.update': (dispatch, _setters, e) => dispatch({ t: 'toolUpdate', blockId: e.blockId, tool: e.tool }),
-  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail, tone: e.tone }),
+  'tool.done': (dispatch, _setters, e) => dispatch({ t: 'toolDone', blockId: e.blockId, meta: e.meta, hasDetail: e.hasDetail, tone: e.tone, ...(e.images !== undefined ? { images: e.images } : {}) }),
   // interactive-commands FR-20: pending command block (loading card)
   'command.started': (dispatch, _setters, e) => dispatch({ t: 'commandStarted', blockId: e.blockId, command: e.command }),
   // interactive-commands FR-20: upsert card; insert-if-unseen (instant notices)
@@ -827,79 +828,6 @@ export function deltaFromEvent(e: SessionEvent): { blockId: string; text: string
     return { blockId: e.event.blockId, text: e.event.text, offset: e.event.offset };
   }
   return null;
-}
-
-// ---------- render-time compaction of duplicate tool rows ----------
-
-/** The core's tool_meta line-change shape: `+N −M` (U+2212 minus). */
-const LINE_CHANGE_META = /^\+(\d+) −(\d+)$/;
-
-/**
- * Collapse runs of consecutive tool blocks that are identical except for their
- * meta (e.g. repeated `Edit  src/a.ts` rows) into one row. Line-change metas
- * (`+N −M`) sum across the run; other metas keep the newest value. Render-time
- * only — reducer state stays one block per event so blockId-keyed upserts
- * (toolDone replay, out-of-order arrivals) are untouched.
- *
- * The newest block represents the run: its blockId keys the row and its
- * streaming state wins (a still-streaming edit shows the run total so far).
- * A call that did not settle cleanly never merges — see `breaksToolRun` — so a
- * failure is never absorbed into a neighbouring success. Two Pi rows are
- * additionally held apart by their execution id: each `tool.update` is its own
- * call, and folding two of them would hide one from the transcript entirely.
- */
-export function compactBlocks(blocks: ConversationBlock[]): ConversationBlock[] {
-  const out: ConversationBlock[] = [];
-  for (const b of blocks) {
-    const prev = out[out.length - 1];
-    if (
-      b.kind === 'tool' &&
-      prev !== undefined &&
-      prev.kind === 'tool' &&
-      prev.tool === b.tool &&
-      prev.summary === b.summary &&
-      prev.execution?.id === b.execution?.id &&
-      !breaksToolRun(prev) &&
-      !breaksToolRun(b)
-    ) {
-      out[out.length - 1] = mergeToolRun(prev, b);
-      continue;
-    }
-    out.push(b);
-  }
-  return out;
-}
-
-/**
- * Whether this row must stay visible on its own. The two runtimes are read
- * differently ON PURPOSE:
- *  - a Pi block carries the normalized lifecycle, so the STATUS answers —
- *    never the displayed word, which is presentation;
- *  - a plain Claude block has no status: an explicit `tone` (hook-diagnostics)
- *    or, on older blocks, the exact `error` meta marks a failure. Any other is
- *    free-form — a Task row's is the first line of the subagent's own result —
- *    so matching words inside it would break a run on prose.
- */
-function breaksToolRun(b: ToolConversationBlock): boolean {
-  // plan-view: each TodoWrite is a distinct snapshot of the plan — flipping a
-  // step to in-progress keeps the same `N steps · M done` summary, and merging
-  // would drop the newer checklist (and the latest-plan card with it).
-  if (b.plan !== undefined) return true;
-  if (b.execution !== undefined) {
-    const { status } = b.execution;
-    return status === 'failed' || status === 'cancelled' || status === 'unknown';
-  }
-  return b.tone !== undefined || b.meta === 'error';
-}
-
-function mergeToolRun(acc: ToolConversationBlock, b: ToolConversationBlock): ToolConversationBlock {
-  const am = acc.meta !== undefined ? LINE_CHANGE_META.exec(acc.meta) : null;
-  const bm = b.meta !== undefined ? LINE_CHANGE_META.exec(b.meta) : null;
-  const meta =
-    am && bm
-      ? `+${Number(am[1]) + Number(bm[1])} −${Number(am[2]) + Number(bm[2])}`
-      : (b.meta ?? acc.meta);
-  return meta !== undefined ? { ...b, meta } : { ...b };
 }
 
 // ---------- model card helpers (interactive-commands FR-21) ----------

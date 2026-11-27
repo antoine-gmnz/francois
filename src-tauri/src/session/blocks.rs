@@ -91,6 +91,10 @@ pub fn classify_block(b: &BufBlock) -> Value {
             if let Some(plan) = &b.plan {
                 o["plan"] = plan.clone();
             }
+            // tool-images: present only when the result carried images.
+            if let Some(images) = &b.images {
+                o["images"] = images.clone();
+            }
             // hook-diagnostics: `ToolConversationBlock.tone` — set only when
             // the result was an error; absent otherwise (pre-feature parity).
             if let Some(tone) = &b.tone {

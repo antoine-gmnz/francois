@@ -143,14 +143,26 @@ fn apply_projected(
             detail,
             affects_workspace,
             tone,
+            images,
         } => {
             let has_detail = detail.is_some();
             if let Some(detail) = detail {
                 env.append_step_detail(id, &detail);
             }
+            // tool-images: decode before the block settles, so the persisted
+            // line and the live event carry the same refs.
+            let images = env.store_tool_images(id, &block_id, &images);
+            let images = (!images.is_empty()).then_some(images);
+            let images_json = images.as_ref().and_then(|i| serde_json::to_value(i).ok());
             let block = engine
                 .with_session_mut(id, |s| {
-                    s.buf_tool_done(&block_id, meta.clone(), has_detail, tone.clone())
+                    s.buf_tool_done(
+                        &block_id,
+                        meta.clone(),
+                        has_detail,
+                        tone.clone(),
+                        images_json,
+                    )
                 })
                 .flatten();
             if let Some(block) = block {
@@ -165,6 +177,7 @@ fn apply_projected(
                 meta,
                 has_detail: has_detail.then_some(true),
                 tone,
+                images,
             });
         }
         RuntimeEvent::Metrics(metrics) => {

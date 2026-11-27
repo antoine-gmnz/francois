@@ -53,6 +53,7 @@ pub(super) fn normalize<F: FnMut() -> String>(
                 detail,
                 affects_workspace: tool == "Edit",
                 tone: None,
+                images: Vec::new(),
             }
         }
         Effect::FileTouched {

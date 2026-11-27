@@ -67,6 +67,9 @@ fn main() {
                 Box::new(editor::EditorTeardown),
             ]);
             session::start_keep_awake(app.handle().clone());
+            // tool-images: reopened transcripts reference images decoded in an
+            // earlier run, so the read grant covers the dir, not each file.
+            session::grant_tool_images_scope(app.handle());
             // Same wiring, the other direction: removing an account repoints the
             // sessions bound to it, and `account` no longer names `session` to
             // say so.

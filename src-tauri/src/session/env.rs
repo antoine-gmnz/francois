@@ -53,6 +53,17 @@ pub trait SessionEnv: Send + Sync {
     /// where `~/.claude` never exists). A test double returns a fixed list
     /// instead of touching the filesystem at all.
     fn discover_commands(&self, cwd: &str) -> Vec<SkillInfo>;
+    /// tool-images: decode a settled result's image parts to files the webview
+    /// can read. Default: none — a test double or a runtime without disk keeps
+    /// the row and simply shows no images.
+    fn store_tool_images(
+        &self,
+        _session_id: &str,
+        _block_id: &str,
+        _images: &[crate::session::tool_images::RawToolImage],
+    ) -> Vec<crate::session::tool_images::ToolImage> {
+        Vec::new()
+    }
 }
 
 impl SessionEnv for AppHandle {
@@ -94,6 +105,19 @@ impl SessionEnv for AppHandle {
     fn discover_commands(&self, cwd: &str) -> Vec<SkillInfo> {
         crate::session::discover_skills(cwd)
     }
+    fn store_tool_images(
+        &self,
+        session_id: &str,
+        block_id: &str,
+        images: &[crate::session::tool_images::RawToolImage],
+    ) -> Vec<crate::session::tool_images::ToolImage> {
+        match crate::session::tool_images::images_root(self) {
+            Some(root) => {
+                crate::session::tool_images::store_images(&root, session_id, block_id, images)
+            }
+            None => Vec::new(),
+        }
+    }
 }
 
 // core-architecture-wave3 FR-3: `pub` under the `harness` feature for the same
@@ -124,6 +148,9 @@ pub mod testenv {
         /// test assert exactly what would have been written, without an
         /// `AppHandle` to write it through.
         pub step_details: Mutex<Vec<(String, StepDetail)>>,
+        /// tool-images: when set, images decode through the real writer
+        /// under this dir; unset keeps the trait default (no images).
+        pub tool_images_root: Option<std::path::PathBuf>,
     }
 
     impl SessionEnv for TestEnv {
@@ -192,6 +219,19 @@ pub mod testenv {
         }
         fn discover_commands(&self, _cwd: &str) -> Vec<SkillInfo> {
             fixed_command_inventory()
+        }
+        fn store_tool_images(
+            &self,
+            session_id: &str,
+            block_id: &str,
+            images: &[crate::session::tool_images::RawToolImage],
+        ) -> Vec<crate::session::tool_images::ToolImage> {
+            match &self.tool_images_root {
+                Some(root) => {
+                    crate::session::tool_images::store_images(root, session_id, block_id, images)
+                }
+                None => Vec::new(),
+            }
         }
     }
 

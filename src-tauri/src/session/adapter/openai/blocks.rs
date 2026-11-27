@@ -141,7 +141,7 @@ pub(super) fn finish_tool_block(
     let block = app
         .state::<Engine>()
         .with_session_mut(session_id, |s| {
-            s.buf_tool_done(block_id, meta.to_string(), has_detail, None)
+            s.buf_tool_done(block_id, meta.to_string(), has_detail, None, None)
         })
         .flatten();
     if let Some(b) = &block {
@@ -160,6 +160,7 @@ pub(super) fn finish_tool_block(
             meta: meta.to_string(),
             has_detail: has_detail.then_some(true),
             tone: None,
+            images: None,
         },
     );
 }

@@ -889,6 +889,18 @@ export interface PlanItem {
 
 export type ToolResultTone = 'error' | 'hookRefusal';
 
+/** tool-images: one image a tool returned (a `Read` of a PNG, an MCP screenshot…).
+ *  The core decodes the result's base64 part to a file it owns and grants the
+ *  webview read access to it; the bytes never cross IPC or enter the transcript. */
+export type ToolImageMime = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+export interface ToolImage {
+  /** Absolute path of the decoded file, rendered through the asset protocol (`convertFileSrc`). */
+  path: string;
+  mime: ToolImageMime;
+  /** Decoded size in bytes. */
+  bytes: number;
+}
+
 /** One permission rule as it exists on disk (FR-16/FR-17). */
 export interface PermissionRule {
   id: string; // `${tier}|${effect}|${pattern}` — derived, never stored, stable across reads
@@ -951,7 +963,7 @@ export type SessionEvent =
   // plan: plan-view — the checklist a `TodoWrite` call set; absent on every other tool.
   | { type: 'tool.start'; sessionId: SessionId; blockId: BlockId; tool: string; summary: string; model?: string; plan?: PlanItem[] }
   | { type: 'tool.update'; sessionId: SessionId; blockId: BlockId; tool: RuntimeToolCall }
-  | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean; tone?: ToolResultTone } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10; tone: hook-diagnostics
+  | { type: 'tool.done'; sessionId: SessionId; blockId: BlockId; meta: string; hasDetail?: boolean; tone?: ToolResultTone; images?: ToolImage[] } // e.g. '128 lines', '+34 −19'; hasDetail: command-inspect FR-10; tone: hook-diagnostics; images: tool-images
   | { type: 'command.started'; sessionId: SessionId; blockId: BlockId; command: string } // interactive-commands: side-spawn began (loading card)
   | { type: 'command.output'; sessionId: SessionId; blockId: BlockId; card: CommandCard } // interactive-commands: card ready (creates or finalizes the block)
   | { type: 'question.asked'; sessionId: SessionId; blockId: BlockId; questions: SessionQuestion[]; blocking?: boolean } // absent blocking preserves legacy parked-turn semantics
